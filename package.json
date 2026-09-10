@@ -21,7 +21,8 @@
     "test:unit": "pnpm exec turbo run test:unit",
     "typecheck": "pnpm exec turbo run typecheck",
     "lint": "pnpm exec turbo run lint",
-    "prepare": "husky"
+    "prepare": "husky",
+    "change": "node scripts/add-changeset.mjs"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.5.0",

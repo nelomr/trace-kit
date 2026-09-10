@@ -55,13 +55,20 @@ jobs:
         run: |
           npx changeset version
 
+          # Sync package changelogs into the root CHANGELOG.md (matching dashboar-portfolio)
+          node scripts/sync-root-changelog.mjs
+
           if [[ -n $(git status --porcelain) ]]; then
             echo "Changes detected, committing version bumps..."
+
+            # Sync core package version to root package.json so global tag matches
+            CORE_VERSION=$(node -p "require('./packages/core/package.json').version")
+            node -e "const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('./package.json','utf8')); pkg.version='$CORE_VERSION'; fs.writeFileSync('./package.json', JSON.stringify(pkg, null, 2) + '\n');"
+
             git add .
             git commit --no-verify -m "chore(release): version packages [skip ci]"
 
-            ROOT_VERSION=$(node -p "require('./package.json').version")
-            GLOBAL_TAG="v$ROOT_VERSION"
+            GLOBAL_TAG="v$CORE_VERSION"
 
             for attempt in 1 2 3 4 5; do
               existing_tags=$(git tag -l)
