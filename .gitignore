@@ -37,7 +37,8 @@ dist-ssr
 .design/
 .design/*
 opencode.json
-CLAUDE.md
+# OpenSpec — only track live specs and config, not change history
+openspec/changes/archive/
 
 # Turborepo
 .turbo

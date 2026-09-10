@@ -1,0 +1,19 @@
+# OpenSpec Configuration — trace-kit
+
+project: trace-kit
+stack:
+  monorepo: pnpm+turborepo
+  language: typescript
+  renderers: webgl2+canvas2d
+  frameworks: vue3+react
+  testing: vitest+playwright
+  bundler: tsup
+
+strict_tdd: true
+test_command: pnpm run test
+
+session:
+  execution_mode: interactive
+  artifact_store: both
+  delivery_strategy: ask-always
+  review_budget_lines: 400
