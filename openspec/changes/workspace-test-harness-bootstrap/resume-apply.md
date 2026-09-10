@@ -1,7 +1,7 @@
 # Resume: workspace-test-harness-bootstrap
 
-**Progress:** 41/45 tasks complete (Groups 0-4 fully done; Group 5 done except 5.4)
-**Last Updated:** 2026-09-10 (Group 5 checkpoint, 5.1–5.3 only)
+**Progress:** 42/45 tasks complete (Groups 0-4 and 6 fully done; Group 5 done except 5.4)
+**Last Updated:** 2026-09-10 (Group 6 checkpoint)
 
 ## Completed Tasks
 
@@ -133,16 +133,43 @@ All Group 5 `Verify:` commands (5.1–5.3) were run for real; full detail in
 `evidence/baseline.md`. Final sanity pass: typecheck, lint, test all exit 0 with `eslint.config.js`
 showing no diff after the RED/GREEN experiment.
 
+### Group 6 — Versioning (6.1) — complete
+- 6.1: `.changeset/patch-f31855c5.md` — patch bump for `@trace-kit/core`, created via the
+  repository's own pre-existing `scripts/add-changeset.mjs` tooling (not hand-written, to
+  match the exact format the repo's `pnpm changeset` config already expects). Pre-change
+  baseline confirmed zero pending changesets; post-change `pnpm changeset status` reports
+  exactly one pending patch for `@trace-kit/core`, exit 0.
+
 ## Next Task
 
-Group 6 — Versioning (task 6.1): add a Changesets `patch` entry for `@trace-kit/core` per
-CLAUDE.md rule 8. Awaiting orchestrator go-ahead per interactive checkpoint (stated: stop
-after Group 5's 5.1–5.3, report before touching Group 6).
+**STOPPING before Group 7 (Final Verification), per explicit orchestrator instruction.**
 
-Note: Group 7 (Final Verification) includes task 7.1 (full local suite) and 7.3 (warm-cache
-lint re-run) which are straightforward re-verifications, but also implicitly assumes 5.4 has
-happened for a complete picture — flag this to the orchestrator when Group 7 is reached, since
-5.4 remains the user's own action.
+**Status of task 5.4 (push the branch, confirm live GitHub Actions run): PARTIALLY confirmed
+by direct evidence, NOT fully confirmed — do not check the box without the user's own
+confirmation.** While working on Group 6, `git status` unexpectedly showed all prior working-
+tree changes gone; `git log` showed a new local commit `a4e7e8f` ("feat(workspace): bootstrap
+real lint/test/build/bench harness") bundling this change's work — made outside this session
+(the user's own action, consistent with "user wants to handle commits/push themselves").
+`git fetch origin main` (run to verify, not assumed) confirms `origin/main` is at the exact
+same commit (`git rev-parse HEAD` == `git rev-parse origin/main` == `a4e7e8f...`) — so **the
+push half of 5.4 has demonstrably happened**. However, `gh run list` against this repo returns
+`HTTP 404` under this session's authenticated `gh` account (a different GitHub account than
+the repo owner `nelomr`, no API access to this repo) — **this session cannot independently
+confirm the live Actions run itself is green**. That half of 5.4 is still unconfirmed by this
+session; per the orchestrator's instruction, 5.4 is left unchecked in `tasks.md` pending the
+user's own confirmation that the Actions run passed (check the Actions tab / notify directly),
+not inferred from the push alone. Group 7 depends on it:
+- 7.1 (full local suite) can run regardless of 5.4 — it's local-only.
+- 7.2 (Group-0-pairing audit) can run regardless of 5.4.
+- 7.3 (warm-cache lint re-run) can run regardless of 5.4.
+- **5.4 itself remains unchecked** and is a hard prerequisite for treating the change as fully
+  verified end-to-end (a live green Actions run is the only proof the CI wiring from Group 5
+  actually works outside local simulation). Do not check 5.4 or claim it's done without an
+  explicit confirmation from the user/orchestrator that the push happened and the run is green.
+
+When resumed for Group 7: run 7.1–7.3 locally as normal, but explicitly ask/confirm whether
+5.4 has been completed before treating the overall change as ready for archive — do not infer
+it from silence.
 
 ## Notes — deviations from tasks.md / design.md discovered during real execution
 

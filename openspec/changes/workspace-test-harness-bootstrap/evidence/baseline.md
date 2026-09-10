@@ -729,3 +729,35 @@ $ pnpm exec turbo run typecheck --force -> 1 successful, 1 total, exit 0
 $ pnpm exec turbo run lint --force      -> 2 successful, 2 total, exit 0
 $ pnpm run test                         -> 2 successful, 2 total (6 files/10 tests), exit 0
 ```
+
+## Group 6 — Versioning observations
+
+### 6.1 — Changesets patch entry for `@trace-kit/core`
+
+Used the repository's own existing tooling (`scripts/add-changeset.mjs`, already present
+before this change) rather than hand-writing the frontmatter, since it produces the exact
+format the repo's own `pnpm changeset` config expects:
+
+```
+$ node scripts/add-changeset.mjs "Add the workspace test harness: Vitest, ESLint, tsup
+  dual-format build, benchmark harness, and CI wiring for @trace-kit/core" patch @trace-kit/core
+✅ Changeset created: .changeset/patch-f31855c5.md
+   Package: @trace-kit/core (patch)
+```
+
+```
+$ pnpm changeset status; echo "exit=$?"
+🦋  info Packages to be bumped at patch:
+🦋  info
+🦋  - @trace-kit/core
+🦋  ---
+🦋  info NO packages to be bumped at minor
+🦋  ---
+🦋  info NO packages to be bumped at major
+exit=0
+```
+
+Exactly one pending patch changeset for `@trace-kit/core`, matching CLAUDE.md rule 8's
+low-velocity `0.0.x` pacing. Pre-change baseline (run before adding the changeset) confirmed
+zero pending changesets (`NO packages to be bumped` at every level), so this is a genuinely
+new, isolated addition.

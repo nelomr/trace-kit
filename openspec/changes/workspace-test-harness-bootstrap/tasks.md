@@ -350,7 +350,7 @@ only wires it and demonstrates a live run.
 
 ## 6. Versioning
 
-- [ ] 6.1 [new] Add a Changesets entry under `.changeset/` describing a `patch` bump for
+- [x] 6.1 [new] Add a Changesets entry under `.changeset/` describing a `patch` bump for
   `@trace-kit/core`, per CLAUDE.md rule 8's low-velocity `0.0.x` pacing. Verify:
   `pnpm changeset status` reports exactly one pending patch changeset for `@trace-kit/core`.
 
