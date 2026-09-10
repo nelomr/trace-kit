@@ -48,3 +48,6 @@ coverage/
 
 # Build outputs
 *.tsbuildinfo
+
+# Benchmark results (machine/run-specific; design.md §D6 output, not a committed asset)
+bench-results.json

@@ -16,6 +16,20 @@
     },
     "lint": {
       "dependsOn": []
+    },
+    "//#lint": {
+      "dependsOn": [],
+      "inputs": [
+        "pnpm-workspace.yaml",
+        "tsconfig.base.json",
+        "package.json",
+        "scripts/verify-catalog-discipline.mjs",
+        "scripts/verify-no-root-exports.mjs",
+        "packages/*/package.json",
+        "packages/*/tsconfig.json",
+        "apps/*/package.json",
+        "apps/*/tsconfig.json"
+      ]
     }
   }
 }

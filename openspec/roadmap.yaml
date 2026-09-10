@@ -1,0 +1,198 @@
+# TraceKit SDD Roadmap — machine-readable change ordering
+#
+# Why this file exists
+#   The native dispatcher reports `relationships.dependsOn` per change, but nothing populates
+#   it: `gentle-ai sdd-status <change> --json` returned `dependsOn: []` for every change. The
+#   OpenSpec convention defines no mechanism to declare it either. So the ordering of the 16
+#   changes existed only as prose in
+#   `openspec/changes/00-roadmap-decomposition/exploration.md` (sections 2 and 3). A session
+#   opening this repository cold could read each change's own `nextRecommended`, but had no way
+#   to know which change comes next, or why. This file is that missing index.
+#
+# How to use it
+#   1. Walk the list in `order`. A change is done when its directory has moved under
+#      `openspec/changes/archive/`; that is the only durable completion signal.
+#   2. The next actionable change is the lowest-numbered one not yet archived whose every
+#      `prerequisites` entry IS archived. If a prerequisite is not archived, that prerequisite
+#      is what comes next instead.
+#   3. For that change, run `gentle-ai sdd-status <name> --cwd . --json` to get its phase state
+#      and `nextRecommended`.
+#
+# This file deliberately records NO per-change phase state. An earlier revision cached `state`
+# and an `artifacts` map here, and it was stale within the hour — it reported `design: false`
+# for a change whose `design.md` already existed. Caching derived state contradicted this file's
+# own division of responsibility, so the fields are gone. THIS FILE OWNS THE ORDER. THE
+# DISPATCHER OWNS EACH CHANGE'S PHASE. Nothing is duplicated, so nothing can disagree.
+#
+# The archive-order rule (load-bearing, not advisory)
+#   `sdd-archive` merges a change's spec deltas into `openspec/specs/{capability}/spec.md`.
+#   A MODIFIED delta therefore has nothing to modify until the change that ADDED that
+#   capability has been archived. Archiving out of order silently produces a MODIFIED delta
+#   applied against no baseline. `openspec/specs/` is currently empty except `.gitkeep`, so
+#   every MODIFIED delta listed below is presently unresolved by design, awaiting its
+#   baseline. Archive strictly in the order given here.
+#
+# Source of truth for scope and rationale: openspec/changes/00-roadmap-decomposition/exploration.md
+# Confirmed product decisions: that file, section 7.
+# Evidence backing the acceptance criteria: openspec/changes/00-roadmap-decomposition/research.md
+
+schema: trace-kit.sdd-roadmap/v1
+revision: 2
+total_changes: 16
+
+changes:
+  - order: 1
+    name: workspace-test-harness-bootstrap
+    prerequisites: []
+    capabilities:
+      - name: benchmark-harness
+        deltas: [ADDED]
+      - name: ci-quality-gate
+        deltas: [ADDED]
+      - name: package-build-pipeline
+        deltas: [ADDED]
+      - name: test-harness
+        deltas: [ADDED]
+      - name: workspace-toolchain
+        deltas: [ADDED]
+
+  - order: 2
+    name: core-decimation-math
+    prerequisites: 
+      - workspace-test-harness-bootstrap
+    capabilities:
+      - name: allocation-free-hot-path
+        deltas: [ADDED]
+      - name: benchmark-harness
+        deltas: [MODIFIED]
+      - name: branded-buffers
+        deltas: [ADDED]
+      - name: decimation-lttb
+        deltas: [ADDED]
+      - name: decimation-min-max
+        deltas: [ADDED]
+      - name: spectrum-data-payload
+        deltas: [ADDED]
+      - name: test-harness
+        deltas: [MODIFIED]
+
+  - order: 3
+    name: core-transport-contract
+    prerequisites: 
+      - core-decimation-math
+    capabilities:
+      - name: allocation-free-hot-path
+        deltas: [MODIFIED]
+      - name: buffer-ownership-protocol
+        deltas: [ADDED]
+      - name: decimation-port
+        deltas: [ADDED]
+      - name: ownership-prototype-gate
+        deltas: [ADDED]
+      - name: shared-array-buffer-capability
+        deltas: [ADDED]
+      - name: spectrum-data-payload
+        deltas: [MODIFIED]
+      - name: transport-backpressure
+        deltas: [ADDED]
+
+  - order: 4
+    name: playground-shell
+    prerequisites: 
+      - workspace-test-harness-bootstrap
+      - core-decimation-math
+    capabilities:
+      - name: benchmark-harness
+        deltas: [MODIFIED]
+      - name: playground-app
+        deltas: [ADDED]
+      - name: playground-core-math-view
+        deltas: [ADDED]
+      - name: playground-instrumentation-panel
+        deltas: [ADDED]
+      - name: playground-routing
+        deltas: [ADDED]
+      - name: workspace-toolchain
+        deltas: [MODIFIED]
+
+  - order: 5
+    name: renderers-canvas2d
+    prerequisites: 
+      - core-transport-contract
+      - playground-shell
+    capabilities: not_yet_specified
+
+  - order: 6
+    name: svg-vector-export
+    prerequisites: 
+      - renderers-canvas2d
+    capabilities: not_yet_specified
+
+  - order: 7
+    name: renderers-webgl2
+    prerequisites: 
+      - renderers-canvas2d
+      - svg-vector-export
+    capabilities: not_yet_specified
+
+  - order: 8
+    name: worker-streaming-transport
+    prerequisites: 
+      - core-transport-contract
+      - renderers-webgl2
+    capabilities: not_yet_specified
+
+  - order: 9
+    name: engine-controller
+    prerequisites: 
+      - renderers-webgl2
+      - worker-streaming-transport
+    capabilities: not_yet_specified
+
+  - order: 10
+    name: vue-adapter
+    prerequisites: 
+      - engine-controller
+    capabilities: not_yet_specified
+
+  - order: 11
+    name: react-adapter
+    prerequisites: 
+      - engine-controller
+    capabilities: not_yet_specified
+
+  - order: 12
+    name: package-exports-and-treeshaking-gates
+    prerequisites: 
+      - vue-adapter
+      - react-adapter
+    capabilities: not_yet_specified
+
+  - order: 13
+    name: crosshair-sync-bus
+    prerequisites: 
+      - vue-adapter
+      - react-adapter
+    capabilities: not_yet_specified
+
+  - order: 14
+    name: wafer-die-map
+    prerequisites: 
+      - engine-controller
+      - package-exports-and-treeshaking-gates
+    capabilities: not_yet_specified
+
+  - order: 15
+    name: docs-portal
+    prerequisites: 
+      - package-exports-and-treeshaking-gates
+      - crosshair-sync-bus
+      - wafer-die-map
+    capabilities: not_yet_specified
+
+  - order: 16
+    name: benchmark-ci-and-deployment
+    prerequisites: 
+      - docs-portal
+    capabilities: not_yet_specified
+

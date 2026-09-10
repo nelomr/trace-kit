@@ -7,8 +7,28 @@
 
 [![CI Status](https://github.com/nelomr/trace-kit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nelomr/trace-kit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
-[![npm version](https://img.shields.io/npm/v/@trace-kit/core?style=flat-square)](https://www.npmjs.com/package/@trace-kit/core)
+[![Status: pre-alpha](https://img.shields.io/badge/Status-pre--alpha-orange.svg?style=flat-square)](#-project-status)
+[![Version: 0.0.0](https://img.shields.io/badge/Version-0.0.0_(unpublished)-lightgrey.svg?style=flat-square)](#-project-status)
 [![PRs - Not accepting yet](https://img.shields.io/badge/PRs-Not_accepting_yet-red.svg?style=flat-square)](CONTRIBUTING.md)
+
+---
+
+## 🚧 Estado del proyecto
+
+> **TraceKit está en pre-alpha. Nada está publicado en npm todavía, y la mayor parte de lo que
+> describe este documento no está implementado.** Este README documenta la arquitectura y la API
+> *previstas*. Es un documento de diseño, no una guía de uso.
+>
+> **Lo que existe hoy:** `packages/core` con una única exportación `VERSION`, el workspace de
+> pnpm + Turborepo, y CI. Nada más.
+>
+> **Lo que todavía no existe:** `packages/renderers`, `packages/vue`, `packages/react`,
+> `apps/docs`, `apps/playground`, las suites de tests, y todos los paquetes publicados. Los
+> comandos de instalación y los ejemplos de inicio rápido de abajo no funcionan.
+>
+> El desarrollo sigue Spec-Driven Development; la secuencia de trabajo prevista y su orden están
+> en [`openspec/roadmap.yaml`](openspec/roadmap.yaml), y el alcance y la justificación en
+> `openspec/changes/`.
 
 ---
 
@@ -20,10 +40,10 @@ Construido sobre una arquitectura desacoplada, **TraceKit** aísla la decimació
 
 ### Pilares clave de rendimiento
 
-* **Ingestión real sin copia (Zero-Copy):** Web Workers dedicados ejecutan decimación matemática mediante Transferable Objects (`postMessage(msg, [buffer])`), eliminando retrasos de serialización y la contención del hilo de UI.
-* **Estrategia de motor dual híbrido:** Conmutación dinámica de ejecución entre un **renderizador Canvas 2D por lotes** de baja latencia (menos de 80k puntos) y un **pipeline WebGL2** de alta densidad (80k–1M+ puntos) utilizando Vertex Buffer Objects (VBOs) duales para eliminar la intercalación en CPU.
+* **Ingestión sin copia con propiedad explícita:** Web Workers dedicados ejecutan la decimación sobre `ArrayBuffer` transferidos, eliminando el coste de serialización. Como una transferencia *desvincula* (detach) el buffer en el emisor, el transporte es un round-trip agrupado con un único propietario en cada instante y contrapresión que descarta en lugar de asignar. El hilo principal conserva siempre una copia autoritativa, que es lo que hace posible la restauración del contexto WebGL.
+* **Estrategia de motor dual híbrido:** Conmutación estabilizada por histéresis entre un **renderizador Canvas 2D por lotes** y un **pipeline WebGL2** de alta densidad con Vertex Buffer Objects duales para evitar la intercalación en CPU. El umbral de conmutación es una constante medida y configurable, evaluada sobre el conteo de puntos *decimado* y no sobre un número fijo de puntos crudos, con dos umbrales y un tiempo mínimo de permanencia para que un stream en vivo no pueda oscilar entre motores.
 * **Decimación que preserva la física:** Combina **LTTB** estándar (fidelidad perceptual de la traza) con algoritmos de **envolvente Min-Max** para evitar la supresión de caídas de resonancia sub-picométricas, pérdidas de inserción y pisos de ruido de alta frecuencia.
-* **Motor de mapa de obleas semiconductoras:** Pipeline de renderizado 2D instanciado integrado (`gl.drawArraysInstanced`) para inspección de calidad multi-die soportando hasta 60.000 dies activos con hit-testing analítico en $O(1)$.
+* **Motor de mapa de obleas semiconductoras:** Pipeline de renderizado instanciado (`gl.drawArraysInstanced`) para inspección multi-die con objetivo de 60.000 dies activos, y hit-testing analítico en $O(1)$ para retícula uniforme que degrada a $O(\log n)$ mediante tablas de pitch acumulado cuando los anchos de street no son uniformes. Las obleas circulares y los dies parciales de borde se mantienen en $O(1)$ mediante una rejilla densa de ocupación.
 * **Telemetría sincronizada entre gráficos:** Bus desacoplado `BroadcastChannel` / `EventTarget` sincronizando múltiples canales de telemetría (p. ej., potencia óptica, temperatura, corrientes de bias) a través de canvas aislados con transformaciones CSS de cruceta aceleradas por GPU.
 * **Reportes vectoriales sin pérdida:** Generador matemático independiente que exporta vistas sub-muestreadas a paths SVG limpios, con calidad de publicación, sin artefactos de rasterización del canvas.
 
@@ -36,16 +56,16 @@ TraceKit está estructurado como un monorepo de grado empresarial impulsado por 
 ```text
 trace-kit/
 ├── packages/
-│   ├── core/           # 100% TS isomórfico: Buffers tipados, LTTB, Min-Max, Workers
-│   ├── renderers/      # Headless Vanilla JS: Canvas2D (Path2D) y WebGL2 (Shaders Dual-VBO)
-│   ├── vue/            # Vue 3: wrappers shallowRef/markRaw, composable useSpectrumEngine
-│   └── react/          # React: Hooks de canvas no gestionado, useSpectrumEngine, SSR-safe Next.js
+│   ├── core/           # [EXISTE, mínimo] TS isomórfico. Hoy solo exporta VERSION
+│   ├── renderers/      # [PREVISTO] Canvas2D (Path2D) y WebGL2 headless
+│   ├── vue/            # [PREVISTO] Vue 3: shallowRef/markRaw, composable useSpectrumEngine
+│   └── react/          # [PREVISTO] React: hooks de canvas, SSR-safe en Next.js
 ├── apps/
-│   ├── docs/           # Documentación interactiva VitePress con selector de framework en runtime
-│   └── playground/     # Banco de pruebas de estrés en tiempo real con telemetría FPS y controles Tweakpane
-└── tests/
-    ├── unit/           # Cobertura 100% Vitest sobre algoritmos matemáticos y de decimación puros
-    └── e2e/            # Pruebas de regresión visual Playwright cross-engine
+│   ├── docs/           # [PREVISTO] Docs VitePress con selector de framework
+│   └── playground/     # [PREVISTO] Banco de estrés con telemetría de FPS y Tweakpane
+└── tests/              # [PREVISTO] Los tests viven junto a cada paquete, no en una raíz común
+    ├── unit/           # [PREVISTO] Vitest sobre matemática pura y decimación
+    └── e2e/            # [PREVISTO] Regresión visual con Playwright
 ```
 
 ### Pipeline gráfico desacoplado
@@ -68,7 +88,7 @@ trace-kit/
            ▼                ▼
 ┌────────────────────┐   ┌────────────────────┐
 │  Canvas2DRenderer  │   │   WebGL2Renderer   │  ← Dual-VBO, matemáticas ClipSpace en GPU
-│  (< 80k puntos)    │   │   (> 80k puntos)   │
+│  (bajo el umbral)  │   │ (sobre el umbral)  │
 └────────────────────┘   └────────────────────┘
            ▲                        ▲
            └────────────┬───────────┘
@@ -83,6 +103,10 @@ trace-kit/
 ## 📦 Paquetes y exportaciones por subruta
 
 Todos los módulos incluyen flags estrictos de tree-shaking (`"sideEffects": false`) y soportan builds duales ESM (`.mjs`) y CommonJS (`.cjs`):
+
+> **Ninguno de estos paquetes está publicado todavía.** Los comandos siguientes
+> fallarán con un 404 del registry. Se documentan como la superficie de instalación
+> prevista.
 
 ```bash
 # Motor matemático core (sin dependencias, compatible con Node.js y SSR)
@@ -99,6 +123,11 @@ pnpm add @trace-kit/react
 ---
 
 ## 🚀 Inicio rápido
+
+> **Los ejemplos de esta sección no son ejecutables todavía.** Describen la API
+> prevista y sirven como referencia de diseño. Los nombres y las firmas pueden cambiar:
+> el contrato vigente vive en los specs bajo `openspec/changes/`.
+
 
 ### 1. Integración Vue 3 (Composition API)
 
@@ -172,14 +201,14 @@ Ejecutar algoritmos de decimación en el servidor o integrar directamente con ca
 
 ```ts
 import { lttb, minMaxEnvelope } from '@trace-kit/core';
-import { WebGLRenderer } from '@trace-kit/renderers';
+import { WebGL2Renderer } from '@trace-kit/renderers';
 
 // Decimación del lado del servidor (100% isomórfico, compatible con Node.js)
 const { reducedX, reducedY } = minMaxEnvelope(rawX, rawY, { targetPoints: 2000 });
 
 // Montaje directo del renderizador en el cliente
 const canvas = document.getElementById('plot') as HTMLCanvasElement;
-const renderer = new WebGLRenderer();
+const renderer = new WebGL2Renderer();
 renderer.initialize(canvas);
 renderer.setData({ id: 'trace-1', wavelengths: rawX, powers: rawY });
 renderer.setTransform({
@@ -196,16 +225,26 @@ renderer.render();
 
 ## 📊 Benchmarks y verificación técnica
 
-Medido en Apple Silicon / Chrome 128+ bajo ejecución continua de pan/zoom en tiempo real:
+Todavía no hay benchmarks publicados, porque no hay nada implementado que medir.
 
-| Tamaño del dataset (puntos) | Motor | Decimación | Tiempo de frame (render) | Delta heap JS | Framerate sostenido |
-|------------------------------|-------|------------|--------------------------|---------------|---------------------|
-| 50.000 | Canvas 2D (Path2D) | Ninguna | 4,2 ms | 0,0 MB | 60 FPS |
-| 200.000 | WebGL2 (Dual-VBO) | LTTB (Worker) | 1,8 ms | 0,0 MB | 60 FPS |
-| 1.000.000 | WebGL2 (Dual-VBO) | Min-Max (Worker) | 2,6 ms | 0,0 MB | 60 FPS |
-| 60.000 Dies | WebGL2 (Instanciado) | Ninguna ($O(1)$ Hit-Test) | 5,1 ms | 0,0 MB | 60 FPS |
+Una revisión anterior de este README contenía una tabla de rendimiento con tiempos de frame
+concretos, una columna `JS Heap Delta` con `0.0 MB` y tasas de refresco sostenidas, descritas
+como medidas en Apple Silicon durante paneo y zoom continuos. Esas cifras nunca se midieron: los
+renderizadores que describían no existen. La tabla se ha eliminado en lugar de corregirse.
 
-Los benchmarks interactivos están disponibles localmente mediante `pnpm --filter playground dev` en la ruta `/stress-test-lab`.
+Dos compromisos para cuando lleguen cifras reales:
+
+- Toda cifra publicada nombrará el hardware exacto, la build del navegador, el dataset y la
+  metodología (warm-up, número de iteraciones, mediana y p95), y será reproducible desde un
+  script de benchmark versionado.
+- El comportamiento de asignación de memoria **no** se reportará con `performance.memory`. Es
+  exclusiva de Chromium, no estándar y está cuantizada deliberadamente, así que no puede
+  demostrar cero asignaciones por frame. Las medidas en Node asertan cero eventos de GC en N
+  iteraciones; las del navegador asertan cero bytes atribuidos a la función concreta del camino
+  caliente en un perfil de muestreo de CDP. Ambos enfoques están ya demostrados con probes
+  re-ejecutables en `openspec/changes/00-roadmap-decomposition/evidence/`.
+
+Los benchmarks interactivos están previstos en la ruta `/stress-test-lab` del playground.
 
 ---
 
@@ -217,20 +256,19 @@ Este proyecto se adhiere estrictamente a **Spec-Driven Development (SDD)** y **T
 # Instalar dependencias en todos los paquetes del workspace
 pnpm install
 
-# Ejecutar tests unitarios en todos los paquetes isomórficos (Vitest)
+# Comprobación de tipos en todo el workspace
+pnpm typecheck
+
+# Compilar los paquetes del workspace
+pnpm build
+
+# Tests unitarios (el script existe, pero todavía no hay ningún test que ejecutar)
 pnpm test:unit
 
-# Ejecutar suite de regresión visual contra backends WebGL/Canvas reales (Playwright)
-pnpm test:visual
-
-# Iniciar la documentación interactiva (VitePress)
-pnpm --filter docs dev
-
-# Lanzar el banco de pruebas de estrés (Vite + Tweakpane)
-pnpm --filter playground dev
-
-# Compilar bundles de distribución universal (tsup)
-pnpm build
+# --- Todavía no disponibles: los workspaces y scripts no existen ---
+# pnpm test:visual              (regresión visual con Playwright)
+# pnpm --filter docs dev        (documentación VitePress)
+# pnpm --filter playground dev  (banco de pruebas de estrés)
 ```
 
 ---

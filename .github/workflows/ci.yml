@@ -43,11 +43,23 @@ jobs:
           restore-keys: |
             turbo-
 
+      - name: Verify typecheck task is non-vacuous
+        run: node scripts/verify-turbo-ran.mjs typecheck
+
       - name: Type check (all packages)
         run: pnpm exec turbo run typecheck
+
+      - name: Verify lint task is non-vacuous
+        run: node scripts/verify-turbo-ran.mjs lint
 
       - name: Lint
         run: pnpm exec turbo run lint
 
+      - name: Verify test task is non-vacuous
+        run: node scripts/verify-turbo-ran.mjs test
+
       - name: Unit tests (all packages)
         run: pnpm run test
+
+      - name: Lint-rules ban is enforced (regression meta-test)
+        run: pnpm exec vitest run packages/core/test/lint-rules.test.ts

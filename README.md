@@ -7,8 +7,28 @@
 
 [![CI Status](https://github.com/nelomr/trace-kit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nelomr/trace-kit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
-[![npm version](https://img.shields.io/npm/v/@trace-kit/core?style=flat-square)](https://www.npmjs.com/package/@trace-kit/core)
+[![Status: pre-alpha](https://img.shields.io/badge/Status-pre--alpha-orange.svg?style=flat-square)](#-project-status)
+[![Version: 0.0.0](https://img.shields.io/badge/Version-0.0.0_(unpublished)-lightgrey.svg?style=flat-square)](#-project-status)
 [![PRs - Not accepting yet](https://img.shields.io/badge/PRs-Not_accepting_yet-red.svg?style=flat-square)](CONTRIBUTING.md)
+
+---
+
+## 🚧 Project Status
+
+> **TraceKit is pre-alpha. Nothing is published to npm yet, and most of what this document
+> describes is not implemented.** This README documents the *intended* architecture and API. It
+> is a design document, not a usage guide.
+>
+> **What exists today:** `packages/core` with a single `VERSION` export, the pnpm + Turborepo
+> workspace, and CI. Nothing else.
+>
+> **What does not exist yet:** `packages/renderers`, `packages/vue`, `packages/react`,
+> `apps/docs`, `apps/playground`, the test suites, and every published package. The install
+> commands and Quickstart examples below will not work.
+>
+> Development follows Spec-Driven Development; the planned sequence of work and its ordering live
+> in [`openspec/roadmap.yaml`](openspec/roadmap.yaml), with scope and rationale in
+> `openspec/changes/`.
 
 ---
 
@@ -20,10 +40,10 @@ Built upon a decoupled architecture, **TraceKit** isolates computational decimat
 
 ### Key Performance Pillars
 
-* **True Zero-Copy Ingestion:** Dedicated Web Workers execute mathematical decimation via Transferable Objects (`postMessage(msg, [buffer])`), eliminating serialization delays and UI thread contention.
-* **Hybrid Dual-Engine Strategy:** Dynamic execution switching between a low-latency **Canvas 2D batch renderer** (sub-80k points) and a high-density **WebGL2 pipeline** (80k–1M+ points) utilizing dual Vertex Buffer Objects (VBOs) to eliminate CPU interleaving.
+* **Zero-Copy Ingestion with Explicit Ownership:** Dedicated Web Workers execute decimation over transferred `ArrayBuffer`s, eliminating serialization cost. Because a transfer *detaches* the buffer in the sender, transport is a pooled round trip with a single owner at any instant and back-pressure that drops rather than allocates — the main thread always retains an authoritative copy, which is what makes WebGL context restoration possible at all.
+* **Hybrid Dual-Engine Strategy:** Hysteresis-stabilized switching between a **Canvas 2D batch renderer** and a high-density **WebGL2 pipeline** using dual Vertex Buffer Objects to avoid CPU interleaving. The switch threshold is a measured, configurable constant evaluated on the *decimated* point count — not a fixed raw-point number — with two thresholds and a minimum dwell time so a live stream cannot oscillate between engines.
 * **Physics-Preserving Decimation:** Combines standard **LTTB** (perceptual trace fidelity) with **Min-Max Envelope** algorithms to prevent the suppression of sub-picometer resonance dips, insertion losses, and high-frequency noise floors.
-* **Semiconductor Wafer Map Engine:** Integrated 2D instanced rendering pipeline (`gl.drawArraysInstanced`) for multi-die quality inspection supporting up to 60,000 active dies with $O(1)$ analytical hit-testing.
+* **Semiconductor Wafer Map Engine:** Instanced rendering pipeline (`gl.drawArraysInstanced`) for multi-die inspection targeting 60,000 active dies, with analytical hit-testing that is $O(1)$ for a uniform reticle and degrades to $O(\log n)$ via cumulative pitch tables when street widths are non-uniform. Circular wafers and partial edge dies stay $O(1)$ through a dense occupancy grid.
 * **Cross-Chart Synchronized Telemetry:** Decoupled `BroadcastChannel` / `EventTarget` bus syncing multiple telemetry channels (e.g., optical power, temperature, bias currents) across isolated canvases with GPU-accelerated CSS crosshair transforms.
 * **Lossless Vector Reporting:** Standalone mathematical generator exporting sub-sampled views to clean, publication-grade SVG paths without canvas rasterization artifacts.
 
@@ -36,16 +56,16 @@ TraceKit is structured as an enterprise-grade monorepo powered by `pnpm` workspa
 ```text
 trace-kit/
 ├── packages/
-│   ├── core/           # 100% Isomorphic TS: Typed branded buffers, LTTB, Min-Max, Workers
-│   ├── renderers/      # Headless Vanilla JS: Canvas2D (Path2D) & WebGL2 (Dual-VBO Shaders)
-│   ├── vue/            # Vue 3: shallowRef/markRaw wrappers, useSpectrumEngine composable
-│   └── react/          # React: Unmanaged canvas hooks, useSpectrumEngine, Next.js SSR-safe
+│   ├── core/           # [EXISTS, minimal] Isomorphic TS. Today it only exports VERSION
+│   ├── renderers/      # [PLANNED] Headless Canvas2D (Path2D) and WebGL2
+│   ├── vue/            # [PLANNED] Vue 3: shallowRef/markRaw, useSpectrumEngine composable
+│   └── react/          # [PLANNED] React: canvas hooks, Next.js SSR-safe
 ├── apps/
-│   ├── docs/           # VitePress interactive docs with runtime framework switcher
-│   └── playground/     # Real-time stress workbench with FPS telemetry and Tweakpane controls
-└── tests/
-    ├── unit/           # 100% Vitest coverage over pure math & decimation algorithms
-    └── e2e/            # Playwright cross-engine visual regression testing
+│   ├── docs/           # [PLANNED] VitePress docs with a runtime framework switcher
+│   └── playground/     # [PLANNED] Stress workbench with FPS telemetry and Tweakpane
+└── tests/              # [PLANNED] Tests live beside each package, not under a shared root
+    ├── unit/           # [PLANNED] Vitest over pure math and decimation
+    └── e2e/            # [PLANNED] Playwright cross-engine visual regression
 ```
 
 ### Decoupled Graphics Pipeline
@@ -68,7 +88,7 @@ trace-kit/
            ▼                ▼
 ┌────────────────────┐   ┌────────────────────┐
 │  Canvas2DRenderer  │   │   WebGL2Renderer   │  ← Dual-VBO, GPU-side ClipSpace Math
-│  (< 80k points)    │   │   (> 80k points)   │
+│  (below threshold) │   │  (above threshold) │
 └────────────────────┘   └────────────────────┘
            ▲                        ▲
            └────────────┬───────────┘
@@ -83,6 +103,9 @@ trace-kit/
 ## 📦 Packages & Subpath Exports
 
 All modules feature strict tree-shaking flags (`"sideEffects": false`) and support dual ESM (`.mjs`) and CommonJS (`.cjs`) builds:
+
+> **None of these packages are published yet.** The commands below will fail with a
+> registry 404. They document the intended install surface.
 
 ```bash
 # Core mathematical engine (zero dependencies, Node.js and SSR safe)
@@ -99,6 +122,11 @@ pnpm add @trace-kit/react
 ---
 
 ## 🚀 Quickstart
+
+> **The examples in this section are not runnable yet.** They describe the intended
+> API and serve as a design reference. Names and signatures may still change; the
+> current contract lives in the specs under `openspec/changes/`.
+
 
 ### 1. Vue 3 Integration (Composition API)
 
@@ -172,14 +200,14 @@ Execute decimation algorithms server-side or integrate directly with unmanaged c
 
 ```ts
 import { lttb, minMaxEnvelope } from '@trace-kit/core';
-import { WebGLRenderer } from '@trace-kit/renderers';
+import { WebGL2Renderer } from '@trace-kit/renderers';
 
 // Server-side decimation (100% isomorphic, Node.js compatible)
 const { reducedX, reducedY } = minMaxEnvelope(rawX, rawY, { targetPoints: 2000 });
 
 // Client-side direct renderer mounting
 const canvas = document.getElementById('plot') as HTMLCanvasElement;
-const renderer = new WebGLRenderer();
+const renderer = new WebGL2Renderer();
 renderer.initialize(canvas);
 renderer.setData({ id: 'trace-1', wavelengths: rawX, powers: rawY });
 renderer.setTransform({
@@ -196,16 +224,26 @@ renderer.render();
 
 ## 📊 Benchmarks & Technical Verification
 
-Benchmarked on Apple Silicon / Chrome 128+ under continuous real-time pan/zoom execution:
+No benchmarks are published yet, because nothing is implemented to benchmark.
 
-| Dataset Size (Points) | Engine | Decimation | Frame Time (Render) | JS Heap Delta | Sustained Framerate |
-|------------------------|--------|------------|---------------------|---------------|---------------------|
-| 50,000 | Canvas 2D (Path2D) | None | 4.2 ms | 0.0 MB | 60 FPS |
-| 200,000 | WebGL2 (Dual-VBO) | LTTB (Worker) | 1.8 ms | 0.0 MB | 60 FPS |
-| 1,000,000 | WebGL2 (Dual-VBO) | Min-Max (Worker) | 2.6 ms | 0.0 MB | 60 FPS |
-| 60,000 Dies | WebGL2 (Instanced) | None ($O(1)$ Hit-Test) | 5.1 ms | 0.0 MB | 60 FPS |
+A previous revision of this README contained a performance table with specific frame times, a
+`JS Heap Delta` column reading `0.0 MB`, and sustained framerates, described as measured on
+Apple Silicon under continuous pan/zoom. Those figures were never measured — the renderers they
+described do not exist. The table has been removed rather than corrected.
 
-Interactive benchmarks are available locally via `pnpm --filter playground dev` under the `/stress-test-lab` route.
+Two commitments for when real numbers arrive:
+
+- Every published figure will name the exact hardware, browser build, dataset and methodology
+  (warm-up, iteration count, median and p95), and will be reproducible from a committed
+  benchmark script.
+- Allocation behaviour will **not** be reported via `performance.memory`. It is Chromium-only,
+  non-standard, and deliberately quantized, so it cannot demonstrate zero allocation per frame.
+  Node-side measurements assert zero GC events over N iterations; browser-side measurements
+  assert zero bytes attributed to the named hot-path function in a CDP sampling profile. Both
+  approaches are already demonstrated by re-runnable probes under
+  `openspec/changes/00-roadmap-decomposition/evidence/`.
+
+Interactive benchmarks are planned for the playground's `/stress-test-lab` route.
 
 ---
 
@@ -217,20 +255,19 @@ This project strictly adheres to **Spec-Driven Development (SDD)** and **Test-Dr
 # Install dependencies across all workspace packages
 pnpm install
 
-# Run unit tests across all isomorphic packages (Vitest)
+# Type-check the whole workspace
+pnpm typecheck
+
+# Build the workspace packages
+pnpm build
+
+# Unit tests (the script exists, but there are no tests to run yet)
 pnpm test:unit
 
-# Execute visual regression suite against actual WebGL/Canvas backends (Playwright)
-pnpm test:visual
-
-# Start the interactive documentation (VitePress)
-pnpm --filter docs dev
-
-# Launch the stress-test workbench (Vite + Tweakpane)
-pnpm --filter playground dev
-
-# Compile universal distribution bundles (tsup)
-pnpm build
+# --- Not available yet: these workspaces and scripts do not exist ---
+# pnpm test:visual              (Playwright visual regression)
+# pnpm --filter docs dev        (VitePress documentation)
+# pnpm --filter playground dev  (stress-test workbench)
 ```
 
 ---

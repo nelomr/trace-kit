@@ -20,15 +20,19 @@
     "test": "pnpm exec turbo run test",
     "test:unit": "pnpm exec turbo run test:unit",
     "typecheck": "pnpm exec turbo run typecheck",
-    "lint": "pnpm exec turbo run lint",
+    "lint": "node scripts/verify-catalog-discipline.mjs && node scripts/verify-no-root-exports.mjs",
+    "lint:all": "pnpm exec turbo run lint",
     "prepare": "husky",
     "change": "node scripts/add-changeset.mjs"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.5.0",
     "@changesets/cli": "^2.27.0",
+    "eslint": "catalog:",
     "husky": "^9.1.7",
-    "turbo": "^2.3.0",
-    "typescript": "^5.7.0"
+    "turbo": "2.10.12",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "catalog:",
+    "vitest": "catalog:"
   }
 }
