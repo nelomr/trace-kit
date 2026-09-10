@@ -1,0 +1,2 @@
+pnpm exec turbo run typecheck lint
+pnpm run test

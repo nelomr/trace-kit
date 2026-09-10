@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: ['CI']
+    types:
+      - completed
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Git User
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Version and Publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npx changeset version
+
+          if [[ -n $(git status --porcelain) ]]; then
+            echo "Changes detected, committing version bumps..."
+            git add .
+            git commit --no-verify -m "chore(release): version packages [skip ci]"
+
+            ROOT_VERSION=$(node -p "require('./package.json').version")
+            GLOBAL_TAG="v$ROOT_VERSION"
+
+            for attempt in 1 2 3 4 5; do
+              existing_tags=$(git tag -l)
+              if [[ -n "$existing_tags" ]]; then
+                echo "$existing_tags" | xargs git tag -d
+              fi
+              npx changeset tag
+
+              if git push --atomic origin main --tags; then
+                break
+              fi
+
+              if [[ $attempt -eq 5 ]]; then
+                echo "::error::Failed to push release after 5 attempts"
+                exit 1
+              fi
+
+              echo "Push rejected (attempt $attempt) — main moved, rebasing and retrying..."
+              git fetch origin main
+              git rebase origin/main
+            done
+
+            if ! gh release view "$GLOBAL_TAG" > /dev/null 2>&1; then
+              gh release create "$GLOBAL_TAG" \
+                --target main \
+                --title "$GLOBAL_TAG" \
+                --generate-notes \
+                --latest
+              echo "✅ GitHub Release $GLOBAL_TAG successfully created!"
+            else
+              echo "⚠️ GitHub Release $GLOBAL_TAG already exists, skipping."
+            fi
+          else
+            echo "No changesets found, nothing to version or publish."
+          fi
