@@ -5,12 +5,9 @@
 // configuration (proposal.md, exploration §1.11/§3.11). This is the kind of plausible-looking
 // configuration a future contributor adds in good faith and nobody notices is inert, so it is
 // asserted mechanically rather than left to review.
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const repoRoot = path.resolve(fileURLToPath(import.meta.url), "../..");
-
+//
+// This module no longer runs as a CLI script — `checkNoRootExports` is asserted directly by
+// `packages/core/test/catalog-discipline.test.ts` (Vitest) instead of a spawned subprocess.
 export function checkNoRootExports(rootPackageJson) {
   if (Object.prototype.hasOwnProperty.call(rootPackageJson, "exports")) {
     return [
@@ -19,21 +16,4 @@ export function checkNoRootExports(rootPackageJson) {
     ];
   }
   return [];
-}
-
-function main() {
-  const rootPackageJson = JSON.parse(
-    readFileSync(path.join(repoRoot, "package.json"), "utf8"),
-  );
-  const violations = checkNoRootExports(rootPackageJson);
-  if (violations.length > 0) {
-    console.error(violations.join("\n"));
-    process.exit(1);
-  }
-  console.log("OK: root package.json has no exports field.");
-  process.exit(0);
-}
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main();
 }

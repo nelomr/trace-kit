@@ -1,0 +1,8 @@
+{
+  // this comment must not cause a false violation
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist"
+  },
+  "include": ["src/**/*"]
+}

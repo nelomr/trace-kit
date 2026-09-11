@@ -20,8 +20,7 @@
     "test": "pnpm exec turbo run test",
     "test:unit": "pnpm exec turbo run test:unit",
     "typecheck": "pnpm exec turbo run typecheck",
-    "lint": "node scripts/verify-catalog-discipline.mjs && node scripts/verify-no-root-exports.mjs",
-    "lint:all": "pnpm exec turbo run lint",
+    "lint": "pnpm exec turbo run lint",
     "prepare": "husky",
     "change": "node scripts/add-changeset.mjs"
   },

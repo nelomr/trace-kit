@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
+import { findWorkspacePackageDirs } from './verify-catalog-discipline.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,13 +20,60 @@ const dateStr = new Date().toISOString().split('T')[0];
 const rootChangelogPath = path.join(rootDir, 'CHANGELOG.md');
 let rootChangelog = fs.readFileSync(rootChangelogPath, 'utf8');
 
-// Define packages to check
-const packages = [
-  { name: 'Core Engine', path: 'packages/core/CHANGELOG.md', pkgName: '@trace-kit/core', icon: '⚡' },
-  { name: 'Renderers', path: 'packages/renderers/CHANGELOG.md', pkgName: '@trace-kit/renderers', icon: '🎨' },
-  { name: 'Vue Components', path: 'packages/vue/CHANGELOG.md', pkgName: '@trace-kit/vue', icon: '🖖' },
-  { name: 'React Components', path: 'packages/react/CHANGELOG.md', pkgName: '@trace-kit/react', icon: '⚛️' },
-];
+// Default icon used for a package whose name doesn't match one of the well-known display
+// overrides below.
+const DEFAULT_ICON = '📦';
+
+// Display metadata (a friendly name + icon) for packages this repo knows about by convention.
+// This is presentation-only — it never gates *whether* a package is included, only how its
+// section header reads. A matched package absent from this map still gets a derived name and
+// the default icon, per proposal.md's "derive from pnpm-workspace.yaml's packages: globs, not
+// a hardcoded array" fix: the governed set of *which* packages are checked is always derived.
+const DISPLAY_OVERRIDES = {
+  '@trace-kit/core': { name: 'Core Engine', icon: '⚡' },
+  '@trace-kit/renderers': { name: 'Renderers', icon: '🎨' },
+  '@trace-kit/vue': { name: 'Vue Components', icon: '🖖' },
+  '@trace-kit/react': { name: 'React Components', icon: '⚛️' },
+};
+
+function deriveDisplayName(pkgName) {
+  const bare = pkgName.includes('/') ? pkgName.split('/').pop() : pkgName;
+  return bare
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+// Derive the governed package list from `pnpm-workspace.yaml`'s `packages:` globs (reusing
+// `findWorkspacePackageDirs`, the same glob-resolution `verify-catalog-discipline.mjs` already
+// establishes) instead of a hardcoded array — a matched directory with no `package.json` name
+// or no `CHANGELOG.md` is skipped without throwing.
+const workspaceYamlText = fs.readFileSync(
+  path.join(rootDir, 'pnpm-workspace.yaml'),
+  'utf8',
+);
+const packageDirs = findWorkspacePackageDirs(workspaceYamlText);
+
+const packages = [];
+for (const dir of packageDirs) {
+  const pkgJsonPath = path.join(rootDir, dir, 'package.json');
+  let pkgJson;
+  try {
+    pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
+  } catch {
+    continue;
+  }
+  const pkgName = pkgJson.name;
+  if (!pkgName) continue;
+  const override = DISPLAY_OVERRIDES[pkgName];
+  packages.push({
+    name: override?.name ?? deriveDisplayName(pkgName),
+    path: `${dir}/CHANGELOG.md`,
+    pkgName,
+    icon: override?.icon ?? DEFAULT_ICON,
+  });
+}
 
 let newChangelogEntry = `\n## [${currentVersion}](https://github.com/nelomr/trace-kit/releases/tag/v${currentVersion}) (${dateStr})\n\n`;
 let hasChanges = false;

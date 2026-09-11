@@ -144,7 +144,19 @@ export function checkTsconfigStrictness(baseTsconfig, packageDirs, readTsconfig)
   const violations = [];
 
   for (const dir of packageDirs) {
-    const tsconfig = readTsconfig(dir);
+    let tsconfig;
+    try {
+      tsconfig = readTsconfig(dir);
+    } catch {
+      // The file exists but failed to parse even after JSONC-comment stripping — this must be
+      // a reported violation, not a silent skip (the fail-open bug this check now guards
+      // against): a package whose tsconfig.json cannot be parsed has unknown strictness and
+      // cannot be verified to hold the governed flags.
+      violations.push(
+        `${dir}/tsconfig.json: is not valid JSON/JSONC — unable to verify governed strictness flags`,
+      );
+      continue;
+    }
     if (!tsconfig) continue;
     const compilerOptions = tsconfig.compilerOptions ?? {};
     for (const [flag, value] of Object.entries(compilerOptions)) {
@@ -158,7 +170,7 @@ export function checkTsconfigStrictness(baseTsconfig, packageDirs, readTsconfig)
   return violations;
 }
 
-function readPackageJson(dir) {
+export function readPackageJson(dir) {
   const filePath = path.join(repoRoot, dir, "package.json");
   try {
     return JSON.parse(readFileSync(filePath, "utf8"));
@@ -167,55 +179,85 @@ function readPackageJson(dir) {
   }
 }
 
-function readTsconfig(dir) {
+// Minimal JSONC-comment stripping, scoped to this repository's actual usage (`//` line
+// comments and `/* */` block comments) rather than a full JSONC parser. Comment markers inside
+// string literals are left untouched by tracking string/escape state character-by-character.
+function stripJsonComments(text) {
+  let result = "";
+  let inString = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    const next = text[i + 1];
+
+    if (inLineComment) {
+      if (ch === "\n") {
+        inLineComment = false;
+        result += ch;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (ch === "*" && next === "/") {
+        inBlockComment = false;
+        i += 1;
+      }
+      continue;
+    }
+
+    if (inString) {
+      result += ch;
+      if (ch === "\\") {
+        // Preserve the escaped character verbatim so an escaped quote doesn't end the string.
+        if (next !== undefined) {
+          result += next;
+          i += 1;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      result += ch;
+      continue;
+    }
+
+    if (ch === "/" && next === "/") {
+      inLineComment = true;
+      i += 1;
+      continue;
+    }
+
+    if (ch === "/" && next === "*") {
+      inBlockComment = true;
+      i += 1;
+      continue;
+    }
+
+    result += ch;
+  }
+  return result;
+}
+
+export function readTsconfig(dir) {
   const filePath = path.join(repoRoot, dir, "tsconfig.json");
+  let raw;
   try {
-    // tsconfig.json is JSON here (no comments used in this repository); a real JSONC parser
-    // is not needed for the files this script reads.
-    return JSON.parse(readFileSync(filePath, "utf8"));
+    raw = readFileSync(filePath, "utf8");
   } catch {
+    // No tsconfig.json in this directory at all — not a violation, just nothing to check.
     return null;
   }
+  // A parse failure past this point (file exists, JSONC-stripped text still doesn't parse) is
+  // intentionally allowed to propagate — the caller (`checkTsconfigStrictness`) must treat it
+  // as a reported violation rather than silently skipping the package.
+  return JSON.parse(stripJsonComments(raw));
 }
 
-function main() {
-  const workspaceYamlText = readFileSync(
-    path.join(repoRoot, "pnpm-workspace.yaml"),
-    "utf8",
-  );
-  const packageDirs = findWorkspacePackageDirs(workspaceYamlText);
-
-  const catalogViolations = checkCatalogDiscipline(
-    workspaceYamlText,
-    packageDirs,
-    readPackageJson,
-  );
-
-  const baseTsconfig = JSON.parse(
-    readFileSync(path.join(repoRoot, "tsconfig.base.json"), "utf8"),
-  );
-  const strictnessViolations = checkTsconfigStrictness(
-    baseTsconfig,
-    packageDirs,
-    readTsconfig,
-  );
-
-  const violations = [...catalogViolations, ...strictnessViolations];
-
-  if (violations.length > 0) {
-    console.error("Catalog/strictness discipline violations:");
-    for (const violation of violations) {
-      console.error(`  - ${violation}`);
-    }
-    process.exit(1);
-  }
-
-  console.log(
-    `OK: catalog and tsconfig-strictness discipline hold across ${packageDirs.length} workspace package(s).`,
-  );
-  process.exit(0);
-}
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main();
-}

@@ -1,6 +1,7 @@
 # Capability: workspace-toolchain
 
-> Change: `workspace-test-harness-bootstrap`. New capability.
+> Changes: `workspace-test-harness-bootstrap` (initial), `workspace-guard-scripts-cleanup` (enforcement
+> mechanism update + new requirements for changelog and changeset scripts).
 
 ## ADDED Requirements
 
@@ -8,14 +9,16 @@
 The workspace MUST declare a single pnpm catalog in `pnpm-workspace.yaml` covering every
 harness dependency (`vitest`, `tsup`, the chosen linter, and the benchmark-harness
 dependencies), and every package MUST resolve these dependencies via `catalog:` protocol rather
-than an independently pinned version range.
+than an independently pinned version range. Catalog discipline MUST be enforced by a Vitest test
+(`packages/core/test/catalog-discipline.test.ts`), not by a script wired into the `lint` task; no
+`scripts/*.mjs` file MUST be spawned as a subprocess to perform this check.
 
 #### Scenario: A package resolves vitest from the catalog
 - **GIVEN**: `pnpm-workspace.yaml` declares `vitest` in its `catalog`
 - **WHEN**: `packages/core/package.json` declares a `devDependencies.vitest` entry
-- **THEN**: the entry's version specifier is exactly `catalog:`, verified by a repository lint
-  script (`pnpm run lint`) that fails if any workspace package pins its own `vitest`,
-  `tsup`, or linter version instead of `catalog:`
+- **THEN**: the entry's version specifier is exactly `catalog:`, verified by
+  `pnpm exec vitest run packages/core/test/catalog-discipline.test.ts`, which fails if any
+  workspace package pins its own `vitest`, `tsup`, or linter version instead of `catalog:`
 
 #### Scenario: The catalog is complete before any consumer needs it
 - **GIVEN**: this change adds `tsup` and the benchmark-harness dependencies as new workspace
@@ -23,6 +26,23 @@ than an independently pinned version range.
 - **WHEN**: `pnpm install` runs at the repository root
 - **THEN**: `pnpm install` succeeds with no "not found in catalog" resolution error for any
   dependency referenced by a package as `catalog:`
+
+#### Scenario: A tsconfig.json that fails to parse is reported as a violation, not skipped
+- **GIVEN**: a workspace package directory matched by `pnpm-workspace.yaml`'s `packages:` globs
+  whose `tsconfig.json` contains a JSONC line comment (e.g. `// deliberately invalid for this
+  test`), making it fail strict `JSON.parse`
+- **WHEN**: `pnpm exec vitest run packages/core/test/catalog-discipline.test.ts` runs
+- **THEN**: the test reports a failure attributable to that package's `tsconfig.json`, rather
+  than silently treating the package as compliant; a minimal comment-stripping step MUST be
+  applied before parsing so that an ordinary comment-bearing tsconfig is read correctly, and only
+  a tsconfig that remains unparseable after stripping is reported as a violation
+
+#### Scenario: The `lint` task no longer runs a catalog-discipline script
+- **GIVEN**: `turbo.json` and the root `package.json` as modified by this change
+- **WHEN**: a reviewer inspects the `lint` task definition and the root `lint` script
+- **THEN**: neither invokes `scripts/verify-catalog-discipline.mjs`; `turbo.json`'s `//#lint`
+  task and the root `lint`/`lint:all` script split introduced for that invocation are removed,
+  and `lint` runs as a plain per-package task again
 
 ### Requirement: Completed Base TypeScript Configuration
 `tsconfig.base.json` MUST retain its existing options (`target: ES2022`, `module: ESNext`,
@@ -56,16 +76,24 @@ inside a numeric hot loop.
 Every package `tsconfig.json` MUST extend `tsconfig.base.json` at the repository root and MUST
 add only `compilerOptions.paths`, output-location options (`outDir`, `rootDir`) and
 package-local `include`/`exclude`; it MUST NOT redeclare or relax any strictness flag set by the
-base config. (`outDir` and `rootDir` are named explicitly because `packages/core/tsconfig.json`
-already sets both, and an earlier wording that allowed "only `paths`/`include`/`exclude`"
-contradicted the file it describes.)
+base config, and it MUST NOT declare a root-level `exports` field un-scoped to a package
+subdirectory. Both checks MUST be enforced by a Vitest test
+(`packages/core/test/catalog-discipline.test.ts` for strictness, and the same file or an
+adjacent one for the no-root-`exports` check), not by a script wired into the `lint` task.
 
 #### Scenario: A package tsconfig cannot relax strict
 - **GIVEN**: `packages/core/tsconfig.json` extends `../../tsconfig.base.json`
-- **WHEN**: a reviewer inspects `packages/core/tsconfig.json` for a `compilerOptions.strict` or
-  `compilerOptions.noUncheckedIndexedAccess` override
-- **THEN**: a repository CI step (`pnpm exec turbo run lint`) fails if any package
-  `tsconfig.json` sets `strict: false` or `noUncheckedIndexedAccess: false`
+- **WHEN**: `pnpm exec vitest run packages/core/test/catalog-discipline.test.ts` runs
+- **THEN**: the test fails if any package `tsconfig.json` sets `strict: false` or
+  `noUncheckedIndexedAccess: false`
+
+#### Scenario: A package.json cannot declare an un-scoped root exports field
+- **GIVEN**: a workspace package's `package.json`
+- **WHEN**: the Vitest test asserting `checkNoRootExports` runs against every package matched by
+  `pnpm-workspace.yaml`'s `packages:` globs
+- **THEN**: the test fails if any matched package's `package.json` declares a top-level `exports`
+  field that is not scoped under a package subdirectory, using the same `checkNoRootExports`
+  function previously invoked by `scripts/verify-no-root-exports.mjs`
 
 ### Requirement: Mechanically Enforced `any` Ban
 The lint configuration MUST mechanically reject every form of `any` banned by CLAUDE.md rule 1
@@ -120,3 +148,39 @@ The lint configuration MUST mechanically reject every form of `any` banned by CL
 - **WHEN**: `pnpm exec turbo run lint` runs over the workspace
 - **THEN**: it exits `0` and reports at least one executed lint task — the fixtures are excluded
   from the default run, so they neither fail it nor make it vacuous
+
+### Requirement: Changelog Package List Derived from Workspace Globs
+`scripts/sync-root-changelog.mjs` MUST derive the list of packages it checks for changelog
+entries from `pnpm-workspace.yaml`'s `packages:` globs (resolving each matched directory's
+`package.json` name), rather than from a hardcoded array of package names and paths.
+
+#### Scenario: A newly added workspace package is picked up without editing the script
+- **GIVEN**: `pnpm-workspace.yaml`'s `packages:` globs match a package directory not present in
+  any hardcoded list inside `scripts/sync-root-changelog.mjs`
+- **WHEN**: `node scripts/sync-root-changelog.mjs` runs after that package's `CHANGELOG.md` was
+  modified by Changesets
+- **THEN**: the script includes that package's changelog entry in the root `CHANGELOG.md`
+  summary without requiring any change to `scripts/sync-root-changelog.mjs` itself
+
+#### Scenario: A package matched by the workspace globs but without a CHANGELOG.md is skipped, not errored
+- **GIVEN**: a directory matched by `pnpm-workspace.yaml`'s `packages:` globs that has no
+  `CHANGELOG.md` yet
+- **WHEN**: `node scripts/sync-root-changelog.mjs` runs
+- **THEN**: the script completes without throwing, omitting that package from the summary
+
+### Requirement: Changeset Message Is a Required Argument
+`scripts/add-changeset.mjs` MUST require an explicit message argument and MUST NOT default to a
+placeholder summary string. If invoked without a message argument, it MUST exit with a non-zero
+status and print a usage message, and it MUST NOT write a `.changeset/*.md` file.
+
+#### Scenario: Running without a message fails instead of writing a placeholder changeset
+- **GIVEN**: the `.changeset/` directory in its current state
+- **WHEN**: `node scripts/add-changeset.mjs` runs with no arguments
+- **THEN**: the process exits with a non-zero status code, prints a usage message to stderr, and
+  no new file is created under `.changeset/`
+
+#### Scenario: Running with a message still writes the changeset as before
+- **GIVEN**: the `.changeset/` directory in its current state
+- **WHEN**: `node scripts/add-changeset.mjs "fix: correct decimation edge case" patch @trace-kit/core` runs
+- **THEN**: the process exits `0` and a new `.changeset/*.md` file is written whose body is
+  exactly `"fix: correct decimation edge case"`, with no placeholder text

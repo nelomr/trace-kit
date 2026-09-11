@@ -1,0 +1,8 @@
+{
+  // deliberately invalid for this test: trailing comma below survives comment-stripping
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+  },
+  "include": ["src/**/*"],
+}

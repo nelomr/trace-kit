@@ -9,9 +9,16 @@ const rootDir = path.resolve(__dirname, '..');
 const changesetDir = path.join(rootDir, '.changeset');
 
 // Read CLI arguments
-// Usage: node scripts/add-changeset.mjs [message] [bumpType] [packageName]
+// Usage: node scripts/add-changeset.mjs <message> [bumpType] [packageName]
 const args = process.argv.slice(2);
-const message = args[0] || 'routine updates and maintenance';
+const message = args[0];
+if (!message) {
+  console.error(
+    'Usage: node scripts/add-changeset.mjs <message> [bumpType] [packageName]\n' +
+      '  <message> is required — a placeholder summary must never reach a real CHANGELOG.',
+  );
+  process.exit(1);
+}
 const bumpType = ['patch', 'minor', 'major'].includes(args[1]?.toLowerCase())
   ? args[1].toLowerCase()
   : 'patch';
