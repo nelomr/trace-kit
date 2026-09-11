@@ -12,6 +12,9 @@ catalogs:
     eslint:
       specifier: ^9.17.0
       version: 9.39.5
+    fast-check:
+      specifier: ^4.0.0
+      version: 4.10.0
     tsup:
       specifier: ^8.3.5
       version: 8.5.1
@@ -65,6 +68,9 @@ importers:
       eslint:
         specifier: 'catalog:'
         version: 9.39.5
+      fast-check:
+        specifier: 'catalog:'
+        version: 4.10.0
       tsup:
         specifier: 'catalog:'
         version: 8.5.1(postcss@8.5.28)(tsx@4.23.13)(typescript@5.9.3)
@@ -1061,6 +1067,10 @@ packages:
   extendable-error@0.1.7:
     resolution: {integrity: sha512-UOiS2in6/Q0FK0R0q6UY9vYpQ21mr/Qn1KOnte7vsACuNJf514WvCCUHSRCPcgjPT2bAhNIJdlE6bVap1GKmeg==}
 
+  fast-check@4.10.0:
+    resolution: {integrity: sha512-hhqQL+IJllZi3aM4TKvmCj3bywLEcycNTTLZeLhA9ttMxBrCqM07q7Di4kl+j9EWSTXvJH1+EpIgsDbF/+8H5Q==}
+    engines: {node: '>=12.17.0'}
+
   fast-deep-equal@3.1.3:
     resolution: {integrity: sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==}
 
@@ -1431,6 +1441,9 @@ packages:
   punycode@2.3.1:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==}
     engines: {node: '>=6'}
+
+  pure-rand@8.4.2:
+    resolution: {integrity: sha512-vvuOGgcuPJAirlHvuQw1TrOiw7ptaIXXmIbNuiNOY6lNGJJH49PQ1Kj4nd783nPdQhQdicgOjVI2yI/9BD6/Ng==}
 
   quansync@0.2.11:
     resolution: {integrity: sha512-AifT7QEbW9Nri4tAwR5M/uzpBuqfZf+zwaEM/QkzEjj7NBuFD2rBuy0K3dE+8wltbezDV7JMA0WfnCPYRSYbXA==}
@@ -2686,6 +2699,10 @@ snapshots:
 
   extendable-error@0.1.7: {}
 
+  fast-check@4.10.0:
+    dependencies:
+      pure-rand: 8.4.2
+
   fast-deep-equal@3.1.3: {}
 
   fast-glob@3.3.3:
@@ -2997,6 +3014,8 @@ snapshots:
   prettier@2.8.8: {}
 
   punycode@2.3.1: {}
+
+  pure-rand@8.4.2: {}
 
   quansync@0.2.11: {}
 

@@ -39,26 +39,74 @@ backing `ArrayBuffer` with any `Transit`-branded buffer.
 - **WHEN**: `payload.y.buffer === transitSlot.yTransit.buffer` is evaluated
 - **THEN**: the result is `false`
 
-### Requirement: Retained / Transit Brand Distinction
-The branded-buffer types MUST gain a `Retained` / `Transit` ownership-class brand, orthogonal to
-the X/Y/index axis brand, so a function accepting `Transit<T>` rejects a `Retained<T>` value at
-compile time.
+> The `Retained` / `Transit` ownership-class brand distinction is defined in the
+> `branded-buffers` capability, not here — see `specs/branded-buffers/spec.md`'s "Retained /
+> Transit Ownership-Class Brand" requirement. This capability only states that this payload's
+> buffers use the `Retained` side of that distinction (the requirement below).
 
-#### Scenario: A Retained buffer does not satisfy a Transit-typed parameter
-- **GIVEN**: a function `submitToPool(buf: Transit<Float32Array>): void`
-- **WHEN**: a `Retained<Float32Array>` value is passed to it in a fixture
-- **THEN**: `tsc --noEmit` reports a type error
-
-### Requirement: Monotonic Revision Field
+### Requirement: Monotonic Revision Field, Mutated Only Through `commitPayloadRevision`
 `SpectrumDataPayload` MUST carry a `revision: number` field that increments on every
 authoritative mutation of the payload's buffer contents, and MUST NEVER decrease or reset for
-the lifetime of the payload instance.
+the lifetime of the payload instance. The **only** authorized mutation entry point is an exported
+`commitPayloadRevision(payload: MutableSpectrumDataPayload, sampleCount: number): void` function,
+owned by `@trace-kit/core`. Calling it MUST: validate `sampleCount` against the payload's fixed
+`capacity`; write the new `sampleCount`; recompute `xMin`, `xMax`, `yMin`, and `yMax` over the new
+`[0, sampleCount)` prefix; and increment `revision` by exactly `1`. No other exported function or
+field assignment MUST be able to change `revision`, `sampleCount`, or the four extent fields. The
+mutable payload type accepted by `commitPayloadRevision` MUST NOT itself be part of the package's
+public export surface, so a downstream consumer cannot obtain a handle it can write through
+without deliberately re-declaring the interface.
 
 #### Scenario: Revision increments after a mutation
 - **GIVEN**: a payload with `revision === 0`
-- **WHEN**: the payload's authoritative buffers are updated through the core's mutation entry
-  point (e.g. after a decimation result is copied in)
-- **THEN**: `payload.revision === 1`, and a second mutation makes it `2`
+- **WHEN**: `commitPayloadRevision(payload, 600)` runs after a decimation result is copied into
+  the payload's buffers
+- **THEN**: `payload.revision === 1` and `payload.sampleCount === 600`, and a second call to
+  `commitPayloadRevision` makes `revision === 2`
+
+#### Scenario: commitPayloadRevision recomputes the extent fields
+- **GIVEN**: a payload whose buffers have just been overwritten with new sample data
+- **WHEN**: `commitPayloadRevision(payload, sampleCount)` runs
+- **THEN**: `xMin`, `xMax`, `yMin`, and `yMax` reflect the new `[0, sampleCount)` prefix, not the
+  previous revision's data
+
+#### Scenario: The mutable payload type is not part of the public export surface
+- **GIVEN**: the package entry point `packages/core/src/index.ts`
+- **WHEN**: its exports are enumerated
+- **THEN**: no exported binding exposes the mutable payload type, only `commitPayloadRevision`
+  itself and the readonly `SpectrumDataPayload` type
+
+### Requirement: X-Axis Precision via an f64 Origin With f32 Offsets
+`SpectrumDataPayload` MUST NOT store absolute X values in an f32 buffer. An absolute
+hardware-domain X value (e.g. an optical wavelength such as `1550.123456` nm) MUST be
+representable at full instrument resolution, and `Float32Array`'s ~7 significant decimal digits
+quantize such a value below that resolution. The payload MUST therefore carry a single f64
+`xOrigin: number` field, fixed for the payload's lifetime, and its `x` buffer MUST hold **offsets
+from `xOrigin`** — not absolute X — in a branded `Float32Array`. A consumer reconstructing an
+absolute X value MUST compute `xOrigin + x[i]`, never read `x[i]` alone as an absolute value.
+
+#### Scenario: A fine-resolution absolute X value survives origin/offset round-trip
+- **GIVEN**: a payload constructed with `xOrigin = 1550.0` and an absolute sweep value of
+  `1550.123456` nm
+- **WHEN**: the value is stored as an offset (`1550.123456 - 1550.0`) in the payload's `x`
+  buffer and later reconstructed as `xOrigin + x[i]`
+- **THEN**: the reconstructed value equals `1550.123456` to instrument resolution (within f32
+  offset precision applied to the small offset, not to the full absolute magnitude), whereas
+  storing `1550.123456` directly in an f32 buffer measurably loses precision below that
+  resolution
+
+#### Scenario: xOrigin is f64 and fixed for the payload's lifetime
+- **GIVEN**: a constructed `SpectrumDataPayload`
+- **WHEN**: `payload.xOrigin` is read at construction and again after a subsequent
+  `commitPayloadRevision` call
+- **THEN**: `payload.xOrigin` is typed as `number` (f64), and its value is unchanged by
+  `commitPayloadRevision`
+
+#### Scenario: The x buffer is documented and typed as offsets, not absolute X
+- **GIVEN**: the committed `SpectrumDataPayload` interface
+- **WHEN**: its `x` field and JSDoc are inspected
+- **THEN**: the field is documented as holding X offsets from `xOrigin`, and no requirement or
+  scenario in this capability treats `x[i]` as an absolute X value on its own
 
 ### Requirement: sampleCount Distinct From Buffer Capacity
 `SpectrumDataPayload` MUST carry a `sampleCount: number` field naming the length of the valid
@@ -83,17 +131,39 @@ revision against current buffer contents.
   `revision` value `3`, and the package's type-level or JSDoc contract states indices from
   revision `3` MUST NOT be applied to a payload at any other revision
 
-### Requirement: Explicit Output Offset and Count on Decimation Functions
-`minMaxEnvelope` and `lttb` MUST accept an explicit output offset and count parameter pair for
-writing into a caller-supplied window of a larger preallocated output array, because `.subarray`
-is banned by the allocation-free-hot-path ban list.
+### Requirement: Explicit Output Offset on Decimation Functions
+`minMaxEnvelope` and `lttb` MUST accept an explicit `outputOffset` positional parameter (never an
+options object) for writing into a caller-supplied window of a larger preallocated output array,
+because `.subarray` is banned by the `allocation-free-hot-path` ban list. Neither function
+accepts a separate `outputCount` input parameter: the write length is always a **derived value**,
+not an independent input, because it would otherwise duplicate information the function already
+receives and could disagree with it. For `minMaxEnvelope` the write length is `bucketCount * 2`;
+for `lttb` it is `threshold`. Both functions return that derived count as their result, so a
+caller advancing a cursor through a larger buffer uses the return value rather than
+recomputing or independently supplying it. This requirement's call shapes MUST match the single
+signature each function's own capability spec (`decimation-min-max`, `decimation-lttb`) states;
+this file does not restate or vary either signature.
 
 #### Scenario: minMaxEnvelope writes into a sub-window of a larger buffer
 - **GIVEN**: a preallocated `Float32Array` of length `4096` and an intent to write bucket output
-  starting at offset `1024` for `512` elements
-- **WHEN**: `minMaxEnvelope(x, y, out, { outputOffset: 1024, outputCount: 512, ... })` runs
-- **THEN**: only indices `[1024, 1536)` of `out` are written, and no `.subarray` call appears
-  anywhere in the implementation (asserted by a source-level lint rule or grep-based CI check)
+  starting at offset `1024` for a `bucketCount` of `256` (256 * 2 = 512 elements)
+- **WHEN**: `minMaxEnvelope(y, sourceOffset, sampleCount, out, 1024, 256)` runs
+- **THEN**: only indices `[1024, 1536)` of `out` are written, the function returns `512`, and no
+  `.subarray` call appears anywhere in the implementation (asserted by a source-level lint rule
+  or grep-based CI check)
+
+#### Scenario: lttb writes into a sub-window of a larger buffer
+- **GIVEN**: a preallocated `Int32Array` of length `256` and an intent to write `64` indices
+  starting at offset `128`
+- **WHEN**: `lttb(x, y, sourceOffset, sampleCount, out, 128, 64)` runs
+- **THEN**: only indices `[128, 192)` of `out` are written, the function returns `64`, and no
+  `.subarray` call appears anywhere in the implementation
+
+#### Scenario: Neither function accepts an independent outputCount parameter
+- **GIVEN**: the committed signatures of `minMaxEnvelope` and `lttb`
+- **WHEN**: their parameter lists are inspected
+- **THEN**: neither declares an `outputCount` parameter; the write length is derived from
+  `bucketCount` (times 2) or `threshold` respectively, and returned by the function
 
 ## Contradiction Found (must not be silently resolved)
 

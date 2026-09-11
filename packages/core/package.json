@@ -29,6 +29,7 @@
     "tsup": "catalog:",
     "eslint": "catalog:",
     "typescript-eslint": "catalog:",
-    "tsx": "catalog:"
+    "tsx": "catalog:",
+    "fast-check": "catalog:"
   }
 }

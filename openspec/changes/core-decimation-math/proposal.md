@@ -2,7 +2,8 @@
 
 > Change 2 of the 16-change decomposition in
 > `openspec/changes/00-roadmap-decomposition/exploration.md` (§2 inventory, §3 graph).
-> Hard prerequisite: **change 1 — `workspace-test-harness-bootstrap`**.
+> Hard prerequisite: **change 1 — `workspace-test-harness-bootstrap`** — satisfied; that change is
+> archived and its five capabilities are merged into `openspec/specs/`.
 
 ## Problem / Motivation
 
@@ -13,11 +14,28 @@ that follow this one — both renderers, the transport contract, the SVG exporte
 adapters, the wafer map — consumes the types and functions this change creates. It is the first
 change in the plan that writes domain code.
 
-It also cannot start before change 1 lands, and for a concrete reason rather than a procedural
-one: `openspec/config.yaml` declares `strict_tdd: true`, and this repository has **no Vitest
-configuration and no test file anywhere**. A RED step is not writable. This change is the first
-consumer of the harness, and it is also the first consumer of the benchmark runner, because it
-is the first change in the plan carrying a performance criterion.
+Its hard prerequisite — change 1, `workspace-test-harness-bootstrap` — is **archived**, and the
+harness it delivered is on disk now: a root `vitest.config.ts` using `test.projects` with a
+single `core` project pinned to the `node` environment, seven real test files under
+`packages/core/test/` (including the Node-isomorphism tripwire), real `typecheck` and `lint`
+Turborepo tasks, and a benchmark runner at `packages/core/bench/` (`runner.ts` + `index.ts`)
+emitting `bench-results.json` with warm-up, median and p95. `openspec/config.yaml` declares
+`strict_tdd: true`, and a RED step is now writable — which is precisely what change 1 unblocked.
+
+Three gaps in that harness are this change's problem to close, and they are why the two
+MODIFIED capabilities below exist:
+
+- **`fast-check` is not installed anywhere.** It is absent from the workspace catalog, the root
+  `package.json` and `packages/core/package.json`. The property-based tests this change depends
+  on cannot be written until it is pinned.
+- **The benchmark runner has no real consumer.** `packages/core/bench/index.ts` benchmarks a
+  `placeholderWorkload()` whose own comment names this change as its replacement, and it carries
+  no declared reference-hardware record.
+- **There is no `--trace-deopt` invocation mode** in the runner.
+
+This change is therefore the first consumer of both the test harness and the benchmark runner,
+because it is the first change in the plan carrying a performance criterion — and the first that
+writes domain code against them.
 
 Two definitional gaps in the input brief have to be closed here, and both are corrections rather
 than transcriptions:
@@ -107,6 +125,9 @@ dependencies.
 
 ## Capabilities (Contract for `sdd-spec`)
 
+Exactly seven capabilities, matching `openspec/roadmap.yaml` order 2 one-for-one: five ADDED and
+two MODIFIED. Each has a delta directory under `specs/` in this change.
+
 ### New Capabilities
 
 - `branded-buffers`: the branded typed-buffer types, their construction and narrowing contract,
@@ -125,10 +146,21 @@ dependencies.
 
 ### Modified Capabilities
 
-- `test-harness` (from change 1): gains `fast-check` as a workspace dependency and gains the
-  property-based-testing conventions used by every later numeric change.
-- `benchmark-harness` (from change 1): gains its first real consumer, the declared reference
-  hardware record, and the `--trace-deopt` invocation mode.
+Both baselines exist in `openspec/specs/`, merged by change 1's archive, so each MODIFIED delta
+has a real requirement to modify:
+
+- `test-harness` — modifies the archived requirement **Real Vitest Wiring**
+  (`openspec/specs/test-harness/spec.md`), extending it so the workspace catalog additionally
+  pins `fast-check`, and establishing the property-based-testing conventions used by every later
+  numeric change. The baseline's other two requirements (Node-Isomorphism Tripwire Test; Real
+  `typecheck` and `lint` Tasks) are untouched.
+- `benchmark-harness` — modifies the archived requirement **Warm-Up and Median-of-N Reporting**
+  (`openspec/specs/benchmark-harness/spec.md`), replacing the placeholder workload in
+  `packages/core/bench/index.ts` with its first real consumer and adding the declared
+  reference-hardware record. It additionally introduces a **new** requirement, `--trace-deopt`
+  Invocation Mode, which has no baseline counterpart and is net-new behaviour on an
+  already-existing capability. The baseline's other two requirements (Machine-Readable Result
+  Format; Isolated From CI Coverage and Shared Runners) are untouched.
 
 ## Impact on TraceKit Packages
 

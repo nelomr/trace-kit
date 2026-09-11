@@ -1,8 +1,8 @@
 # Capability: test-harness
 
-> Change: `core-decimation-math`. Modified capability — base introduced by
-> `workspace-test-harness-bootstrap` (not yet archived into `openspec/specs/`; delta applies
-> against that change's `specs/test-harness/spec.md`).
+> Change: `core-decimation-math`. Modified capability — base introduced and archived by
+> `workspace-test-harness-bootstrap`; delta applies against
+> `openspec/specs/test-harness/spec.md`.
 
 ## MODIFIED Requirements
 

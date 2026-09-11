@@ -40,6 +40,10 @@ export default tseslint.config(
             "packages/core/test/*.ts",
             "packages/core/test/fixtures/*.ts",
             "packages/core/test/bench/*.ts",
+            "packages/core/test/decimation/*.ts",
+            "packages/core/test/buffers/*.ts",
+            "packages/core/test/payload/*.ts",
+            "packages/core/test/setup/*.ts",
             "packages/core/bench/*.ts",
             "packages/core/tsup.config.ts",
           ],
@@ -50,7 +54,7 @@ export default tseslint.config(
           // through ordinary upward `tsconfig.json` discovery. That list is bounded and
           // explicit (the entries above), not a wildcard — this raises typescript-eslint's
           // default safety cap (8) to fit it, not to allow unbounded growth.
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 20,
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 40,
         },
         tsconfigRootDir: import.meta.dirname,
       },
@@ -81,6 +85,106 @@ export default tseslint.config(
           selector: "TSAsExpression > TSUnknownKeyword",
           message:
             "`as unknown as Foo` (double assertion) suppresses type errors at a boundary. Justify with an inline eslint-disable-next-line carrying a reason if this is a genuine external boundary.",
+        },
+      ],
+    },
+  },
+  {
+    // Allocation-free hot-path enforcement (design.md §D5). Scoped to `src/decimation/**`
+    // only — this is the source-level instrument in the three-instrument enforcement graph
+    // (source / runtime / codegen). The loop-scoped selectors are nested under
+    // `:matches(ForStatement, WhileStatement, DoWhileStatement)` because boundary validation
+    // must still be able to construct and throw a `RangeError` *before* the loop; the ban is
+    // on the loop body, not the file. The remaining selectors are unscoped across the whole
+    // glob because they are never acceptable in a hot-path module.
+    files: ["packages/core/src/decimation/**/*.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) ObjectExpression",
+          message:
+            "Object literals inside a loop allocate on every iteration. Use scalar locals instead.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) ArrayExpression",
+          message:
+            "Array literals inside a loop allocate on every iteration. Write into a preallocated buffer instead.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) TemplateLiteral",
+          message:
+            "Template literals inside a loop allocate a string on every iteration. Move message construction outside the loop.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) NewExpression",
+          message:
+            "`new` inside a loop allocates on every iteration. Construct once outside the loop.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) ArrowFunctionExpression",
+          message:
+            "A per-call closure inside a loop allocates on every iteration. Hoist the function outside the loop.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) FunctionExpression",
+          message:
+            "A per-call closure inside a loop allocates on every iteration. Hoist the function outside the loop.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) SpreadElement",
+          message:
+            "Spread inside a loop allocates on every iteration. Use an explicit index-based copy instead.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) MemberExpression[property.name=/^(map|filter|slice|subarray|reduce|reduceRight|forEach|flatMap|concat|entries|keys|values|toSorted|toReversed|with)$/]",
+          message:
+            "This typed-array/array method allocates a new view or object. Use an explicit index-based loop writing into a preallocated buffer instead.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) MemberExpression[object.name=\"Math\"][property.name=/^(sin|cos|tan|asin|acos|atan|atan2|exp|expm1|log|log2|log10|log1p|pow|cbrt|sinh|cosh|tanh|asinh|acosh|atanh|hypot)$/]",
+          message:
+            "This transcendental Math function is implementation-dependent (ECMA-262) and breaks cross-platform determinism. Restate the computation without it.",
+        },
+        {
+          selector: "ForOfStatement",
+          message:
+            "`for...of` over a typed array allocates an iterator object. Use an indexed `for` loop instead.",
+        },
+        {
+          selector: "RestElement",
+          message:
+            "Rest parameters allocate an array on every call. Use explicit positional parameters instead.",
+        },
+        {
+          selector: "Identifier[name=\"arguments\"]",
+          message:
+            "`arguments` allocates an array-like object. Use explicit positional parameters instead.",
+        },
+        {
+          selector: "YieldExpression",
+          message: "Generators are not permitted in a hot-path module.",
+        },
+        {
+          selector: "AwaitExpression",
+          message: "`async`/`await` is not permitted in a hot-path module.",
+        },
+        {
+          selector: "FunctionDeclaration[async=true]",
+          message: "`async` functions are not permitted in a hot-path module.",
+        },
+        {
+          selector: "FunctionDeclaration[generator=true]",
+          message: "Generator functions are not permitted in a hot-path module.",
         },
       ],
     },
