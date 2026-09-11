@@ -86,3 +86,8 @@ reference whose measurement style change 2 follows (cross-referenced, not copied
 `HeapProfiler` browser gate (claim **C4d**) belongs to changes 5/7. Any baseline-comparison or
 regression-budget *computation* belongs to change 16. Any CI merge gate on timing: none exists
 here, deliberately.
+
+`runBenchmark` itself allocates a `number[]` sample array per run and times with
+`performance.now()` per call — negligible against `packages/core`'s own timing budgets, but if
+a future change reuses this runner to measure something allocation-sensitive, that overhead
+needs to be acknowledged or subtracted rather than attributed to the code under measurement.
