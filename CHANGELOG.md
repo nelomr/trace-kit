@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.4](https://github.com/nelomr/trace-kit/releases/tag/v0.0.4) (2026-09-11)
+
+### ⚡ Core Engine (`@trace-kit/core` @ 0.0.4)
+
+**Patch Changes**
+
+- [`3b83a2d`](https://github.com/nelomr/trace-kit/commit/3b83a2da297b0cceb8384a914b0d70d8ff146c9f) Thanks [@nelomr](https://github.com/nelomr)! - Add `minMaxEnvelope` and `lttb` decimation algorithms, a branded typed-buffer vocabulary, and `SpectrumDataPayload`, each allocation-free on the hot path and enforced by a loop-scoped lint rule and a GC-event gate.
+
+
 ## [0.0.3](https://github.com/nelomr/trace-kit/releases/tag/v0.0.3) (2026-09-11)
 
 ### ⚡ Core Engine (`@trace-kit/core` @ 0.0.3)

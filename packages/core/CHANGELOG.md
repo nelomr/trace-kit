@@ -1,5 +1,11 @@
 # @trace-kit/core
 
+## 0.0.4
+
+### Patch Changes
+
+- [`3b83a2d`](https://github.com/nelomr/trace-kit/commit/3b83a2da297b0cceb8384a914b0d70d8ff146c9f) Thanks [@nelomr](https://github.com/nelomr)! - Add `minMaxEnvelope` and `lttb` decimation algorithms, a branded typed-buffer vocabulary, and `SpectrumDataPayload`, each allocation-free on the hot path and enforced by a loop-scoped lint rule and a GC-event gate.
+
 ## 0.0.3
 
 ### Patch Changes
