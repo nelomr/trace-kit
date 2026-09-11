@@ -28,3 +28,57 @@ export function minMaxEnvelopeAllocating(
   }
   return result;
 }
+
+/**
+ * Selects `threshold` indices using the same bucket partition as `lttb`, but averages each
+ * bucket over a `.slice()` copy (a fresh typed-array view allocated per bucket) instead of an
+ * accumulate loop, allocating on every call.
+ */
+export function lttbAllocating(
+  x: Float32Array,
+  y: Float32Array,
+  sourceOffset: number,
+  sampleCount: number,
+  threshold: number,
+): Int32Array {
+  const lastIndex = sourceOffset + sampleCount - 1;
+  const selected: number[] = [sourceOffset];
+
+  if (threshold === 2) {
+    selected.push(lastIndex);
+    return Int32Array.from(selected);
+  }
+
+  const interior = sampleCount - 2;
+  const buckets = threshold - 2;
+  let anchorX = x[sourceOffset]!;
+  let anchorY = y[sourceOffset]!;
+
+  for (let bucket = 0; bucket < buckets; bucket += 1) {
+    const start = sourceOffset + 1 + Math.floor((bucket * interior) / buckets);
+    const end =
+      sourceOffset + 1 + Math.floor(((bucket + 1) * interior) / buckets);
+    // Allocates a fresh view every call — the control's whole point.
+    const bucketSliceY = y.slice(start, end);
+    const bucketSliceX = x.slice(start, end);
+
+    let bestOffset = 0;
+    let bestArea = -1;
+    for (let i = 0; i < bucketSliceY.length; i += 1) {
+      const area = Math.abs(
+        (anchorX - bucketSliceX[i]!) * (bucketSliceY[i]! - anchorY),
+      );
+      if (area > bestArea) {
+        bestArea = area;
+        bestOffset = i;
+      }
+    }
+    const bestIndex = start + bestOffset;
+    selected.push(bestIndex);
+    anchorX = x[bestIndex]!;
+    anchorY = y[bestIndex]!;
+  }
+
+  selected.push(lastIndex);
+  return Int32Array.from(selected);
+}

@@ -1,7 +1,7 @@
 // Regression fixture for `noUncheckedIndexedAccess` (workspace-toolchain capability).
-// Group 0 (baseline) proved this read unguarded and unchecked; Group 2 task 2.1 enabled
-// `noUncheckedIndexedAccess` in `tsconfig.base.json`, which made the original unguarded
-// `const v: number = buf[i]` fail as `number | undefined`. This guarded form compiles clean
+// Without that strictness flag enabled in `tsconfig.base.json`, this array read was
+// unguarded and unchecked; with it enabled, the original unguarded
+// `const v: number = buf[i]` fails as `number | undefined`. This guarded form compiles clean
 // and stays committed as the regression asset for that strictness flag.
 const buf = new Float32Array([1, 2, 3]);
 const i = 1;

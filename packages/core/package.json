@@ -20,7 +20,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "eslint .",
-    "bench": "tsx bench/index.ts"
+    "bench": "tsx bench/index.ts",
+    "bench:deopt": "tsx bench/index.ts --trace-deopt"
   },
   "devDependencies": {
     "@types/node": "catalog:",

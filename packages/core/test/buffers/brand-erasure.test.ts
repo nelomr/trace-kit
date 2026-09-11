@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { asXBuffer } from "../../src/buffers/brand.js";
 
 // branded-buffers spec, "A branded buffer is identical at runtime to its underlying typed
-// array" scenario: branding is type-level only (design.md §D1) and must erase completely.
+// array" scenario: branding is type-level only (a phantom/nominal type, erased at compile
+// time) and must erase completely, with zero runtime wrapper or property difference.
 describe("brand erasure", () => {
   it("produces a value runtime-identical to a plain Float32Array", () => {
     const length = 8;

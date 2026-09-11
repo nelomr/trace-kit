@@ -1,8 +1,8 @@
 import { writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 
-// Benchmark harness (design.md §D6). Dependency-free: warm-up + N-measured-iterations +
-// median/p95 reporting, and the D6 result JSON schema. Excluded from the published build —
+// Benchmark harness. Dependency-free: warm-up + N-measured-iterations + median/p95
+// reporting, and the result JSON schema below. Excluded from the published build —
 // this file lives outside `src/`, so `tsup.config.ts` (which only globs `src/**`) never sees
 // it; it is nonetheless typechecked and linted via `packages/core/tsconfig.test.json`, which
 // includes `bench/**/*`.
@@ -15,8 +15,17 @@ import { cpus } from "node:os";
 export interface BenchmarkOptions {
   /** Non-zero count of untimed iterations executed before the first timed sample. */
   warmup: number;
-  /** Number of timed iterations. Must be >= 30 per design.md §D6. */
+  /** Number of timed iterations. Must be >= 30 for the median/p95 to be statistically stable. */
   iterations: number;
+  /**
+   * Clock used to time each iteration, in milliseconds. Defaults to `performance.now`.
+   *
+   * Injecting a clock exists so the harness's own behaviour — that warm-up iterations are
+   * discarded rather than merely de-weighted — can be asserted exactly, instead of through a
+   * wall-clock ratio bound that a single scheduler preemption on a loaded machine can break.
+   * Real benchmark runs leave this unset.
+   */
+  now?: () => number;
 }
 
 export interface BenchmarkResult {
@@ -68,7 +77,8 @@ function median(sortedSamples: readonly number[]): number {
 /**
  * Runs `fn` through `options.warmup` untimed iterations (discarded entirely, never entering
  * the timed set) followed by `options.iterations` individually timed iterations, and reports
- * the median and p95 of those timed samples — never a total-divided-by-N mean (design.md §D6).
+ * the median and p95 of those timed samples — never a total-divided-by-N mean, since the mean
+ * is exactly the statistic a single slow outlier (a cold sample, a GC pause, a deopt) destroys.
  */
 export function runBenchmark(
   name: string,
@@ -77,14 +87,16 @@ export function runBenchmark(
 ): BenchmarkResult {
   if (options.warmup <= 0) {
     throw new RangeError(
-      "warmup must be a non-zero, positive count — a harness reporting a single cold sample is a defect, not a measurement (claim C4b)",
+      "warmup must be a non-zero, positive count — the cold first invocation of a numeric pass runs interpreted before JIT tiering and can be 3-5x slower than the warm steady state, so a harness reporting a single cold sample is a defect, not a measurement",
     );
   }
   if (options.iterations < MIN_ITERATIONS) {
     throw new RangeError(
-      `iterations must be >= ${MIN_ITERATIONS} (design.md §D6), got ${options.iterations}`,
+      `iterations must be >= ${MIN_ITERATIONS} for the median/p95 to be statistically meaningful, got ${options.iterations}`,
     );
   }
+
+  const now = options.now ?? (() => performance.now());
 
   for (let i = 0; i < options.warmup; i += 1) {
     fn();
@@ -92,9 +104,9 @@ export function runBenchmark(
 
   const samples: number[] = [];
   for (let i = 0; i < options.iterations; i += 1) {
-    const start = performance.now();
+    const start = now();
     fn();
-    const end = performance.now();
+    const end = now();
     samples.push(end - start);
   }
 
@@ -129,7 +141,7 @@ function currentRunnerInfo(): RunnerInfo {
 }
 
 /**
- * Runs a set of named benchmarks and assembles the full D6 result-file schema
+ * Runs a set of named benchmarks and assembles the full result-file schema
  * (`schemaVersion`, `createdAt`, `runner`, `benchmarks`).
  */
 export function runBenchmarkSuite(
@@ -158,7 +170,7 @@ export function runBenchmarkSuite(
 
 /**
  * Writes a {@link BenchmarkFileResult} to `filePath` as machine-readable JSON
- * (`bench-results.json`, design.md §D6) — one entry per named benchmark, with the full
+ * (`bench-results.json`) — one entry per named benchmark, with the full
  * `schemaVersion`/`runner` envelope every later regression-budget consumer requires.
  */
 export function writeBenchResults(filePath: string, result: BenchmarkFileResult): void {

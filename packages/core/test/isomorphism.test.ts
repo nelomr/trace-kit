@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { VERSION } from "../src/index.js";
 
-// Node-environment isomorphism tripwire (CLAUDE.md rule 5 / design.md §D5).
+// Node-environment isomorphism tripwire (CLAUDE.md rule 5).
 // This project is pinned to `environment: "node"` with no DOM globals configured
 // (see root vitest.config.ts). Importing `@trace-kit/core` here and asserting it
 // loads and evaluates is the first line of defense against a `document`/`window`

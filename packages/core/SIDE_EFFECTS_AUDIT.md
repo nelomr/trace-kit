@@ -19,7 +19,10 @@ does. The audit cannot silently go stale in either direction.
 
 | File | Side-effect-free? | Notes |
 |---|---|---|
-| `src/index.ts` | Yes | Declares and exports the `VERSION` constant only. No side effect at module scope. |
+| `src/index.ts` | Yes | Pure public re-export barrel — every binding is `export … from './…js'`. No code runs at module-evaluation time. |
+| `src/version.ts` | Yes | Declares and exports the `VERSION` constant only. No side effect at module scope. |
 | `src/buffers/brand.ts` | Yes | `declare const … : unique symbol` brand tags plus pure functions (assert/narrow/allocate). No code runs at module-evaluation time. |
 | `src/decimation/min-max.ts` | Yes | Exports the `minMaxEnvelope` function only. No code runs at module-evaluation time. |
+| `src/decimation/lttb.ts` | Yes | Exports the `lttb` function only. No code runs at module-evaluation time. |
+| `src/decimation/index.ts` | Yes | Internal re-export barrel for the two decimation algorithms only. No code runs at module-evaluation time. |
 | `src/payload/spectrum-data-payload.ts` | Yes | Exports the `SpectrumDataPayload` type and the `commitPayloadRevision`/`isCursorCurrent` functions. No code runs at module-evaluation time. |

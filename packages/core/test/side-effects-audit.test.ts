@@ -4,8 +4,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 // Asserts set equality in both directions between `SIDE_EFFECTS_AUDIT.md`'s listed files and
-// the actual files under `src/` (design.md §B11): a file removed from `src` but left in the
-// audit must fail this check just as a file added to `src` but missing from the audit does.
+// the actual files under `src/`: bundlers rely on this audit to tree-shake safely, so a file
+// removed from `src` but left in the audit must fail this check just as a file added to `src`
+// but missing from the audit does.
 const packageRoot = path.resolve(fileURLToPath(import.meta.url), "../..");
 
 function extractAuditedPaths(markdown: string): Set<string> {

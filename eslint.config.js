@@ -46,6 +46,11 @@ export default tseslint.config(
             "packages/core/test/setup/*.ts",
             "packages/core/bench/*.ts",
             "packages/core/tsup.config.ts",
+            // Not a real file on disk: `lint-hot-path.test.ts` lints the committed
+            // `test/fixtures/hot-path-violation.ts` source under this virtual `filePath` so it
+            // is evaluated against the `src/decimation/**`-scoped hot-path rules without moving
+            // the fixture into the published source tree.
+            "packages/core/src/decimation/__hot-path-fixture-proof__.ts",
           ],
           defaultProject: "packages/core/tsconfig.test.json",
           // `test/**` and `bench/**` are legitimately outside `tsconfig.json`'s own

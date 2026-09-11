@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-// Proves the corrected `exports`/`main`/`module` fields (design.md §D4) actually resolve
+// Proves the package.json `exports`/`main`/`module` fields actually resolve
 // against the built `dist/` output, for both a dynamic `import()` (the `import` condition)
 // and `createRequire(...)('@trace-kit/core')` (the `require` condition) — and that the two
 // resolved entry points are genuinely distinct files (ESM vs CJS), not one masquerading as

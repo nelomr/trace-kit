@@ -4,14 +4,13 @@ import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-// RED/GREEN for design.md §D6's full result-file schema: not just `median`/`p95`/
-// `iterations`, but `schemaVersion` (so a future change-16 consumer can refuse an
-// unrecognized file loudly instead of reading `undefined` as `0`) and a `runner` block
-// (confirmed decision 3 makes every performance criterion a self-calibrating relative budget
-// measured on the executing runner — a baseline is meaningless without knowing which machine
-// produced it), plus `warmup`.
+// Verifies the full result-file schema: not just `median`/`p95`/`iterations`, but
+// `schemaVersion` (so a future consumer can refuse an unrecognized file loudly instead of
+// reading `undefined` as `0`) and a `runner` block (every performance criterion is a
+// self-calibrating relative budget measured on the executing runner — a baseline is
+// meaningless without knowing which machine produced it), plus `warmup`.
 describe("bench result format", () => {
-  it("produces the full D6 schema for a run of N >= 30 iterations", () => {
+  it("produces the full result schema for a run of N >= 30 iterations", () => {
     const fileResult = runBenchmarkSuite([
       {
         name: "noop",

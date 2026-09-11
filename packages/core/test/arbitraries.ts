@@ -1,6 +1,6 @@
 import fc from "fast-check";
 
-// Shared fast-check arbitraries (design.md §D8). `fc.float()` — not `fc.double()` — generates
+// Shared fast-check arbitraries. `fc.float()` — not `fc.double()` — generates
 // f32-representable values, so a generated series survives a `Float32Array` round trip
 // unchanged and a property failure is never an artifact of narrowing.
 
@@ -25,7 +25,7 @@ export function arbFloat32SeriesWithGaps(minLength: number, maxLength: number) {
     .map((values) => Float32Array.from(values));
 }
 
-/** Respects §D3's `bucketCount <= sampleCount` precondition. */
+/** Respects the decimation API's `bucketCount <= sampleCount` precondition. */
 export function arbBucketCount(sampleCount: number) {
   return fc.integer({ min: 1, max: Math.max(1, sampleCount) });
 }
