@@ -1,5 +1,11 @@
 # @trace-kit/core
 
+## 0.0.3
+
+### Patch Changes
+
+- [`c254f5a`](https://github.com/nelomr/trace-kit/commit/c254f5acbad2c8616308bd7e36f203f3e18aa6d4) Thanks [@nelomr](https://github.com/nelomr)! - chore(scripts): migrate catalog-discipline/no-root-exports guards to Vitest, fix JSONC fail-open, derive changelog package list from workspace globs, require add-changeset message
+
 ## 0.0.2
 
 ### Patch Changes
