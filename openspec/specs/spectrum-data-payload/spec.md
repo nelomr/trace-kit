@@ -17,11 +17,46 @@
 and Y buffers plus metadata. Downstream packages (`renderers`, `vue`, `react`) MUST consume it
 structurally and MUST NOT construct or mutate it.
 
+The payload MUST additionally be the **authoritative main-thread CPU reference** for its buffer
+contents: it MUST be the only object a renderer reads for re-upload, and re-upload from
+`payload.x` and `payload.y` MUST be valid at any instant, including immediately after a
+`webglcontextrestored` event, because the transport protocol never places a payload buffer in a
+transfer list. A renderer MUST NOT be required to check for detachment before re-uploading from
+a payload.
+
 #### Scenario: A payload is constructed only via a core factory
 - **GIVEN**: `@trace-kit/core` exports `createSpectrumDataPayload(...)`
 - **WHEN**: a consumer test constructs a payload using only this factory
 - **THEN**: the returned value satisfies the `SpectrumDataPayload` structural type and its X/Y
   buffers are branded buffers from the `branded-buffers` capability
+
+#### Scenario: A renderer never observes a detached payload buffer
+- **GIVEN**: a `SpectrumDataPayload` whose buffers are consumed by a simulated GL-restore
+  re-upload routine, concurrently with 100 transport round trips on unrelated transit slots
+- **WHEN**: the re-upload routine reads `payload.x.byteLength` and `payload.y.byteLength` at any
+  point during those round trips
+- **THEN**: both are always equal to their original configured capacity, never `0`
+- **AND**: in the same run, the same `byteLength` probe applied to a *transit* buffer immediately
+  after its `submit` observes `0` — proving the probe is capable of detecting detachment, so the
+  payload result above is a discrimination rather than a reading no detachment could have
+  changed
+
+#### Scenario: revision distinguishes "restore" from "new data" with an integer compare
+- **GIVEN**: a payload at `revision === 5` immediately after a simulated `webglcontextlost` event
+- **WHEN**: a simulated `webglcontextrestored` fires with no intervening call to
+  `commitPayloadRevision`
+- **THEN**: the observed `revision` is still `5`, and the restore path re-uploads from the
+  existing buffers without re-running decimation
+
+#### Scenario: The transport protocol cannot place a payload buffer in a transfer list
+- **GIVEN**: the transfer-list builder, typed to accept only `TransferableBacking`
+- **WHEN**: a fixture passes `payload.x` (a `Retained<XBuffer>`) to it
+- **THEN**: `tsc --noEmit` reports a type error for the fixture, so the re-upload guarantee above
+  is enforced at compile time rather than by convention
+- **AND**: a positive control fixture in the same typecheck run, passing a `Transit` buffer to
+  the same builder, reports **no** error — so the rejection above is the brand discriminating
+  `Retained` from `Transit`, and not a builder signature that rejects every argument or a
+  fixture that never compiled
 
 ### Requirement: Payload Buffers Are Retained, Never Transferable
 Per `core-transport-contract` design §D5, a `SpectrumDataPayload`'s buffers are normatively

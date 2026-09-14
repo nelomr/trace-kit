@@ -1,8 +1,7 @@
 # Capability: workspace-toolchain
 
-> Change: `playground-shell`. Modified capability — base introduced by
-> `workspace-test-harness-bootstrap` (not yet archived into `openspec/specs/`; delta applies
-> against that change's `specs/workspace-toolchain/spec.md`).
+> Change: `playground-shell`. Modified capability — base archived at
+> `openspec/specs/workspace-toolchain/spec.md` by `workspace-test-harness-bootstrap`.
 
 ## MODIFIED Requirements
 

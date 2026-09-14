@@ -44,6 +44,7 @@ export default tseslint.config(
             "packages/core/test/buffers/*.ts",
             "packages/core/test/payload/*.ts",
             "packages/core/test/setup/*.ts",
+            "packages/core/test/transport/*.ts",
             "packages/core/bench/*.ts",
             "packages/core/tsup.config.ts",
             // Not a real file on disk: `lint-hot-path.test.ts` lints the committed
@@ -59,7 +60,7 @@ export default tseslint.config(
           // through ordinary upward `tsconfig.json` discovery. That list is bounded and
           // explicit (the entries above), not a wildcard — this raises typescript-eslint's
           // default safety cap (8) to fit it, not to allow unbounded growth.
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 40,
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 64,
         },
         tsconfigRootDir: import.meta.dirname,
       },

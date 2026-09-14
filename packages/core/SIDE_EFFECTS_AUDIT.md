@@ -26,3 +26,11 @@ does. The audit cannot silently go stale in either direction.
 | `src/decimation/lttb.ts` | Yes | Exports the `lttb` function only. No code runs at module-evaluation time. |
 | `src/decimation/index.ts` | Yes | Internal re-export barrel for the two decimation algorithms only. No code runs at module-evaluation time. |
 | `src/payload/spectrum-data-payload.ts` | Yes | Exports the `SpectrumDataPayload` type and the `commitPayloadRevision`/`isCursorCurrent` functions. No code runs at module-evaluation time. |
+| `src/transport/ownership.ts` | Yes | Exports lease pack/unpack functions and phantom-typed lease/enum declarations only. No code runs at module-evaluation time. |
+| `src/transport/backpressure.ts` | Yes | Exports the stats-contract types, enums and pure functions (`createTransportStats`, `readStatsInto`, `deriveHealth`) only. No code runs at module-evaluation time. |
+| `src/transport/capabilities.ts` | Yes | Exports `detectTransportCapabilities`/`selectBufferBacking` functions and the `BufferBacking` enum; every global reference lives inside a function body. No code runs at module-evaluation time. |
+| `src/transport/decimation-port.ts` | Yes | Exports the `DecimationPort` interface family and enums only. No code runs at module-evaluation time. |
+| `src/transport/buffer-pool.ts` | Yes | Exports the `createBufferPool` factory and its types only; all state lives inside the factory's closure, constructed on call. No code runs at module-evaluation time. |
+| `src/transport/sync-port.ts` | Yes | Exports the `createSyncDecimationPort` factory only. No code runs at module-evaluation time. |
+| `src/transport/streaming-contract.ts` | Yes | Exports frozen types, constants and pure factory/selection functions only. No code runs at module-evaluation time. |
+| `src/transport/index.ts` | Yes | Pure public re-export barrel for the transport surface — every binding is `export … from './…js'`. No code runs at module-evaluation time. |

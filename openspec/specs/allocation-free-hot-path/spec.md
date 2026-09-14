@@ -47,19 +47,79 @@ the loop body itself does not throw.
 The transport round trip's zero-allocation gate MUST remain **zero** GC events per round trip
 (never relaxed to an `O(1)`-per-round-trip budget), asserted by `PerformanceObserver`
 `entryTypes: ['gc']` over N round trips under `--expose-gc`, with an allocating control variant
-in the same test proving the gate is live.
+in the same test proving the gate is live. The gate MUST apply to the synchronous in-thread port
+delivered by this change (`createSyncDecimationPort`) as well as to the transfer-mode probe.
 
-#### Scenario: The transfer-mode probe demonstrates zero scavenges across payload sizes
+#### Scenario: The transfer-mode probe reports zero scavenges at every payload size
 - **GIVEN**: the committed `transfer-roundtrip-probe.mjs` re-run at `deltaSamples` values of
   `4_096`, `16_384`, `65_536`, and `262_144`
 - **WHEN**: each run measures GC events over its iterations under `--expose-gc`
-- **THEN**: every run reports `0` GC events, demonstrating invariance across a 64x range of
-  payload size
+- **THEN**: every run reports `0` GC events
+- **AND**: this is recorded as the zero-allocation gate holding at each size independently, and
+  is **not** recorded as evidence of invariance across payload size — four measurements of a
+  quantity pinned at `0` cannot distinguish constant allocation from allocation that scales with
+  `deltaSamples`; invariance is asserted separately against the deterministic work count below
+
+#### Scenario: The synchronous port's round trip reports zero GC events
+- **GIVEN**: `createSyncDecimationPort` driven through 10,000 `acquire`/`submit`/`poll`/`release`
+  cycles under `--expose-gc`, after a warm-up phase
+- **WHEN**: a `PerformanceObserver({ entryTypes: ['gc'] })` counts events during the measured
+  window only
+- **THEN**: the observed count is exactly `0`
 
 #### Scenario: An allocating control variant proves the gate is live
 - **GIVEN**: a deliberately allocating variant of the same round-trip logic in the same test run
+  (for example, one that constructs a settlement object per call instead of reusing the
+  caller-owned `SettlementSink`)
 - **WHEN**: the same instrumentation measures it
 - **THEN**: the observed GC event count is greater than `0`
+
+### Requirement: View Re-Mint Count Is a Separate, Compatible Deterministic Assertion
+The number of typed-array view objects re-created per settlement in transfer mode — an
+unavoidable consequence of claim **C1**, since a transferred buffer returns as a new
+`ArrayBuffer` object — MUST be asserted as a constant, deterministic work count. That assertion
+MUST NOT be conflated with, or used to relax, the zero-GC-event gate above: the two are
+independent measurements of different properties and both MUST hold simultaneously.
+
+This work count is also the sole carrier of the **invariance-to-payload-size** claim (claim
+**C1b**). Invariance MUST be asserted as exact equality of the per-settlement
+view-construction count between `deltaSamples = 4_096` and `deltaSamples = 262_144`, **with no
+tolerance applied**, in the identical terms used by requirement **P5** of the
+`ownership-prototype-gate` capability. Invariance MUST NOT be asserted from, or inferred from,
+agreement between scavenge counts: a scavenge count is a thresholded proxy saturated at `0` and
+is structurally incapable of distinguishing constant allocation from allocation proportional to
+`deltaSamples`.
+
+#### Scenario: View re-mint count is constant while GC-event count stays zero
+- **GIVEN**: a transfer-mode run of 3,600 round trips after warm-up
+- **WHEN**: both the per-settlement view-construction count and the scavenge-event count are
+  measured in the same run
+- **THEN**: view-construction count is exactly `3` per settlement (X, Y, out — the run requests
+  `DecimationKind.MinMaxEnvelope`, which emits no index buffer, so `viewIndices` never travels)
+  and does not grow across the run, and scavenge-event count is `0`
+- **AND**: an `DecimationKind.Lttb` segment in the same run reports exactly `4`, so the `3` above
+  is read from a counter that tracks the transfer list actually built rather than a fixed
+  constant
+
+#### Scenario: The work count is exactly equal across a 64x payload range
+- **GIVEN**: two transfer-mode runs of 3,600 round trips after warm-up, one at
+  `deltaSamples = 4_096` and one at `deltaSamples = 262_144`
+- **WHEN**: their per-settlement view-construction counts are compared
+- **THEN**: the two counts are exactly equal with no tolerance applied, and the assertion fails
+  on any difference including a difference of `1`
+
+#### Scenario: A work count proportional to payload size fails while scavenges stay zero
+- **GIVEN**: a fixture transfer-mode run in which per-settlement view construction is made
+  proportional to `deltaSamples`, with both payload sizes still reporting `0` scavenge events
+- **WHEN**: the invariance assertion is evaluated
+- **THEN**: it fails on the view-construction comparison, and the two `0` scavenge counts neither
+  waive nor soften that failure
+
+#### Scenario: A rising view re-mint count does not relax the GC gate
+- **GIVEN**: a fixture run in which view re-minting is deliberately made non-constant
+- **WHEN**: the gate is evaluated
+- **THEN**: the re-mint assertion fails on its own terms, and the zero-GC-event assertion is
+  evaluated independently rather than being waived
 
 ### Requirement: `--trace-deopt` Freedom Across Hot Paths
 Every function inside a hot path MUST maintain strict argument monomorphism, verified by a

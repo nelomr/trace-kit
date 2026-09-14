@@ -101,6 +101,9 @@ async function measureGcEvents(
 describe.sequential("allocation-gate — minMaxEnvelope", () => {
   // Control-first discipline: a zero control invalidates the whole file, so this beforeAll
   // throws rather than letting a green "allocation-free" test stand beside a red control.
+  // The explicit 60s timeout (well above the ~2s this warmup takes standalone) is load-bearing:
+  // under full-monorepo test concurrency this hook competes for CPU with every other forked
+  // process, and Vitest's 10s default has been observed to time it out spuriously.
   beforeAll(async () => {
     for (const config of [SMALL, LARGE]) {
       const y = new Float32Array(config.sampleCount);
@@ -116,7 +119,7 @@ describe.sequential("allocation-gate — minMaxEnvelope", () => {
         );
       }
     }
-  });
+  }, 60_000);
 
   it("the allocating control reports > 0 GC events (small)", async () => {
     const y = new Float32Array(SMALL.sampleCount);
@@ -159,7 +162,7 @@ describe.sequential("allocation-gate — minMaxEnvelope", () => {
 
 describe.sequential("allocation-gate — lttb", () => {
   // Control-first discipline, mirrored from the minMaxEnvelope half above: a zero control
-  // invalidates the whole file.
+  // invalidates the whole file. Same 60s timeout rationale as that half — see the comment there.
   beforeAll(async () => {
     for (const config of [LTTB_SMALL, LTTB_LARGE]) {
       const x = new Float32Array(config.sampleCount);
@@ -179,7 +182,7 @@ describe.sequential("allocation-gate — lttb", () => {
         );
       }
     }
-  });
+  }, 60_000);
 
   it("the allocating control reports > 0 GC events (small)", async () => {
     const x = new Float32Array(LTTB_SMALL.sampleCount);

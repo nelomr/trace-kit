@@ -19,8 +19,8 @@ or an owning wrapper object as the unit of ownership.
 #### Scenario: A double submit is rejected without allocating or throwing
 - **GIVEN**: a lease already moved to `InFlight` via `submit`
 - **WHEN**: `submit` is called again with the same (now stale) lease value
-- **THEN**: the call is a no-op due to a generation mismatch, `stats.ownershipViolations`
-  increments by exactly `1`, and no exception is thrown by default
+- **THEN**: the call is a no-op due to a generation mismatch, it returns `SATURATED`,
+  `stats.ownershipViolations` increments by exactly `1`, and no exception is thrown by default
 
 ### Requirement: Compile-Time Phase Enforcement Plus Runtime Generation Guard
 Reading a buffer through an `InFlight`-phase lease MUST be a TypeScript compile error, and MUST
@@ -68,12 +68,24 @@ For the pooled case, the buffer instance returned after settlement MUST be recog
 belonging to the same pool slot as the one submitted — not a value the caller must treat as an
 unrelated new allocation from the caller's perspective.
 
+#### Scenario: Slot view capacities are fixed by configuration, not by the request
+- **GIVEN**: a port at `transitCapacitySamples = 65_536`, driven with requests at
+  `bucketCount` of `1` and then `8192`
+- **WHEN**: `viewX(lease).length`, `viewOut(lease).length`, and `viewIndices(lease).length` are
+  read after each request
+- **THEN**: they are exactly `65_536`, `16_384`, and `8_192` in both cases, unchanged by
+  `bucketCount`
+- **AND**: the `outCount` reported to the settlement sink differs between the two requests, so the
+  unchanged lengths are read from a run where the request demonstrably varied
+
 #### Scenario: The same slot's buffer is reused across repeated round trips
 - **GIVEN**: 100 consecutive acquire/submit/poll/release cycles on `poolPairs = 3`
 - **WHEN**: the slot index backing each successive lease is recorded
-- **THEN**: the same 3 slot indices repeat cyclically, and total distinct `ArrayBuffer`
-  identities created for transit backing after warm-up is constant (not growing with cycle
-  count)
+- **THEN**: the same 3 slot indices repeat cyclically, and the count of distinct `ArrayBuffer`
+  identities created for transit backing after warm-up is exactly `0`
+- **AND**: the count of distinct `ArrayBuffer` identities created during warm-up is exactly the
+  configured per-slot buffer count times `poolPairs`, so the `0` above is read from a live
+  identity tracker rather than from one that never recorded anything
 
 ### Requirement: Failure-Path-Only Re-Minting
 Buffers MUST be re-minted only on the failure path (`onerror`, `onmessageerror`, or deadline
@@ -83,6 +95,9 @@ timeout) where the responder has died holding them. Steady-state operation MUST 
 - **GIVEN**: 3,600 round trips with a healthy responder and no injected failure
 - **WHEN**: `stats.counters[StatCounter.RemintEvents]` is read after the run
 - **THEN**: it equals `0`
+- **AND**: the injected-failure scenario below runs in the same test file against the same
+  counter and observes a non-zero value, so this `0` is a discrimination rather than a reading
+  from a counter that is never incremented
 
 #### Scenario: Re-minting occurs only after an injected failure
 - **GIVEN**: one injected responder failure via `reportResponderFailure`
@@ -96,28 +111,53 @@ submitting a lease consumes the caller's acquired-phase handle; a caller reading
 already submitted is a documented contract violation, not an implicit assumption.
 
 #### Scenario: submit's type signature consumes the acquired-phase lease
-- **GIVEN**: `submit(lease: Lease<'acquired'>): Lease<'inflight'>`
-- **WHEN**: a fixture calls `port.viewX(acquiredLease)` again after already passing
-  `acquiredLease` to `submit`, without using the returned in-flight lease
-- **THEN**: `tsc --noEmit` reports a type error, because `acquiredLease`'s declared phase alone
-  does not satisfy the accessor after the developer is expected to discard it post-submit (the
-  documentation explicitly names this as a caller error class)
+- **GIVEN**: `submit(lease: Lease<'acquired'>): Lease<'inflight'> | Saturated`, mirroring
+  `acquire(): Lease<'acquired'> | Saturated` — an invalid submit is reported through the same
+  `Saturated` sentinel as a saturated pool, never through a type-dishonest reinterpretation of
+  the caller's stale handle
+- **WHEN**: a fixture passes the same `acquiredLease` value to `submit` a second time
+- **THEN**: `tsc --noEmit` reports no error (the declared phase still matches), so the type
+  system alone is insufficient here and the runtime generation guard is the enforcing mechanism:
+  the second `submit` is a no-op, it returns `SATURATED`, and
+  `stats.counters[StatCounter.OwnershipViolations]` increments by exactly `1`
+
+#### Scenario: Reading through a retained acquired-phase handle after submit is caught at runtime
+- **GIVEN**: `const inflight = port.submit(acquiredLease);` where the caller has kept
+  `acquiredLease` instead of discarding it
+- **WHEN**: `port.viewX(acquiredLease)` is called
+- **THEN**: the generation compare fails, the returned view is the preallocated zero-length
+  sentinel, `stats.counters[StatCounter.OwnershipViolations]` increments by exactly `1`, and no
+  exception is thrown
+
+#### Scenario: The consumption contract is documented on the public API
+- **GIVEN**: the published JSDoc for `submit`, `viewX`, `viewY`, `viewOut`, and `viewIndices`
+- **WHEN**: the documentation is inspected
+- **THEN**: it states that `submit` consumes the caller's acquired-phase handle, that the caller
+  MUST discard it and use the returned in-flight lease, and that reading through a submitted
+  handle is a caller contract violation reported via `OwnershipViolations` rather than a bug in
+  the port
 
 ### Requirement: Pool Sizing on the Streaming Delta, Not the Dataset
 The pool MUST default to `poolPairs = 3`, clamped to `[1, 8]`, and MUST size transit slot
 capacity via `transitCapacitySamples` (default `65_536`) independent of total dataset size. A
-`setData` bulk load exceeding transit capacity MUST be chunked across successive leases rather
-than growing the pool.
+bulk load exceeding transit capacity MUST be chunked across successive leases rather
+than growing the pool. Per-slot element capacities MUST be fixed at construction as
+`viewX`/`viewY` = `transitCapacitySamples`, `viewOut` = `MAX_BUCKETS * 2` (two values per bucket
+for a min/max envelope), and `viewIndices` = `MAX_BUCKETS` (at most one index per emitted point),
+so the pool's footprint is a constant of the configuration with no term mentioning the dataset.
 
 #### Scenario: Pool memory footprint does not scale with dataset size
-- **GIVEN**: a payload of `1_000_000` samples and a payload of `10_000_000` samples, both loaded
-  through `setData`
+- **GIVEN**: a payload of `1_000_000` samples and a payload of `10_000_000` samples, both driven
+  through the port's chunked acquire/submit loop
 - **WHEN**: the pool's total allocated transit bytes are measured after each load completes
 - **THEN**: the pool's allocated transit byte count is identical in both cases (determined by
   `transitCapacitySamples`, not by the dataset size)
 
 #### Scenario: A bulk load exceeding transit capacity is chunked
-- **GIVEN**: `transitCapacitySamples = 65_536` and a `setData` call with `200_000` samples
+- **GIVEN**: `transitCapacitySamples = 65_536` and a bulk load of `200_000` samples driven through
+  the port's `acquire`/`submit`/`poll`/`release` loop (`setData` as a public engine API belongs to
+  change 9 and is not exercised here)
 - **WHEN**: the load is processed
-- **THEN**: it is dispatched across at least `4` successive lease acquisitions rather than a
-  single oversized lease, and the pool is not resized
+- **THEN**: it is dispatched across exactly `4` successive lease acquisitions —
+  `ceil(200_000 / 65_536) = 4`, a deterministic count with no tolerance — and the pool's allocated
+  transit byte count is exactly equal before and after

@@ -18,10 +18,12 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
+    "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
     "lint": "eslint .",
     "bench": "tsx bench/index.ts",
-    "bench:deopt": "tsx bench/index.ts --trace-deopt"
+    "bench:deopt": "tsx bench/index.ts --trace-deopt",
+    "bench:ownership": "node --expose-gc --trace-gc bench/ownership-prototype.mjs"
   },
   "devDependencies": {
     "@types/node": "catalog:",

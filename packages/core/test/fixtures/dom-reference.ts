@@ -1,9 +1,7 @@
-// Regression fixture proving the `core` Vitest project has no DOM globals (CLAUDE.md rule 5).
-// Kept committed and permanently unimported; see `test/isomorphism.test.ts` for why.
-// Referencing `document` at module scope makes any accidental import of this file fail at
-// runtime with `ReferenceError: document is not defined` under the pinned
-// `environment: "node"` project.
-// @ts-expect-error — intentionally invalid DOM reference under the DOM-free `lib` used by
-// this isomorphic package. This file's purpose is to be invalid: it is never imported by
-// production code and stays committed, unimported, as a permanent regression asset.
+// Regression fixture proving the `core` Vitest project has no DOM globals.
+// The bare `document` reference at module scope makes importing this file fail at runtime with
+// `ReferenceError: document is not defined` under the pinned `environment: "node"` project.
+// `isomorphism.test.ts` imports it and asserts exactly that, so the tripwire is proven live
+// rather than merely committed. It type-checks cleanly because the test project enables the DOM
+// lib; the production package builds against a DOM-free lib and never includes this directory.
 export const domTripwire: HTMLDivElement = document.createElement("div");
