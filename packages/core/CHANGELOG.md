@@ -1,5 +1,11 @@
 # @trace-kit/core
 
+## 0.0.5
+
+### Patch Changes
+
+- [`923f5a4`](https://github.com/nelomr/trace-kit/commit/923f5a402f816380b1c35a954a0be763742ccd28) Thanks [@nelomr](https://github.com/nelomr)! - Add the `DecimationPort` transport contract: a pooled single-ownership buffer round trip with a synchronous in-thread default implementation, drop-and-count backpressure, bounded failure recovery, and the frozen streaming-contract types for incremental decimation.
+
 ## 0.0.4
 
 ### Patch Changes
