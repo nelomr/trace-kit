@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.6](https://github.com/nelomr/trace-kit/releases/tag/v0.0.6) (2026-09-15)
+
+### ⚡ Core Engine (`@trace-kit/core` @ 0.0.6)
+
+**Patch Changes**
+
+- [`e31a3bb`](https://github.com/nelomr/trace-kit/commit/e31a3bb21e73f162a034e7e5f08c98076142809e) Thanks [@nelomr](https://github.com/nelomr)! - Fix `minMaxEnvelope`'s missing `out.length` boundary check (it now throws `RangeError` on an undersized output buffer, matching `lttb`) and split `bench/runner.ts` into an isomorphic `bench/runner-core.ts` half (no `node:*` import) plus the existing Node-coupled reporting half, so the shared benchmark harness is reachable from a browser bundle.
+
+### 📦 Playground (`@trace-kit/playground` @ 0.0.1)
+
+**Patch Changes**
+
+- Updated dependencies [[`e31a3bb`](https://github.com/nelomr/trace-kit/commit/e31a3bb21e73f162a034e7e5f08c98076142809e)]:
+  - @trace-kit/core@0.0.6
+
+
 ## [0.0.5](https://github.com/nelomr/trace-kit/releases/tag/v0.0.5) (2026-09-14)
 
 ### ⚡ Core Engine (`@trace-kit/core` @ 0.0.5)
