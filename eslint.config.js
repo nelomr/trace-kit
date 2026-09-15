@@ -195,4 +195,28 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // The throwaway plotting routine is a deletion unit: every playground source file except
+    // the routine itself and the one view permitted to use it is banned from importing it.
+    // Deleted wholesale, alongside this block, once a real Canvas2D renderer package exists.
+    files: ["apps/playground/src/**/*.ts"],
+    ignores: [
+      "apps/playground/src/throwaway-plot/**/*.ts",
+      "apps/playground/src/views/core-math/**/*.ts",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/throwaway-plot", "**/throwaway-plot/**"],
+              message:
+                "The throwaway plotting routine is scoped to the /core-math view and is deleted once a real Canvas2D renderer package exists. Use that package once it exists.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

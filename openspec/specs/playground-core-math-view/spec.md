@@ -1,7 +1,5 @@
 # Capability: playground-core-math-view
 
-> Change: `playground-shell`. New capability. The `/core-math` view.
-
 ## ADDED Requirements
 
 ### Requirement: Deterministic Synthetic Lorentzian Generator Into Preallocated Buffers
@@ -66,6 +64,26 @@ harness's warm-up and median-of-N discipline, not a single cold call.
 - **THEN**: the displayed value falls within the steady-state range and is not the inflated cold
   sample
 
+### Requirement: FWHM and Noise-Floor Controls Are Clamped to the Algorithms' Valid Ranges
+Every control-driven value that reaches `lttb` or `minMaxEnvelope` MUST be validated or clamped
+by the view before the call, so that no interactive control input can cause either function to
+throw a `RangeError`. In particular, the `threshold` value driving `lttb` MUST be clamped to the
+closed range `[2, sampleCount]` (per `packages/core/src/decimation/lttb.ts`'s own boundary
+checks — `threshold` must be an integer `>= 2` and `<= sampleCount`), and the `bucketCount` value
+driving `minMaxEnvelope` MUST be validated against that function's own documented boundary checks
+before the call is made.
+
+#### Scenario: A threshold control value above sampleCount is clamped, not passed through
+- **GIVEN**: the view mounted with a fixed `sampleCount`, and the panel's threshold control set
+  to a value greater than `sampleCount`
+- **WHEN**: the LTTB toggle fires and the view computes the value it passes to `lttb`
+- **THEN**: the value passed to `lttb` is `<= sampleCount`, and `lttb` does not throw
+
+#### Scenario: A threshold control value below 2 is clamped, not passed through
+- **GIVEN**: the view mounted with the panel's threshold control set to `0` or `1`
+- **WHEN**: the LTTB toggle fires and the view computes the value it passes to `lttb`
+- **THEN**: the value passed to `lttb` is `>= 2`, and `lttb` does not throw
+
 ### Requirement: Throwaway Drawing Routine Is Not a Renderer Contract
 The view's plotting routine MUST be documented as a throwaway implementation, explicitly not a
 prototype of `FigureRenderer`, and MUST be deleted and replaced by `packages/renderers`'
@@ -83,6 +101,26 @@ define or export any `FigureRenderer`-shaped type from the playground.
 - **WHEN**: its header comment or adjacent README is read
 - **THEN**: it explicitly states the routine is throwaway and will be deleted by change 5
   (`renderers-canvas2d`)
+
+### Requirement: Throwaway Drawing Routine Is Isolated Behind a Single Directory Boundary
+The throwaway plotting routine MUST live entirely under a single, clearly named directory inside
+`apps/playground/src`, such that change 5 can delete that one directory to remove the routine as
+a unit, with no fragment of it left importable from elsewhere in the playground. The exact
+directory name is an open decision deferred to `design.md`. No view other than `/core-math` MUST
+import from that directory.
+
+#### Scenario: The routine's implementation files all live under one directory
+- **GIVEN**: `apps/playground/src` at the end of this change
+- **WHEN**: every source file implementing the throwaway plotting routine is located
+- **THEN**: all of them share a single common parent directory dedicated to the routine, with no
+  routine-implementing file located outside it
+
+#### Scenario: No view other than /core-math imports the throwaway routine
+- **GIVEN**: `apps/playground/src` at the end of this change, with the `/core-math` view as the
+  only registered view
+- **WHEN**: a source-level check searches every file outside the throwaway routine's directory
+  and outside the `/core-math` view's own module for an import resolving into that directory
+- **THEN**: no such import is found
 
 ### Requirement: No VitePress Docs Portal in This Change
 This change MUST NOT create `apps/docs` or any VitePress configuration.

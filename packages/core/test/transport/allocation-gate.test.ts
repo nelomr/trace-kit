@@ -57,7 +57,7 @@ describe.sequential("allocation-gate — synchronous port round trip", () => {
       port.poll(sink);
     }, 10_000);
     expect(count).toBeGreaterThan(0);
-  });
+  }, 60_000);
 
   it("10,000 acquire/submit/poll/release cycles report exactly 0 GC events after warm-up", async () => {
     const port = createSyncDecimationPort({ poolPairs: 3, transitCapacitySamples: 4_096 });

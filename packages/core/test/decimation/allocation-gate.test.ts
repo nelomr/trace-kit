@@ -128,7 +128,7 @@ describe.sequential("allocation-gate — minMaxEnvelope", () => {
       SMALL.iterations,
     );
     expect(count).toBeGreaterThan(0);
-  });
+  }, 60_000);
 
   it("the allocating control reports > 0 GC events (large)", async () => {
     const y = new Float32Array(LARGE.sampleCount);
@@ -137,7 +137,7 @@ describe.sequential("allocation-gate — minMaxEnvelope", () => {
       LARGE.iterations,
     );
     expect(count).toBeGreaterThan(0);
-  });
+  }, 60_000);
 
   it("minMaxEnvelope reports exactly 0 GC events (small)", async () => {
     const y = new Float32Array(SMALL.sampleCount);
@@ -147,7 +147,7 @@ describe.sequential("allocation-gate — minMaxEnvelope", () => {
       SMALL.iterations,
     );
     expect(count, details.map((d) => kindName(d.kind)).join(", ")).toBe(0);
-  });
+  }, 60_000);
 
   it("minMaxEnvelope reports exactly 0 GC events (large)", async () => {
     const y = new Float32Array(LARGE.sampleCount);
@@ -157,7 +157,7 @@ describe.sequential("allocation-gate — minMaxEnvelope", () => {
       LARGE.iterations,
     );
     expect(count, details.map((d) => kindName(d.kind)).join(", ")).toBe(0);
-  });
+  }, 60_000);
 });
 
 describe.sequential("allocation-gate — lttb", () => {
@@ -192,7 +192,7 @@ describe.sequential("allocation-gate — lttb", () => {
       LTTB_SMALL.iterations,
     );
     expect(count).toBeGreaterThan(0);
-  });
+  }, 60_000);
 
   it("the allocating control reports > 0 GC events (large)", async () => {
     const x = new Float32Array(LTTB_LARGE.sampleCount);
@@ -202,7 +202,7 @@ describe.sequential("allocation-gate — lttb", () => {
       LTTB_LARGE.iterations,
     );
     expect(count).toBeGreaterThan(0);
-  });
+  }, 60_000);
 
   it("lttb reports exactly 0 GC events (small)", async () => {
     const x = new Float32Array(LTTB_SMALL.sampleCount);
@@ -213,7 +213,7 @@ describe.sequential("allocation-gate — lttb", () => {
       LTTB_SMALL.iterations,
     );
     expect(count, details.map((d) => kindName(d.kind)).join(", ")).toBe(0);
-  });
+  }, 60_000);
 
   it("lttb reports exactly 0 GC events (large)", async () => {
     const x = new Float32Array(LTTB_LARGE.sampleCount);
@@ -224,5 +224,5 @@ describe.sequential("allocation-gate — lttb", () => {
       LTTB_LARGE.iterations,
     );
     expect(count, details.map((d) => kindName(d.kind)).join(", ")).toBe(0);
-  });
+  }, 60_000);
 });

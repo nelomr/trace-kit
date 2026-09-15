@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2022", "DOM"],
+    "paths": {
+      "@trace-kit/bench-harness": ["../../packages/core/bench/runner-core.ts"]
+    }
+  },
+  "include": ["src/**/*", "test/**/*", "vite.config.ts"],
+  "exclude": ["dist", "node_modules"]
+}

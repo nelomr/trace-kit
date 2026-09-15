@@ -57,6 +57,12 @@ export function minMaxEnvelope(
         "an upsample request has no correct answer for a downsampler.",
     );
   }
+  if (out.length < outputOffset + bucketCount * 2) {
+    throw new RangeError(
+      `out (length ${out.length}) is too small for outputOffset (${outputOffset}) + ` +
+        `bucketCount * 2 (${bucketCount * 2}).`,
+    );
+  }
 
   let writeCursor = outputOffset;
 

@@ -1,6 +1,8 @@
 # Capability: decimation-min-max
 
-> Change: `core-decimation-math`. New capability.
+> Changes: `core-decimation-math` (initial), `playground-shell` (added the `out.length`
+> boundary-check requirement, closing a silent-truncation gap the base spec had left
+> unvalidated).
 
 ## ADDED Requirements
 
@@ -65,11 +67,21 @@ bucket: `min[bucket] <= sample.y <= max[bucket]` for every sample in the bucket'
 
 ### Requirement: Boundary Preconditions
 `minMaxEnvelope` MUST validate, at the function boundary before any loop runs, that
-`bucketCount <= sampleCount`, `sourceOffset >= 0`, `sampleCount >= 0`, and that every numeric
-argument is a non-negative integer within `[0, 2^31)`. A violation MUST raise a `RangeError`
-naming the violated bound before any output is written. `bucketCount <= sampleCount` guarantees
-no bucket is ever empty, so the per-bucket bounding property never applies vacuously to an empty
-range.
+`bucketCount <= sampleCount`, `sourceOffset >= 0`, `sampleCount >= 0`, that every numeric
+argument is a non-negative integer within `[0, 2^31)`, **and that `out.length >= outputOffset +
+bucketCount * 2`**. A violation MUST raise a `RangeError` naming the violated bound before any
+output is written. `bucketCount <= sampleCount` guarantees no bucket is ever empty, so the
+per-bucket bounding property never applies vacuously to an empty range. The `out.length` bound
+guarantees the function's own documented write range, `[outputOffset, outputOffset + bucketCount
+* 2)`, always fits inside `out`: without it, an undersized `out` accepts a silent truncated
+write rather than an error, because a typed array silently drops an out-of-range indexed write
+instead of throwing.
+
+`lttb` (`decimation-lttb`) validates `out.length >= outputOffset + threshold` for the same
+reason: both decimation entry points now validate their output buffer identically, so a caller
+correct about one function's `out` sizing convention is correct about the other's — there is no
+"validates sometimes" surface between the two functions this change's `/core-math` view chooses
+between.
 
 #### Scenario: bucketCount greater than sampleCount is rejected
 - **GIVEN**: `sampleCount = 100` and `bucketCount = 200`
@@ -78,8 +90,38 @@ range.
 
 #### Scenario: A valid boundary case runs without error
 - **GIVEN**: `sampleCount = 100` and `bucketCount = 100` (the equality boundary)
-- **WHEN**: `minMaxEnvelope` runs
-- **THEN**: it completes without throwing and every bucket contains exactly one sample
+- **WHEN**: `minMaxEnvelope` is invoked with a correctly sized `out`
+- **THEN**: it completes without throwing
+
+#### Scenario: An undersized out is rejected before any write
+- **GIVEN**: `outputOffset = 0`, `bucketCount = 256` (so the write needs 512 elements) and an
+  `out` of length `511`
+- **WHEN**: `minMaxEnvelope` is invoked with these values
+- **THEN**: it throws a `RangeError` naming the violated `out.length` bound before writing any
+  element, and `out` is left byte-for-byte unmodified
+
+#### Scenario: The exact-fit boundary completes without throwing
+- **GIVEN**: `outputOffset = 0`, `bucketCount = 256` and an `out` of length exactly `512`
+  (`outputOffset + bucketCount * 2`)
+- **WHEN**: `minMaxEnvelope` is invoked with these values
+- **THEN**: it completes without throwing and writes exactly the `512` values into
+  `[0, 512)`
+
+#### Scenario: A non-zero outputOffset large enough for the values alone is still rejected
+- **GIVEN**: `outputOffset = 100`, `bucketCount = 256` (needing `512` elements starting at
+  `100`, i.e. `out.length >= 612`) and an `out` of length `600` — large enough to hold `512`
+  values on its own, but not large enough once `outputOffset` is added
+- **WHEN**: `minMaxEnvelope` is invoked with these values
+- **THEN**: it throws a `RangeError` before writing to `out`, and `out` is left unmodified
+
+#### Scenario: The out.length check runs at the boundary, not inside the per-bucket loop
+- **GIVEN**: an instrumented call path that records when each validation check runs relative to
+  the first per-bucket iteration
+- **WHEN**: `minMaxEnvelope` runs, whether `out` is valid or undersized
+- **THEN**: the `out.length` check evaluates once, before the per-bucket loop begins, alongside
+  the function's other boundary checks — it MUST NOT add a per-bucket or per-sample comparison,
+  so it adds no work to the hot path and does not affect the zero-allocation GC-event gate
+  (claim **C4b**) already measured for `minMaxEnvelope`
 
 ### Requirement: Single-Pass Deterministic Work Count
 `minMaxEnvelope` MUST perform exactly one pass over the input, reading each sample in

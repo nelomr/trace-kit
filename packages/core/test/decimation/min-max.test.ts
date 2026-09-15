@@ -95,4 +95,78 @@ describe("minMaxEnvelope", () => {
 
     expect(outA).toEqual(outB);
   });
+
+  it("completes without error when bucketCount === sampleCount with a correctly sized out", () => {
+    const sampleCount = 100;
+    const y = new Float32Array(sampleCount);
+    const out = new Float32Array(sampleCount * 2);
+
+    expect(() =>
+      minMaxEnvelope(y, 0, sampleCount, out, 0, sampleCount),
+    ).not.toThrow();
+  });
+
+  it("throws RangeError before writing when out is one element too small", () => {
+    const sampleCount = 256;
+    const y = new Float32Array(sampleCount);
+    const out = new Float32Array(511);
+    out.fill(-999);
+
+    expect(() => minMaxEnvelope(y, 0, sampleCount, out, 0, 256)).toThrow(
+      RangeError,
+    );
+    for (let i = 0; i < out.length; i += 1) {
+      expect(out[i]).toBe(-999);
+    }
+  });
+
+  it("completes and writes exactly [0, 512) when out is exactly the right size", () => {
+    const sampleCount = 256;
+    const y = new Float32Array(sampleCount);
+    for (let i = 0; i < sampleCount; i += 1) y[i] = i;
+    const out = new Float32Array(512);
+
+    const written = minMaxEnvelope(y, 0, sampleCount, out, 0, 256);
+
+    expect(written).toBe(512);
+    for (let i = 0; i < 512; i += 1) {
+      expect(Number.isNaN(out[i])).toBe(false);
+    }
+  });
+
+  it("throws RangeError when outputOffset pushes the write past out.length", () => {
+    const sampleCount = 256;
+    const y = new Float32Array(sampleCount);
+    const out = new Float32Array(600);
+    out.fill(-999);
+
+    expect(() =>
+      minMaxEnvelope(y, 0, sampleCount, out, 100, 256),
+    ).toThrow(RangeError);
+    for (let i = 0; i < out.length; i += 1) {
+      expect(out[i]).toBe(-999);
+    }
+  });
+
+  it("checks out.length once at the boundary, not per bucket", () => {
+    const sampleCount = 256;
+    const y = new Float32Array(sampleCount);
+    const out = new Float32Array(511);
+
+    let bucketIterationsBeforeThrow = 0;
+    const handler: ProxyHandler<Float32Array> = {
+      get(target, prop, receiver): unknown {
+        if (typeof prop === "string" && /^\d+$/.test(prop)) {
+          bucketIterationsBeforeThrow += 1;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    };
+    const trackingY = new Proxy(y, handler);
+
+    expect(() =>
+      minMaxEnvelope(trackingY, 0, sampleCount, out, 0, 256),
+    ).toThrow(RangeError);
+    expect(bucketIterationsBeforeThrow).toBe(0);
+  });
 });

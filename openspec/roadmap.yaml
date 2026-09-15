@@ -28,16 +28,16 @@
 #   `sdd-archive` merges a change's spec deltas into `openspec/specs/{capability}/spec.md`.
 #   A MODIFIED delta therefore has nothing to modify until the change that ADDED that
 #   capability has been archived. Archiving out of order silently produces a MODIFIED delta
-#   applied against no baseline. `openspec/specs/` is currently empty except `.gitkeep`, so
-#   every MODIFIED delta listed below is presently unresolved by design, awaiting its
-#   baseline. Archive strictly in the order given here.
+#   applied against no baseline. Archive strictly in the order given here. A MODIFIED delta is
+#   resolvable once `openspec/specs/{capability}/spec.md` exists; changes 1-3 are archived, so
+#   the capabilities they ADDED now have baselines, while every later capability does not yet.
 #
 # Source of truth for scope and rationale: openspec/changes/00-roadmap-decomposition/exploration.md
 # Confirmed product decisions: that file, section 7.
 # Evidence backing the acceptance criteria: openspec/changes/00-roadmap-decomposition/research.md
 
 schema: trace-kit.sdd-roadmap/v1
-revision: 2
+revision: 4
 total_changes: 16
 
 changes:
@@ -104,6 +104,10 @@ changes:
     capabilities:
       - name: benchmark-harness
         deltas: [MODIFIED]
+      - name: ci-quality-gate
+        deltas: [MODIFIED]
+      - name: decimation-min-max
+        deltas: [MODIFIED]
       - name: playground-app
         deltas: [ADDED]
       - name: playground-core-math-view
@@ -112,8 +116,10 @@ changes:
         deltas: [ADDED]
       - name: playground-routing
         deltas: [ADDED]
+      - name: test-harness
+        deltas: [MODIFIED, ADDED]
       - name: workspace-toolchain
-        deltas: [MODIFIED]
+        deltas: [MODIFIED, ADDED]
 
   - order: 5
     name: renderers-canvas2d

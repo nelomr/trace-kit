@@ -48,6 +48,28 @@ export default defineConfig({
           setupFiles: ["test/setup/fast-check.ts"],
         },
       },
+      {
+        extends: true,
+        resolve: {
+          alias: {
+            // Mirrors `apps/playground/vite.config.ts`'s alias so the DOM-free build config
+            // and the test config resolve `@trace-kit/bench-harness` identically — this
+            // project entry is a full Vite config, not only a `test` fragment, and Vitest's
+            // own config discovery does not merge `apps/playground/vite.config.ts` in when
+            // running through this root config.
+            "@trace-kit/bench-harness": path.join(
+              rootDir,
+              "packages/core/bench/runner-core.ts",
+            ),
+          },
+        },
+        test: {
+          name: "playground",
+          root: path.join(rootDir, "apps/playground"),
+          environment: "happy-dom",
+          include: ["test/**/*.test.ts"],
+        },
+      },
     ],
   },
 });

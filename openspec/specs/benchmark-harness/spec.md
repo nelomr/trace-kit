@@ -1,37 +1,22 @@
 # Capability: benchmark-harness
 
-> Change: `workspace-test-harness-bootstrap`. New capability.
+> Changes: `workspace-test-harness-bootstrap` (initial), `playground-shell` (the `/core-math`
+> view's millisecond table now reuses this harness's warm-up/median-of-N logic).
 
 ## ADDED Requirements
 
 ### Requirement: Warm-Up and Median-of-N Reporting
-The benchmark harness MUST perform an explicit warm-up phase before any timed iteration, MUST
-report a median across N measured iterations, MUST report p95 alongside the median, **and MUST
-now be invoked with a real first consumer** (`minMaxEnvelope` and `lttb` from this change)
-against a declared reference-hardware record checked into the repository.
-Per claim **C4b**, a cold first invocation of a numeric pass runs interpreted before TurboFan
-tiering and can be 3-5x slower than the warm steady state, so a harness that reports a single
-cold sample is a defect.
+The benchmark harness MUST perform an explicit warm-up phase before any timed iteration and MUST
+report a median across N measured iterations, **and it now gains an interactive consumer**: the
+playground's `/core-math` millisecond table calls into the same warm-up/median-of-N logic used
+by the CI benchmark checks, so a number a human reads in the panel means the same thing the CI
+benchmarks mean.
 
-#### Scenario: The harness discards cold samples from its reported result
-- **GIVEN**: a benchmark function that is deliberately 4x slower on its first call than on
-  subsequent calls (simulating pre-JIT-tiering cost)
-- **WHEN**: the benchmark harness runs the function with a configured warm-up count greater
-  than zero and N measured iterations
-- **THEN**: the reported median is within the steady-state range and is not inflated by the
-  cold first-call sample
-
-#### Scenario: The harness reports both median and p95
-- **GIVEN**: a benchmark run of N >= 30 iterations
-- **WHEN**: the harness completes and writes its result
-- **THEN**: the machine-readable result file contains both a `median` field and a `p95` field,
-  each a finite number
-
-#### Scenario: The harness produces a baseline record for minMaxEnvelope and lttb
-- **GIVEN**: the benchmark harness's `bench-results.json` output format
-- **WHEN**: the harness runs against `minMaxEnvelope` and `lttb`
-- **THEN**: the output file contains an entry for each function with `median`, `p95`, and
-  `iterations` fields, usable as this change's recorded baseline
+#### Scenario: The playground's millisecond table uses the harness, not an ad hoc timer
+- **GIVEN**: the `/core-math` view's millisecond table implementation
+- **WHEN**: a source-level check inspects how it computes its displayed timing value
+- **THEN**: it calls the shared benchmark harness's warm-up + median-of-N function rather than
+  wrapping a single `performance.now()` call around one invocation
 
 ### Requirement: Machine-Readable Result Format
 The harness MUST write its results to a machine-readable file (JSON) so that later changes can

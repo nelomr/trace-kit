@@ -1,7 +1,5 @@
 # Capability: playground-routing
 
-> Change: `playground-shell`. New capability.
-
 ## ADDED Requirements
 
 ### Requirement: Additive Route Registration
@@ -17,9 +15,27 @@ modify).
   required to any existing shell source file
 
 #### Scenario: The registry resolves exactly the registered views
-- **GIVEN**: exactly one view (`/core-math`) registered at this change
+- **GIVEN**: exactly two views (`/home`, `/core-math`) registered at this change
 - **WHEN**: the registry's list of resolvable paths is inspected
-- **THEN**: it contains exactly `/core-math` and no other path
+- **THEN**: it contains exactly `/home` and `/core-math`, and no other path
+
+### Requirement: Landing View and Default Route
+A `/home` view MUST be registered, listing every other registered view (read from the registry
+at mount time, not hand-maintained) as a navigable link. When the location hash is empty or
+does not resolve to a registered path, the shell MUST land on `/home` rather than rendering a
+"not found" panel — the professional-tool convention of an index page instead of a dead root
+route.
+
+#### Scenario: A fresh visit with no hash lands on the landing view
+- **GIVEN**: the app is loaded with an empty `location.hash`
+- **WHEN**: the shell finishes its initial navigation
+- **THEN**: `/home` is mounted, and `location.hash` is updated to `#/home` (so a refresh or a
+  shared link reproduces the same view)
+
+#### Scenario: The landing view lists every other registered view
+- **GIVEN**: `/home` is mounted with `/core-math` registered alongside it
+- **WHEN**: the landing view's content is inspected
+- **THEN**: it contains a link to `/core-math` and does not list itself
 
 ### Requirement: Balanced Mount/Unmount Lifecycle
 A view's mount and unmount pair MUST be balanced: after unmount, the view MUST hold no event

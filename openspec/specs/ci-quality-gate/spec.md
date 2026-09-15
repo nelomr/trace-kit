@@ -1,6 +1,7 @@
 # Capability: ci-quality-gate
 
-> Change: `workspace-test-harness-bootstrap`. New capability.
+> Changes: `workspace-test-harness-bootstrap` (initial), `playground-shell` (`apps/playground`
+> added to the build/typecheck/lint pipeline gate).
 
 ## ADDED Requirements
 
@@ -26,13 +27,24 @@ of this run", reports `0 successful, 0 total`, and exits `0`; `pnpm run test` re
 
 ### Requirement: CI Executes Genuine Work Per Task
 `typecheck`, `lint`, and `test` steps in `ci.yml` MUST each execute real, non-trivial work
-across the packages that declare the corresponding script.
+across the packages that declare the corresponding script. **`apps/playground` now participates
+in this pipeline**: it MUST declare `build`, `typecheck` and `lint` scripts that `turbo.json`'s
+corresponding tasks invoke, so a broken playground fails `pnpm exec turbo run build`,
+`pnpm exec turbo run typecheck` and `pnpm exec turbo run lint` the same way a broken package
+does, and CI MUST treat a failure in any of these as a pipeline failure.
 
 #### Scenario: typecheck step performs real type checking
 - **GIVEN**: `packages/core` declares a `typecheck` script running `tsc --noEmit`
 - **WHEN**: the CI `typecheck` step runs
 - **THEN**: the step's log shows `tsc` invoked against `packages/core` and completing with no
   errors
+
+#### Scenario: A broken playground fails the pipeline
+- **GIVEN**: a deliberately broken fixture (a type error or a lint violation) committed under
+  `apps/playground/src/`
+- **WHEN**: `pnpm exec turbo run typecheck` and `pnpm exec turbo run lint` run
+- **THEN**: at least one of the two commands exits non-zero, naming `apps/playground`'s
+  violation, and reverting the fixture restores a `0` exit for both
 
 ### Requirement: Demonstrated Green Workflow With the Isomorphic Test
 The GitHub Actions workflow MUST be demonstrated green with the Node-isomorphism test (from

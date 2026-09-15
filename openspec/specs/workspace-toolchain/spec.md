@@ -1,48 +1,33 @@
 # Capability: workspace-toolchain
 
 > Changes: `workspace-test-harness-bootstrap` (initial), `workspace-guard-scripts-cleanup` (enforcement
-> mechanism update + new requirements for changelog and changeset scripts).
+> mechanism update + new requirements for changelog and changeset scripts), `playground-shell`
+> (extended catalog coverage and `tsconfig` rules to `apps/*` members, added the `turbo.json`
+> `dev` task).
 
 ## ADDED Requirements
 
 ### Requirement: Catalog-Pinned Dependency Versions
-The workspace MUST declare a single pnpm catalog in `pnpm-workspace.yaml` covering every
-harness dependency (`vitest`, `tsup`, the chosen linter, and the benchmark-harness
-dependencies), and every package MUST resolve these dependencies via `catalog:` protocol rather
-than an independently pinned version range. Catalog discipline MUST be enforced by a Vitest test
-(`packages/core/test/catalog-discipline.test.ts`), not by a script wired into the `lint` task; no
-`scripts/*.mjs` file MUST be spawned as a subprocess to perform this check.
+The workspace's pnpm catalog, declared in `pnpm-workspace.yaml`, MUST cover every runtime
+dependency an `apps/*` member consumes, not only `packages/*` harness dependencies. **This change
+adds `tweakpane`** — required by `playground-instrumentation-panel` — to the `catalog:` block,
+and `apps/playground/package.json` MUST resolve it via `catalog:` rather than an independently
+pinned version range, exactly as `packages/*` members already resolve `vitest`, `tsup` and the
+other catalog entries.
 
-#### Scenario: A package resolves vitest from the catalog
-- **GIVEN**: `pnpm-workspace.yaml` declares `vitest` in its `catalog`
-- **WHEN**: `packages/core/package.json` declares a `devDependencies.vitest` entry
-- **THEN**: the entry's version specifier is exactly `catalog:`, verified by
-  `pnpm exec vitest run packages/core/test/catalog-discipline.test.ts`, which fails if any
-  workspace package pins its own `vitest`, `tsup`, or linter version instead of `catalog:`
+#### Scenario: apps/playground resolves tweakpane from the catalog
+- **GIVEN**: `pnpm-workspace.yaml`'s `catalog:` block declares a `tweakpane` entry
+- **WHEN**: `apps/playground/package.json` declares a `dependencies.tweakpane` entry
+- **THEN**: the entry's version specifier is exactly `catalog:`, not a bare semver range
 
-#### Scenario: The catalog is complete before any consumer needs it
-- **GIVEN**: this change adds `tsup` and the benchmark-harness dependencies as new workspace
-  needs
-- **WHEN**: `pnpm install` runs at the repository root
-- **THEN**: `pnpm install` succeeds with no "not found in catalog" resolution error for any
-  dependency referenced by a package as `catalog:`
-
-#### Scenario: A tsconfig.json that fails to parse is reported as a violation, not skipped
-- **GIVEN**: a workspace package directory matched by `pnpm-workspace.yaml`'s `packages:` globs
-  whose `tsconfig.json` contains a JSONC line comment (e.g. `// deliberately invalid for this
-  test`), making it fail strict `JSON.parse`
-- **WHEN**: `pnpm exec vitest run packages/core/test/catalog-discipline.test.ts` runs
-- **THEN**: the test reports a failure attributable to that package's `tsconfig.json`, rather
-  than silently treating the package as compliant; a minimal comment-stripping step MUST be
-  applied before parsing so that an ordinary comment-bearing tsconfig is read correctly, and only
-  a tsconfig that remains unparseable after stripping is reported as a violation
-
-#### Scenario: The `lint` task no longer runs a catalog-discipline script
-- **GIVEN**: `turbo.json` and the root `package.json` as modified by this change
-- **WHEN**: a reviewer inspects the `lint` task definition and the root `lint` script
-- **THEN**: neither invokes `scripts/verify-catalog-discipline.mjs`; `turbo.json`'s `//#lint`
-  task and the root `lint`/`lint:all` script split introduced for that invocation are removed,
-  and `lint` runs as a plain per-package task again
+#### Scenario: An apps/* member resolves a third-party dependency through the catalog exactly as a packages/* member does
+- **GIVEN**: `pnpm-workspace.yaml`'s `packages:` globs match both `packages/*` and `apps/*`
+  directories
+- **WHEN**: `pnpm install` runs at the repository root with `apps/playground/package.json`
+  declaring `tweakpane: catalog:`
+- **THEN**: `pnpm install` resolves `tweakpane` for `apps/playground` from the same
+  `catalog:` block used by every `packages/*` member, with no "not found in catalog" error and
+  no `apps/*`-specific resolution path
 
 ### Requirement: Completed Base TypeScript Configuration
 `tsconfig.base.json` MUST retain its existing options (`target: ES2022`, `module: ESNext`,
@@ -74,26 +59,23 @@ inside a numeric hot loop.
 
 ### Requirement: Per-Package tsconfig Extension Pattern
 Every package `tsconfig.json` MUST extend `tsconfig.base.json` at the repository root and MUST
-add only `compilerOptions.paths`, output-location options (`outDir`, `rootDir`) and
-package-local `include`/`exclude`; it MUST NOT redeclare or relax any strictness flag set by the
-base config, and it MUST NOT declare a root-level `exports` field un-scoped to a package
-subdirectory. Both checks MUST be enforced by a Vitest test
-(`packages/core/test/catalog-discipline.test.ts` for strictness, and the same file or an
-adjacent one for the no-root-`exports` check), not by a script wired into the `lint` task.
+add only `compilerOptions.paths` and package-local `include`/`exclude`, and it MUST NOT
+redeclare or relax any strictness flag set by the base config. **This now explicitly includes
+`apps/*` workspace members, not only `packages/*`, and an `apps/*` member is not published and
+therefore carries no `exports` map and no `sideEffects` audit obligation.**
 
-#### Scenario: A package tsconfig cannot relax strict
-- **GIVEN**: `packages/core/tsconfig.json` extends `../../tsconfig.base.json`
-- **WHEN**: `pnpm exec vitest run packages/core/test/catalog-discipline.test.ts` runs
-- **THEN**: the test fails if any package `tsconfig.json` sets `strict: false` or
-  `noUncheckedIndexedAccess: false`
+#### Scenario: apps/playground extends the base tsconfig like a package does
+- **GIVEN**: `apps/playground/tsconfig.json`
+- **WHEN**: its `extends` field and `compilerOptions` are inspected
+- **THEN**: it extends `tsconfig.base.json`, adds only `paths`/`include`/`exclude`, and does not
+  relax `strict` or `noUncheckedIndexedAccess`
 
-#### Scenario: A package.json cannot declare an un-scoped root exports field
-- **GIVEN**: a workspace package's `package.json`
-- **WHEN**: the Vitest test asserting `checkNoRootExports` runs against every package matched by
-  `pnpm-workspace.yaml`'s `packages:` globs
-- **THEN**: the test fails if any matched package's `package.json` declares a top-level `exports`
-  field that is not scoped under a package subdirectory, using the same `checkNoRootExports`
-  function previously invoked by `scripts/verify-no-root-exports.mjs`
+#### Scenario: apps/playground carries no exports map obligation
+- **GIVEN**: `apps/playground/package.json`
+- **WHEN**: a repository lint/CI step that enforces the `package-build-pipeline` exports-map
+  requirement runs
+- **THEN**: it does not fail for `apps/playground` lacking an `exports` field, because that
+  requirement is scoped to publishable `packages/*` members
 
 ### Requirement: Mechanically Enforced `any` Ban
 The lint configuration MUST mechanically reject every form of `any` banned by CLAUDE.md rule 1
@@ -184,3 +166,14 @@ status and print a usage message, and it MUST NOT write a `.changeset/*.md` file
 - **WHEN**: `node scripts/add-changeset.mjs "fix: correct decimation edge case" patch @trace-kit/core` runs
 - **THEN**: the process exits `0` and a new `.changeset/*.md` file is written whose body is
   exactly `"fix: correct decimation edge case"`, with no placeholder text
+
+### Requirement: turbo.json Gains a dev Task for Long-Running Dev Servers
+`turbo.json` MUST declare a `dev` task suitable for a long-running process such as a Vite dev
+server: persistent (does not terminate on its own) and uncached (its output is not a build
+artifact to be cached across runs). `turbo.json` declares no `dev` task prior to this change.
+
+#### Scenario: turbo.json declares a dev task shaped for a persistent, uncached process
+- **GIVEN**: `turbo.json` as modified by this change
+- **WHEN**: its `tasks` object is inspected
+- **THEN**: it contains a `dev` entry whose configuration marks it as persistent and uncached
+  (not sharing the `outputs`-based caching of `build`)
