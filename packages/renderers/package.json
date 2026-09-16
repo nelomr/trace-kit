@@ -1,6 +1,6 @@
 {
   "name": "@trace-kit/renderers",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Headless Canvas2D/WebGL2 figure renderers for trace-kit",
   "type": "module",
   "license": "MIT",
