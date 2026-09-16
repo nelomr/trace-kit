@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
 import * as coreExports from "../src/index.js";
+import type { DecimationSelection } from "../src/index.js";
+
+// Compile-only: proves `DecimationSelection` is part of the public type surface, not only an
+// internal `decimation/selection.ts` detail.
+function typeSurfaceFixture(selection: DecimationSelection): DecimationSelection {
+  return selection;
+}
+void typeSurfaceFixture;
 
 // The public export surface of `@trace-kit/core` is explicit about what it exports and, just
 // as deliberately, what it does not.
@@ -18,6 +26,8 @@ describe("export surface", () => {
       "isCursorCurrent",
       "minMaxEnvelope",
       "lttb",
+      "minMaxEnvelopeIndices",
+      "resolveDecimationParameter",
       "SATURATED",
       "SlotState",
       "collectTransferList",
@@ -34,6 +44,14 @@ describe("export surface", () => {
       "createSyncDecimationPort",
       "MAX_BUCKETS",
       "BUCKET_OVERSAMPLE_DEFAULT",
+      "createViewportTransform",
+      "projectX",
+      "projectY",
+      "unprojectX",
+      "unprojectY",
+      "isInsidePlotArea",
+      "transformMatchesPayload",
+      "selectTicks",
     ];
     for (const name of expected) {
       expect(coreExports).toHaveProperty(name);

@@ -77,6 +77,9 @@ importers:
       '@trace-kit/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@trace-kit/renderers':
+        specifier: workspace:*
+        version: link:../../packages/renderers
       '@tweakpane/core':
         specifier: 'catalog:'
         version: 2.0.5
@@ -123,6 +126,34 @@ importers:
       tsx:
         specifier: 'catalog:'
         version: 4.23.13
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      typescript-eslint:
+        specifier: 'catalog:'
+        version: 8.70.0(eslint@9.39.5)(typescript@5.9.3)
+      vitest:
+        specifier: 'catalog:'
+        version: 3.2.7(@types/node@22.20.2)(happy-dom@20.14.5)(lightningcss@1.33.0)(tsx@4.23.13)
+
+  packages/renderers:
+    dependencies:
+      '@trace-kit/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.2
+      eslint:
+        specifier: 'catalog:'
+        version: 9.39.5
+      happy-dom:
+        specifier: 'catalog:'
+        version: 20.14.5
+      tsup:
+        specifier: 'catalog:'
+        version: 8.5.1(postcss@8.5.28)(tsx@4.23.13)(typescript@5.9.3)
       typescript:
         specifier: 'catalog:'
         version: 5.9.3

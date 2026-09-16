@@ -6,6 +6,8 @@ import {
 import { beforeAll, describe, expect, it } from "vitest";
 import { lttb } from "../../src/decimation/lttb.js";
 import { minMaxEnvelope } from "../../src/decimation/min-max.js";
+import { minMaxEnvelopeIndices } from "../../src/decimation/min-max-indices.js";
+import { resolveDecimationParameter } from "../../src/decimation/selection.js";
 import { lttbAllocating, minMaxEnvelopeAllocating } from "./allocating-control.js";
 
 // The gate must not be able to skip itself: this is the first assertion in the file, failing
@@ -222,6 +224,44 @@ describe.sequential("allocation-gate — lttb", () => {
     const { count, details } = await measureGcEvents(
       () => lttb(x, y, 0, LTTB_LARGE.sampleCount, out, 0, LTTB_LARGE.threshold),
       LTTB_LARGE.iterations,
+    );
+    expect(count, details.map((d) => kindName(d.kind)).join(", ")).toBe(0);
+  }, 60_000);
+});
+
+// Widening (`selectable-decimation`): the zero-GC guarantee extends to selection resolution and
+// `minMaxEnvelopeIndices`, never to a new walk mode — `buildTracePath` itself is untouched and
+// covered separately. Instrument liveness is already proven above by the `minMaxEnvelope`/`lttb`
+// allocating controls in this same file; a third redundant allocating control here would prove
+// nothing new.
+describe.sequential("allocation-gate — widening (resolveDecimationParameter, minMaxEnvelopeIndices)", () => {
+  it("resolveDecimationParameter reports exactly 0 GC events across varying selections and plot widths", async () => {
+    const selections = [
+      { algorithm: "lttb" as const },
+      { algorithm: "lttb" as const, threshold: 777 },
+      { algorithm: "min-max" as const },
+      { algorithm: "min-max" as const, bucketCount: 333 },
+    ];
+    const plotWidths = [320, 960, 1920];
+    let cursor = 0;
+    const { count, details } = await measureGcEvents(() => {
+      const selection = selections[cursor % selections.length]!;
+      const plotWidth = plotWidths[cursor % plotWidths.length]!;
+      cursor += 1;
+      resolveDecimationParameter(selection, plotWidth, 1_000_000);
+    }, 10_000);
+    expect(count, details.map((d) => kindName(d.kind)).join(", ")).toBe(0);
+  }, 60_000);
+
+  it("minMaxEnvelopeIndices reports exactly 0 GC events over 100,000 samples at bucketCount 960", async () => {
+    const sampleCount = 100_000;
+    const bucketCount = 960;
+    const y = new Float32Array(sampleCount);
+    for (let i = 0; i < y.length; i += 1) y[i] = i;
+    const out = new Int32Array(bucketCount * 2);
+    const { count, details } = await measureGcEvents(
+      () => minMaxEnvelopeIndices(y, 0, sampleCount, out, 0, bucketCount),
+      200,
     );
     expect(count, details.map((d) => kindName(d.kind)).join(", ")).toBe(0);
   }, 60_000);

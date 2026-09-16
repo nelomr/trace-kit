@@ -37,7 +37,7 @@
 # Evidence backing the acceptance criteria: openspec/changes/00-roadmap-decomposition/research.md
 
 schema: trace-kit.sdd-roadmap/v1
-revision: 4
+revision: 5
 total_changes: 16
 
 changes:
@@ -128,6 +128,31 @@ changes:
       - playground-shell
     capabilities: not_yet_specified
 
+  # Inserted after the 16-change decomposition was written, which is why its `order` is
+  # fractional rather than 6. `order` is a sort key, not an identity: renumbering 6-16 would
+  # silently invalidate the 56 prose references of the form "change N" already written into
+  # the change artifacts. A fractional key keeps every existing number correct and still
+  # places this change exactly where the walk rule needs it.
+  #
+  # Why this change exists at all
+  #   `renderers-canvas2d` ships a renderer no automated test can prove paints correctly. A
+  #   canvas only returns already-rasterized pixels, so a wrong colour, a wrong paint order or
+  #   a missing `stroke` ships green; that change's design records this as risk R1 and reduces
+  #   the exposed surface to a fixed call sequence asserted against a fake context, but it
+  #   cannot close it. The mitigation R1 names is "a real-browser runner as a separate
+  #   toolchain change" — this is that change. Without an entry here, that sentence is an
+  #   omission with good wording rather than a deferral.
+  #
+  #   It is placed before `renderers-webgl2` and listed among its prerequisites deliberately.
+  #   Change 7's entire premise is a second engine producing the same picture as the first;
+  #   that claim is unverifiable without a reference image of the first. Arriving at 1.0.0
+  #   having never asserted rendered output is the failure this ordering prevents.
+  - order: 5.5
+    name: browser-visual-regression-harness
+    prerequisites: 
+      - renderers-canvas2d
+    capabilities: not_yet_specified
+
   - order: 6
     name: svg-vector-export
     prerequisites: 
@@ -138,6 +163,7 @@ changes:
     name: renderers-webgl2
     prerequisites: 
       - renderers-canvas2d
+      - browser-visual-regression-harness
       - svg-vector-export
     capabilities: not_yet_specified
 

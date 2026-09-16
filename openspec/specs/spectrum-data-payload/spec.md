@@ -230,3 +230,36 @@ The design and this spec are therefore now in agreement, and the position this s
 following claim **C1b** and holding the gate at zero — is the design's own position. The note is
 retained as an audit record of how the discrepancy was found and settled, not as an open issue.
 No requirement or scenario in this file changes as a result.
+
+### Requirement: A Renderer Consumes `SpectrumDataPayload` Structurally, Never Constructs or Mutates It
+Any `FigureRenderer` implementation MUST consume a `SpectrumDataPayload` passed to `setData`
+structurally — reading `x`, `y`, `revision`, `sampleCount`, `xOrigin`, and the extent fields only
+— and MUST NOT construct a `SpectrumDataPayload`, MUST NOT call `commitPayloadRevision`, and
+MUST NOT assign to any of its fields. A renderer MUST NOT place `payload.x` or `payload.y` in
+any transfer list, preserving the base capability's guarantee that the payload remains the
+authoritative main-thread CPU reference for its buffer contents at every instant, including
+while a renderer holds and reads it.
+
+#### Scenario: A renderer never constructs a SpectrumDataPayload
+- **GIVEN**: `packages/renderers/src/**`
+- **WHEN**: the source is scanned for a call to `createSpectrumDataPayload` or a direct object
+  literal satisfying the `SpectrumDataPayload` shape
+- **THEN**: no such construction exists
+
+#### Scenario: A renderer never calls commitPayloadRevision
+- **GIVEN**: `packages/renderers/src/**`
+- **WHEN**: the source is scanned for a call to `commitPayloadRevision`
+- **THEN**: no such call exists
+
+#### Scenario: A renderer never places a payload buffer in a transfer list
+- **GIVEN**: a `SpectrumDataPayload` held by a `Canvas2DRenderer` after `setData`
+- **WHEN**: the renderer's full call graph is exercised across `setData`, `resize`,
+  `setDomain`, and `render()`
+- **THEN**: `payload.x.buffer` and `payload.y.buffer` are never passed to a transfer-list-
+  accepting function, and remain attached (non-zero `byteLength`) throughout
+
+#### Scenario: The payload remains the authoritative CPU reference while a renderer holds it
+- **GIVEN**: a `Canvas2DRenderer` that has called `setData(payload)` and `render()` at least once
+- **WHEN**: `payload.x.byteLength` and `payload.y.byteLength` are read at any point afterward
+- **THEN**: both equal their original configured capacity, consistent with the base capability's
+  "renderer never observes a detached payload buffer" scenario

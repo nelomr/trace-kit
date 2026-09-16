@@ -17,10 +17,11 @@ export interface Router {
 }
 
 /**
- * Constructs the hashchange-driven router (design.md §D3, §D4, §D7). On every navigation it
+ * Constructs the hashchange-driven router. On every navigation it
  * builds a fresh `AbortController`, aborts the previous mount's controller and awaits its
  * teardown, then mounts the next view with the new controller's signal. Hash-based routing
- * only (`location.hash`) — no History API, per §D4.
+ * only (`location.hash`) — no History API, since this playground is a static single-page shell
+ * with no server-side routes to match.
  */
 export function createRouter(options: RouterOptions): Router {
   const { container, panel } = options;

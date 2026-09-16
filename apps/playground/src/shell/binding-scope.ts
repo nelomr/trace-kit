@@ -2,7 +2,7 @@ import type { Pane } from "tweakpane";
 import type { Bindable, BindingApi, BindingParams } from "@tweakpane/core";
 
 // Split out of `panel.ts` deliberately: `panel.ts` constructs the single shared `Pane` at
-// module scope (design.md §D2, §D7), which requires a real DOM and therefore cannot be
+// module scope, which requires a real DOM and therefore cannot be
 // imported by a Node-side test. This helper has no DOM dependency of its own, so
 // buffer-ownership logic that needs it (but not the shared panel itself) can import it
 // without pulling a `new Pane()` construction into a Node test process.

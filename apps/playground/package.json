@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@trace-kit/core": "workspace:*",
+    "@trace-kit/renderers": "workspace:*",
     "tweakpane": "catalog:",
     "@tweakpane/core": "catalog:"
   },

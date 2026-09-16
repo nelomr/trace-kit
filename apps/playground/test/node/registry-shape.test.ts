@@ -29,7 +29,7 @@ describe("route path branding", () => {
 
 describe("@tweakpane/core type resolution", () => {
   it("Pane#addBinding and Pane#remove type-check against a plain object target", () => {
-    // Type-only proof (design.md §D2's measured TS2339 trap): `tweakpane@4.0.5` declares no
+    // Type-only proof of a measured TS2339 trap: `tweakpane@4.0.5` declares no
     // `dependencies`/`peerDependencies` on `@tweakpane/core` at all, yet its own `.d.ts` files
     // reference it — so `addBinding`/`remove` resolve only when `@tweakpane/core` is ALSO an
     // installed, catalog-pinned dependency. This function is never called; its only job is to

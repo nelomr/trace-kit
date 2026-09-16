@@ -1,4 +1,4 @@
-// Isomorphic half of the benchmark harness (design.md §D9): warm-up + N-measured-iterations +
+// Isomorphic half of the benchmark harness: warm-up + N-measured-iterations +
 // median/p95 reporting, with no `node:*` import so it can be bundled for a browser consumer
 // (`apps/playground`'s millisecond table) without pulling in Node builtins. `bench/runner.ts`
 // keeps the Node-coupled reporting half (`RunnerInfo`, `writeBenchResults`, …) and re-exports

@@ -3,7 +3,7 @@ import { cpus } from "node:os";
 import type { BenchmarkOptions, BenchmarkResult } from "./runner-core.js";
 import { runBenchmark } from "./runner-core.js";
 
-// Node-coupled reporting half of the benchmark harness (design.md §D9). The isomorphic
+// Node-coupled reporting half of the benchmark harness. The isomorphic
 // warm-up/median-of-N logic lives in `runner-core.ts`, which has no `node:*` import and is
 // what a browser consumer (`apps/playground`'s millisecond table) reaches through the
 // `@trace-kit/bench-harness` alias. Re-exporting it here keeps every existing import path

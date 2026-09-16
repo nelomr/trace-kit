@@ -3,6 +3,7 @@
   "compilerOptions": {
     "noEmit": true,
     "lib": ["ES2022", "DOM"],
+    "types": ["vite/client"],
     "paths": {
       "@trace-kit/bench-harness": ["../../packages/core/bench/runner-core.ts"]
     }

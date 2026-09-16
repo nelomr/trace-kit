@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { median, percentile, runBenchmark } from "../../bench/runner-core.js";
 
-// Proves the isomorphic half of the split (design.md §D9): `runner-core.ts` carries the
+// Proves the isomorphic half of the split: `runner-core.ts` carries the
 // dependency-free warm-up/median-of-N logic and no `node:*` import, so it can be bundled for
 // the browser without pulling `node:fs`/`node:os` into the graph.
 describe("runner-core", () => {

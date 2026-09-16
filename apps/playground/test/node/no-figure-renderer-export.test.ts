@@ -3,6 +3,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import type { FigureRenderer } from "@trace-kit/renderers";
+import type { ViewportTransform } from "@trace-kit/core";
 
 function collectTsFiles(dir: string): string[] {
   const entries = readdirSync(dir, { withFileTypes: true });
@@ -18,8 +20,17 @@ function collectTsFiles(dir: string): string[] {
   return files;
 }
 
-describe("no FigureRenderer-shaped export", () => {
-  it("apps/playground/src exports no FigureRenderer or ViewportTransform", () => {
+describe("FigureRenderer comes from @trace-kit/renderers, not the playground", () => {
+  it("imports FigureRenderer and ViewportTransform from @trace-kit/renderers", () => {
+    // Type-only fixtures: these never execute, but they fail `tsc --noEmit` if either name
+    // stops being importable from the renderers package's public surface.
+    const _figureRenderer: FigureRenderer | undefined = undefined;
+    const _viewportTransform: ViewportTransform | undefined = undefined;
+    expect(_figureRenderer).toBeUndefined();
+    expect(_viewportTransform).toBeUndefined();
+  });
+
+  it("apps/playground/src does not re-declare FigureRenderer or ViewportTransform locally", () => {
     const dir = path.dirname(fileURLToPath(import.meta.url));
     const srcDir = path.join(dir, "../../src");
     const offenders: string[] = [];

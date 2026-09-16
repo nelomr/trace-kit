@@ -2,7 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
-// Mirrors the `@trace-kit/bench-harness` alias in tsconfig.json (design.md §D9): the
+// Mirrors the `@trace-kit/bench-harness` alias in tsconfig.json: the
 // millisecond table reaches `runner-core.ts` directly rather than through
 // `@trace-kit/core`'s exports map, because the harness is an unpublished development
 // instrument, not part of the package's public surface.

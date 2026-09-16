@@ -45,13 +45,19 @@ export default tseslint.config(
             "packages/core/test/payload/*.ts",
             "packages/core/test/setup/*.ts",
             "packages/core/test/transport/*.ts",
+            "packages/core/test/viewport/*.ts",
             "packages/core/bench/*.ts",
             "packages/core/tsup.config.ts",
+            "packages/renderers/test/node/*.ts",
+            "packages/renderers/test/dom/*.ts",
+            "packages/renderers/test/fixtures/*.ts",
+            "packages/renderers/tsup.config.ts",
             // Not a real file on disk: `lint-hot-path.test.ts` lints the committed
             // `test/fixtures/hot-path-violation.ts` source under this virtual `filePath` so it
             // is evaluated against the `src/decimation/**`-scoped hot-path rules without moving
             // the fixture into the published source tree.
             "packages/core/src/decimation/__hot-path-fixture-proof__.ts",
+            "packages/renderers/src/path/__hot-path-fixture-proof__.ts",
           ],
           defaultProject: "packages/core/tsconfig.test.json",
           // `test/**` and `bench/**` are legitimately outside `tsconfig.json`'s own
@@ -196,25 +202,93 @@ export default tseslint.config(
     },
   },
   {
-    // The throwaway plotting routine is a deletion unit: every playground source file except
-    // the routine itself and the one view permitted to use it is banned from importing it.
-    // Deleted wholesale, alongside this block, once a real Canvas2D renderer package exists.
-    files: ["apps/playground/src/**/*.ts"],
-    ignores: [
-      "apps/playground/src/throwaway-plot/**/*.ts",
-      "apps/playground/src/views/core-math/**/*.ts",
-    ],
+    // Allocation-free hot-path enforcement for the renderers package's trace-path module only
+    // (design.md §D6) — the same selector list as `packages/core/src/decimation/**` (task
+    // 4.6), reused verbatim rather than re-derived, since the allocation-free contract is
+    // identical. `packages/renderers/src/canvas2d/**` is intentionally exempt: it constructs
+    // exactly one `Path2D`/frame, which is not a hot-path allocation under this design.
+    files: ["packages/renderers/src/path/**/*.ts"],
     rules: {
-      "no-restricted-imports": [
+      "no-restricted-syntax": [
         "error",
         {
-          patterns: [
-            {
-              group: ["**/throwaway-plot", "**/throwaway-plot/**"],
-              message:
-                "The throwaway plotting routine is scoped to the /core-math view and is deleted once a real Canvas2D renderer package exists. Use that package once it exists.",
-            },
-          ],
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) ObjectExpression",
+          message:
+            "Object literals inside a loop allocate on every iteration. Use scalar locals instead.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) ArrayExpression",
+          message:
+            "Array literals inside a loop allocate on every iteration. Write into a preallocated buffer instead.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) TemplateLiteral",
+          message:
+            "Template literals inside a loop allocate a string on every iteration. Move message construction outside the loop.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) NewExpression",
+          message:
+            "`new` inside a loop allocates on every iteration. Construct once outside the loop.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) ArrowFunctionExpression",
+          message:
+            "A per-call closure inside a loop allocates on every iteration. Hoist the function outside the loop.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) FunctionExpression",
+          message:
+            "A per-call closure inside a loop allocates on every iteration. Hoist the function outside the loop.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) SpreadElement",
+          message:
+            "Spread inside a loop allocates on every iteration. Use an explicit index-based copy instead.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) MemberExpression[property.name=/^(map|filter|slice|subarray|reduce|reduceRight|forEach|flatMap|concat|entries|keys|values|toSorted|toReversed|with)$/]",
+          message:
+            "This typed-array/array method allocates a new view or object. Use an explicit index-based loop writing into a preallocated buffer instead.",
+        },
+        {
+          selector: "ForOfStatement",
+          message:
+            "`for...of` over a typed array allocates an iterator object. Use an indexed `for` loop instead.",
+        },
+        {
+          selector: "RestElement",
+          message:
+            "Rest parameters allocate an array on every call. Use explicit positional parameters instead.",
+        },
+        {
+          selector: "Identifier[name=\"arguments\"]",
+          message:
+            "`arguments` allocates an array-like object. Use explicit positional parameters instead.",
+        },
+        {
+          selector: "YieldExpression",
+          message: "Generators are not permitted in a hot-path module.",
+        },
+        {
+          selector: "AwaitExpression",
+          message: "`async`/`await` is not permitted in a hot-path module.",
+        },
+        {
+          selector: "FunctionDeclaration[async=true]",
+          message: "`async` functions are not permitted in a hot-path module.",
+        },
+        {
+          selector: "FunctionDeclaration[generator=true]",
+          message: "Generator functions are not permitted in a hot-path module.",
         },
       ],
     },

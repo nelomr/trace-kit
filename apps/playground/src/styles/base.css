@@ -1,0 +1,48 @@
+/*
+ * Page chrome built on the tokens in `tokens.css`. Views still set their own layout inline
+ * (e.g. the figure canvas's dpr-driven CSS width/height in `core-math/mount.ts`) — this file
+ * covers only what every view shares: the page shell, typography defaults, and the "not
+ * found" fallback the router renders directly.
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--tk-color-bg);
+  color: var(--tk-color-text);
+  font-family: var(--tk-font-family);
+  font-size: var(--tk-font-size-base);
+  line-height: 1.5;
+}
+
+#app {
+  min-height: 100vh;
+  padding: var(--tk-space-6);
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  color: var(--tk-color-text);
+}
+
+a {
+  color: var(--tk-color-accent);
+}
+
+/* The router's un-styled `<p>Not found.</p>` fallback (`shell/router.ts`) — it has no class
+   hook of its own, so this is the one bare-element rule in the sheet. */
+#app > p {
+  color: var(--tk-color-text-muted);
+  font-size: var(--tk-font-size-lg);
+  margin: var(--tk-space-8) 0;
+}

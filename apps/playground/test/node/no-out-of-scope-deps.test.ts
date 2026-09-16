@@ -10,12 +10,15 @@ interface PackageJsonShape {
 }
 
 describe("no dependency on an unowned package", () => {
-  it("package.json declares no @trace-kit/renderers, @trace-kit/vue, or @trace-kit/react", () => {
+  it("package.json declares no @trace-kit/vue or @trace-kit/react", () => {
+    // `@trace-kit/renderers` is an intentional dependency once the playground's `/core-math`
+    // view swaps its throwaway plotting routine for the real Canvas2D renderer package; only
+    // the framework wrapper packages, which this app never mounts, stay banned.
     const dir = path.dirname(fileURLToPath(import.meta.url));
     const raw = readFileSync(path.join(dir, "../../package.json"), "utf8");
     const pkg = JSON.parse(raw) as PackageJsonShape;
     const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
-    for (const banned of ["@trace-kit/renderers", "@trace-kit/vue", "@trace-kit/react"]) {
+    for (const banned of ["@trace-kit/vue", "@trace-kit/react"]) {
       expect(Object.keys(allDeps)).not.toContain(banned);
     }
   });

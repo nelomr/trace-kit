@@ -133,6 +133,75 @@ Every function inside a hot path MUST maintain strict argument monomorphism, ver
 
 ---
 
+
+### Requirement: The Banned-Construct Scope Extends to the Renderer's Trace-Path Module
+The banned-construct check (object/array literals, tuple returns, `for...of` over typed arrays,
+spread/rest/`arguments`, `.map`/`.filter`/`.slice`/`.subarray`, per-call closures, template
+strings, hot-path `Error` construction, generators, and `async`) MUST additionally scope over
+`packages/renderers/src/path/**`. It MUST NOT scope over the rest of `packages/renderers/src/**`
+(axis label formatting and other cold-path style/layout code MAY construct strings and objects
+freely).
+
+#### Scenario: A source-level check rejects a banned construct in the trace-path module
+- **GIVEN**: a fixture variant of `packages/renderers/src/path/build-trace-path.ts` containing an
+  array literal inside its loop body
+- **WHEN**: the repository's hot-path ESLint rule block scans `packages/renderers/src/path/**`
+- **THEN**: the check fails and names the fixture file and the offending construct
+
+#### Scenario: The committed trace-path implementation passes the check
+- **GIVEN**: the committed `buildTracePath` implementation
+- **WHEN**: the same check runs over `packages/renderers/src/path/**`
+- **THEN**: the check reports no violation
+
+#### Scenario: Axis label formatting outside the trace-path module is exempt
+- **GIVEN**: `packages/renderers/src/canvas2d/axes.ts`, which formats tick labels into strings
+- **WHEN**: the hot-path ESLint rule block runs across the workspace
+- **THEN**: it does not scope over `packages/renderers/src/canvas2d/**`, and a string-building
+  call in that file produces no violation
+
+### Requirement: Exactly One `Path2D` Per Frame Is Permitted; Per-Point Allocation Is Not
+The zero-allocation rule for the renderer's hot path is stated per point, not per frame:
+`render()` constructing exactly one `Path2D` instance per call is explicitly permitted and MUST
+NOT be flagged as a violation of the allocation-free-hot-path capability. Allocation occurring
+inside the loop body that populates that `Path2D` via `moveTo`/`lineTo` calls remains banned
+without exception.
+
+#### Scenario: One Path2D per render call is not a violation
+- **GIVEN**: the committed `Canvas2DRenderer.render()` implementation constructing exactly one
+  `new Path2D()` per call, outside the per-point loop
+- **WHEN**: the zero-allocation GC-event gate measures a run of multiple `render()` calls with a
+  fixed decimated point count
+- **THEN**: the per-frame `Path2D` construction does not, by itself, cause the gate to report a
+  non-zero GC event count attributable to the point loop; the loop-scoped ESLint check (above)
+  passes independently of this per-frame allocation
+
+#### Scenario: An allocation inside the per-point loop is still banned
+- **GIVEN**: a fixture variant of `buildTracePath` that constructs a new `Path2D` or object
+  literal once per point inside the loop, rather than once per frame outside it
+- **WHEN**: the hot-path ESLint check scans `packages/renderers/src/path/**`
+- **THEN**: the check fails and names the offending construct, distinguishing this from the
+  permitted once-per-frame construction above
+
+### Requirement: The Zero-GC Guarantee Binds Decimation Selection Resolution, Not a New Walk Mode
+The zero-GC allocation gate MUST cover `minMaxEnvelopeIndices` and `resolveDecimationParameter`
+under `packages/core/src/decimation/**`, in addition to the existing `lttb` and `minMaxEnvelope`
+coverage. `packages/renderers/src/path/build-trace-path.ts` MUST NOT be modified to add a
+value-based, envelope-specific, or algorithm-conditional walk branch; the guarantee over that file
+established by `canvas2d-trace-rendering` extends unchanged, over the identical committed function.
+
+#### Scenario: minMaxEnvelopeIndices and resolveDecimationParameter pass the zero-GC gate
+- **GIVEN**: `minMaxEnvelopeIndices` and `resolveDecimationParameter`, each driven over a warmed-up
+  run under `--expose-gc`
+- **WHEN**: a `PerformanceObserver({ entryTypes: ["gc"] })` measures each run
+- **THEN**: zero GC events are reported for both
+
+#### Scenario: build-trace-path.ts carries no new branch for the selected algorithm
+- **GIVEN**: `packages/renderers/src/path/build-trace-path.ts` as committed under
+  `canvas2d-trace-rendering`
+- **WHEN**: the file is inspected after `selectable-decimation` lands
+- **THEN**: it contains no conditional branch on `DecimationAlgorithm` and no second scratch-buffer
+  type; both algorithms are consumed through the one existing `(Int32Array indices, count)` shape
+
 ## Contradiction Resolution (closed upstream)
 
 The contradiction recorded above has been **resolved at the source**, after this spec was

@@ -1,0 +1,50 @@
+/*
+ * Design tokens for the playground shell and for the figure adapters that read them at mount
+ * time (see `views/core-math/mount.ts`). This is the single source of truth for the dark
+ * palette — DOM chrome consumes these as CSS custom properties, and the canvas figure receives
+ * the same values as `FigureStyle`/`AxisLayout` options, read once via `getComputedStyle`
+ * rather than duplicated as a second set of literals.
+ *
+ * The palette values mirror `packages/renderers/src/style.ts`'s `DEFAULT_FIGURE_STYLE` so the
+ * canvas figure and the surrounding page read as one surface, not two accidentally-matching ones.
+ */
+:root {
+  /* Surfaces */
+  --tk-color-bg: #0b0f14;
+  --tk-color-surface: #10161d;
+  --tk-color-surface-raised: #161e27;
+  --tk-color-border: #1c2530;
+
+  /* Text */
+  --tk-color-text: #e6edf5;
+  --tk-color-text-muted: #8a97a8;
+
+  /* Accent + figure palette (kept in sync with DEFAULT_FIGURE_STYLE) */
+  --tk-color-accent: #3fb6ff;
+  --tk-color-grid: #1c2530;
+  --tk-color-axis: #3a4756;
+  --tk-color-label: #8a97a8;
+
+  /* Typographic scale */
+  --tk-font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --tk-font-size-sm: 0.8125rem;
+  --tk-font-size-base: 1rem;
+  --tk-font-size-lg: 1.25rem;
+  --tk-font-size-xl: 1.75rem;
+  /* Read by the canvas figure adapter for tick labels — kept independent of the rem-based DOM
+     scale above because the renderer consumes a raw CSS-pixel font string, never `rem`. */
+  --tk-figure-label-font-size: 13px;
+  --tk-figure-label-font-family: system-ui, sans-serif;
+
+  /* Spacing scale */
+  --tk-space-1: 0.25rem;
+  --tk-space-2: 0.5rem;
+  --tk-space-3: 0.75rem;
+  --tk-space-4: 1rem;
+  --tk-space-6: 1.5rem;
+  --tk-space-8: 2rem;
+
+  /* Radii */
+  --tk-radius-sm: 4px;
+  --tk-radius-md: 8px;
+}

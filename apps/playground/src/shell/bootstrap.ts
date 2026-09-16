@@ -1,3 +1,5 @@
+import "../styles/tokens.css";
+import "../styles/base.css";
 import { sharedPanel } from "./panel.js";
 import { createRouter } from "./router.js";
 import { asRoutePath, type RoutePath } from "./view.js";

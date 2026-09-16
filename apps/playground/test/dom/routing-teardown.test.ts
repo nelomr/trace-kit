@@ -6,7 +6,8 @@ import { Pane } from "tweakpane";
 
 // Reference-counts EventTarget listeners across the real prototype so the net outstanding
 // count (add minus remove) proves the router's AbortSignal-based reclamation actually works,
-// rather than trusting the view's own bookkeeping (design.md §D7).
+// rather than trusting the view's own bookkeeping, which could report clean teardown while
+// leaking real listeners.
 describe("router mount/unmount lifecycle", () => {
   let addCount = 0;
   let removeCount = 0;

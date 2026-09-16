@@ -46,6 +46,30 @@ export {
 
 export { minMaxEnvelope } from './decimation/min-max.js';
 export { lttb } from './decimation/lttb.js';
+export { minMaxEnvelopeIndices } from './decimation/min-max-indices.js';
+
+export type {
+  DecimationAlgorithm,
+  DecimationSelection,
+  LttbSelection,
+  MinMaxSelection,
+} from './decimation/selection.js';
+export { resolveDecimationParameter } from './decimation/selection.js';
+
+export type {
+  ViewportTransform,
+  CreateViewportTransformOptions,
+} from './viewport/index.js';
+export {
+  createViewportTransform,
+  projectX,
+  projectY,
+  unprojectX,
+  unprojectY,
+  isInsidePlotArea,
+  transformMatchesPayload,
+  selectTicks,
+} from './viewport/index.js';
 
 export type {
   Lease,

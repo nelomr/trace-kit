@@ -70,6 +70,24 @@ export default defineConfig({
           include: ["test/**/*.test.ts"],
         },
       },
+      {
+        extends: true,
+        test: {
+          name: "renderers",
+          root: path.join(rootDir, "packages/renderers"),
+          environment: "node",
+          include: ["test/node/**/*.test.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "renderers-dom",
+          root: path.join(rootDir, "packages/renderers"),
+          environment: "happy-dom",
+          include: ["test/dom/**/*.test.ts"],
+        },
+      },
     ],
   },
 });
