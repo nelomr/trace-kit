@@ -63,3 +63,80 @@ jobs:
 
       - name: Lint-rules ban is enforced (regression meta-test)
         run: pnpm exec vitest run packages/core/test/lint-rules.test.ts
+
+      - name: Cache Playwright browser binaries
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: Install Playwright Chromium
+        # `playwright` is a devDependency of `packages/renderers` only, not of the root
+        # package — `pnpm exec playwright` at the repo root does not resolve the binary
+        # (verified: `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL`). `--filter` runs it in the package
+        # that actually declares it.
+        run: pnpm --filter @trace-kit/renderers exec playwright install --with-deps chromium
+
+      - name: Verify test:visual task is non-vacuous
+        run: node scripts/verify-turbo-ran.mjs test:visual
+
+      - name: Visual regression tests
+        run: pnpm --filter @trace-kit/renderers test:visual --reporter=json --outputFile=/tmp/visual-results.json
+
+      - name: Confirm at least one visual case actually ran (anti-vacuity)
+        run: |
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("/tmp/visual-results.json", "utf8"));
+            if (r.numPassedTests + r.numFailedTests === 0) {
+              console.error(
+                "Every visual case reported pending/skipped on ubuntu-latest — the CI-only golden " +
+                "gate (P5) failed to detect that this IS the CI environment. numPendingTests=" +
+                r.numPendingTests,
+              );
+              process.exit(1);
+            }
+            console.log(
+              r.numPassedTests + " passed, " + r.numFailedTests + " failed, " +
+              r.numPendingTests + " pending, out of " + r.numTotalTests + " visual cases.",
+            );
+          '
+
+      - name: Upload visual diff artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-regression-diffs
+          path: packages/renderers/test/visual/__screenshots__/__diffs__/
+          if-no-files-found: ignore
+
+      - name: Dependency freshness (documentation only, not a blocking gate — D9)
+        run: |
+          echo "Freshness is enforced manually (D9), not by CI. Before updating a dependency, run:"
+          echo "  pnpm run check:freshness"
+          echo "See scripts/check-dependency-freshness.mjs for the procedure."
+
+      - name: No unexpected deprecation warnings (P9)
+        run: |
+          set -o pipefail
+          ALLOWLIST="DEP0169"  # pnpm 9.15.4's own url.parse() usage — not repository code.
+          FAILED=0
+          for CMD in \
+            "pnpm exec turbo run typecheck" \
+            "pnpm exec turbo run lint" \
+            "pnpm run test" \
+            "pnpm exec turbo run build"; do
+            echo "::group::$CMD"
+            OUTPUT="$($CMD 2>&1)" || true
+            echo "$OUTPUT"
+            echo "::endgroup::"
+            CODES="$(echo "$OUTPUT" | grep -oE '\[DEP[0-9]+\]' | tr -d '[]' | sort -u)"
+            for CODE in $CODES; do
+              if ! echo "$ALLOWLIST" | grep -qw "$CODE"; then
+                echo "Unexpected deprecation warning $CODE from: $CMD"
+                FAILED=1
+              fi
+            done
+          done
+          exit $FAILED

@@ -22,3 +22,5 @@ export function checkTsconfigStrictness(
 export function readPackageJson(dir: string): Record<string, unknown> | null;
 
 export function readTsconfig(dir: string): Record<string, unknown> | null;
+
+export function stripJsonComments(text: string): string;

@@ -19,7 +19,7 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --config ../../vitest.config.ts --project core",
     "lint": "eslint .",
     "bench": "tsx bench/index.ts",
     "bench:deopt": "tsx bench/index.ts --trace-deopt",

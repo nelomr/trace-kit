@@ -1,0 +1,113 @@
+name: Update Visual Goldens
+
+# The only path that regenerates `packages/renderers/test/visual/__screenshots__/**` — no
+# `package.json` script and no file under `scripts/` does this. Runs exclusively on
+# `ubuntu-latest`, since the committed corpus is generated and compared on Linux only (P5).
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why these goldens are being regenerated (recorded in the commit message)"
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  update-goldens:
+    name: Regenerate visual goldens
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Git User
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Playwright browser binaries
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @trace-kit/renderers exec playwright install --with-deps chromium
+
+      - name: Build workspace packages
+        run: pnpm exec turbo run build
+
+      - name: Preserve pre-regeneration diff images (if any exist yet)
+        run: |
+          mkdir -p /tmp/pre-regeneration-diffs
+          if [ -d packages/renderers/test/visual/__screenshots__/__diffs__ ]; then
+            cp -R packages/renderers/test/visual/__screenshots__/__diffs__/. /tmp/pre-regeneration-diffs/ 2>/dev/null || true
+          fi
+
+      - name: Upload pre-regeneration diffs as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pre-regeneration-diffs
+          path: /tmp/pre-regeneration-diffs/
+          if-no-files-found: ignore
+
+      - name: Regenerate visual goldens
+        # `--update` is run here, inline in this workflow, and nowhere else in the repository —
+        # this is the entire point of a separate, human-triggered workflow: an ordinary `pnpm
+        # run test` or `test:visual` invocation must never be able to silently overwrite a
+        # committed golden.
+        run: pnpm --filter @trace-kit/renderers test:visual --update
+
+      - name: Guard — the diff must touch only __screenshots__/
+        run: |
+          OUTSIDE_SCOPE="$(git diff --name-only -- . ':!packages/renderers/test/visual/__screenshots__/**')"
+          if [ -n "$OUTSIDE_SCOPE" ]; then
+            echo "::error::Regenerating goldens touched files outside __screenshots__/:"
+            echo "$OUTSIDE_SCOPE"
+            exit 1
+          fi
+          git diff --exit-code -- . ':!packages/renderers/test/visual/__screenshots__/**'
+
+      - name: Commit regenerated goldens directly onto the dispatched ref
+        # No PR path: this repository commits straight to `main` (and any other branch) until
+        # 1.0.0 — there is no review-before-merge step anywhere else for this project right now,
+        # so a golden update does not get one either. The goldens are pushed as one commit
+        # directly onto whichever ref this workflow was dispatched against, `main` included.
+        # Provenance and intent still distinguish a sanctioned change from an accidental one
+        # without a PR: only this workflow's bot identity and fixed commit message ever touch
+        # `__screenshots__/**`, and `workflow_dispatch`'s required `reason` input is recorded in
+        # that same commit message, both durable in `git log`.
+        run: |
+          if [ -z "$(git status --porcelain -- packages/renderers/test/visual/__screenshots__/)" ]; then
+            echo "No golden changes to commit."
+            exit 0
+          fi
+
+          git add packages/renderers/test/visual/__screenshots__/
+          git commit --no-verify -m "chore(visual): regenerate goldens
+
+          Reason: ${{ inputs.reason }}"
+          git push origin "HEAD:${{ github.ref_name }}"

@@ -13,13 +13,24 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./font": {
+      "types": "./dist/font/index.d.ts",
+      "import": "./dist/font/index.js",
+      "require": "./dist/font/index.cjs"
+    },
+    "./fixtures": {
+      "types": "./dist/fixtures/scenarios.d.ts",
+      "import": "./dist/fixtures/scenarios.js",
+      "require": "./dist/fixtures/scenarios.cjs"
     }
   },
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --config ../../vitest.config.ts --project renderers --project renderers-dom",
+    "test:visual": "vitest run --config ../../vitest.config.ts --project visual",
     "lint": "eslint ."
   },
   "dependencies": {
@@ -32,6 +43,10 @@
     "tsup": "catalog:",
     "eslint": "catalog:",
     "typescript-eslint": "catalog:",
-    "happy-dom": "catalog:"
+    "happy-dom": "catalog:",
+    "@vitest/browser-playwright": "catalog:",
+    "playwright": "catalog:",
+    "pixelmatch": "catalog:"
   }
 }
+

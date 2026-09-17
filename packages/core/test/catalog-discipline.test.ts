@@ -8,6 +8,7 @@ import {
   checkCatalogDiscipline,
   checkTsconfigStrictness,
   readTsconfig,
+  stripJsonComments,
 } from "../../../scripts/verify-catalog-discipline.mjs";
 import { checkNoRootExports } from "../../../scripts/verify-no-root-exports.mjs";
 
@@ -20,7 +21,7 @@ function readWorkspaceYamlText(): string {
 
 function readBaseTsconfig(): Record<string, unknown> {
   return JSON.parse(
-    readFileSync(path.join(repoRoot, "tsconfig.base.json"), "utf8"),
+    stripJsonComments(readFileSync(path.join(repoRoot, "tsconfig.base.json"), "utf8")),
   ) as Record<string, unknown>;
 }
 
@@ -155,5 +156,16 @@ describe("parseWorkspaceYaml", () => {
     const { packages, catalog } = parseWorkspaceYaml(readWorkspaceYamlText());
     expect(packages.length).toBeGreaterThan(0);
     expect(Object.keys(catalog).length).toBeGreaterThan(0);
+  });
+});
+
+describe("dependency freshness policy (P7)", () => {
+  it("no catalogued version specifier is a prerelease", () => {
+    const { catalog } = parseWorkspaceYaml(readWorkspaceYamlText());
+    const prereleaseTag = /-(rc|beta|alpha|next|dev)(\.|$)/;
+    const offenders = Object.entries(catalog)
+      .filter(([, version]) => prereleaseTag.test(version))
+      .map(([name, version]) => `${name}@${version}`);
+    expect(offenders).toEqual([]);
   });
 });

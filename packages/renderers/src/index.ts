@@ -15,3 +15,10 @@ export { DEFAULT_FIGURE_STYLE, DEFAULT_AXIS_LAYOUT } from "./style.js";
 
 export type { Canvas2DRendererOptions } from "./canvas2d/canvas2d-renderer.js";
 export { Canvas2DRenderer } from "./canvas2d/canvas2d-renderer.js";
+
+// Only the family name string — never `ensureDefaultFont` or the embedded font data, both of
+// which stay reachable exclusively through the separate `@trace-kit/renderers/font` subpath.
+// Imported from `./font/family.js` specifically, not `./font/index.js`: the latter also pulls
+// in the base64 font data module, which a bundler's chunk-splitting cannot cleanly keep out of
+// this entry if the two are declared together.
+export { TRACEKIT_INTER_FAMILY } from "./font/family.js";

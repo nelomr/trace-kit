@@ -182,7 +182,7 @@ export function readPackageJson(dir) {
 // Minimal JSONC-comment stripping, scoped to this repository's actual usage (`//` line
 // comments and `/* */` block comments) rather than a full JSONC parser. Comment markers inside
 // string literals are left untouched by tracking string/escape state character-by-character.
-function stripJsonComments(text) {
+export function stripJsonComments(text) {
   let result = "";
   let inString = false;
   let inLineComment = false;

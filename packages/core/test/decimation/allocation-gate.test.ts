@@ -48,10 +48,12 @@ interface GcEntryDetail {
   flags?: number;
 }
 
-/** Node's `gc`-kind `PerformanceEntry` carries `kind`/`flags`, undeclared in the base lib type. */
+/**
+ * Node's `gc`-kind `PerformanceEntry` carries `kind`/`flags` on `detail`, not directly on the
+ * entry — reading them off the entry itself triggers the `DEP0152` deprecation warning.
+ */
 interface GcPerformanceEntry extends NodePerformanceEntry {
-  kind?: number;
-  flags?: number;
+  detail?: { kind?: number; flags?: number };
 }
 
 function kindName(kind: number | undefined): string {
@@ -79,8 +81,8 @@ async function measureGcEvents(
   const details: GcEntryDetail[] = [];
   const observer = new PerformanceObserver((list) => {
     for (const entry of list.getEntries()) {
-      const detail = entry as GcPerformanceEntry;
-      details.push({ kind: detail.kind, flags: detail.flags });
+      const detail = (entry as GcPerformanceEntry).detail;
+      details.push({ kind: detail?.kind, flags: detail?.flags });
     }
   });
   observer.observe({ entryTypes: ["gc"] });
@@ -100,7 +102,7 @@ async function measureGcEvents(
   return { count: details.length, details };
 }
 
-describe.sequential("allocation-gate — minMaxEnvelope", () => {
+describe("allocation-gate — minMaxEnvelope", () => {
   // Control-first discipline: a zero control invalidates the whole file, so this beforeAll
   // throws rather than letting a green "allocation-free" test stand beside a red control.
   // The explicit 60s timeout (well above the ~2s this warmup takes standalone) is load-bearing:
@@ -162,7 +164,7 @@ describe.sequential("allocation-gate — minMaxEnvelope", () => {
   }, 60_000);
 });
 
-describe.sequential("allocation-gate — lttb", () => {
+describe("allocation-gate — lttb", () => {
   // Control-first discipline, mirrored from the minMaxEnvelope half above: a zero control
   // invalidates the whole file. Same 60s timeout rationale as that half — see the comment there.
   beforeAll(async () => {
@@ -234,7 +236,7 @@ describe.sequential("allocation-gate — lttb", () => {
 // covered separately. Instrument liveness is already proven above by the `minMaxEnvelope`/`lttb`
 // allocating controls in this same file; a third redundant allocating control here would prove
 // nothing new.
-describe.sequential("allocation-gate — widening (resolveDecimationParameter, minMaxEnvelopeIndices)", () => {
+describe("allocation-gate — widening (resolveDecimationParameter, minMaxEnvelopeIndices)", () => {
   it("resolveDecimationParameter reports exactly 0 GC events across varying selections and plot widths", async () => {
     const selections = [
       { algorithm: "lttb" as const },

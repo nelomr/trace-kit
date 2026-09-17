@@ -23,9 +23,12 @@ interface GcEntryDetail {
   flags?: number;
 }
 
+/**
+ * Node's `gc`-kind `PerformanceEntry` carries `kind`/`flags` on `detail`, not directly on the
+ * entry — reading them off the entry itself triggers the `DEP0152` deprecation warning.
+ */
 interface GcPerformanceEntry extends NodePerformanceEntry {
-  kind?: number;
-  flags?: number;
+  detail?: { kind?: number; flags?: number };
 }
 
 function kindName(kind: number | undefined): string {
@@ -48,8 +51,8 @@ async function measureGcEvents(
   const details: GcEntryDetail[] = [];
   const observer = new PerformanceObserver((list) => {
     for (const entry of list.getEntries()) {
-      const detail = entry as GcPerformanceEntry;
-      details.push({ kind: detail.kind, flags: detail.flags });
+      const detail = (entry as GcPerformanceEntry).detail;
+      details.push({ kind: detail?.kind, flags: detail?.flags });
     }
   });
   observer.observe({ entryTypes: ["gc"] });
@@ -70,7 +73,7 @@ async function measureGcEvents(
 
 const POINT_COUNT = 100_000;
 
-describe.sequential("allocation-gate — projectX/projectY", () => {
+describe("allocation-gate — projectX/projectY", () => {
   const t = createViewportTransform({
     cssWidth: 800,
     cssHeight: 600,

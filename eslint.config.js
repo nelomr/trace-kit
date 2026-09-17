@@ -25,49 +25,104 @@ export default tseslint.config(
       "**/dist/**",
       "**/.tsup/**",
       "**/test/fixtures/**",
+      "**/bench/fixtures/**",
       "**/node_modules/**",
     ],
   },
   {
     files: ["**/*.ts"],
+    ignores: [
+      "packages/core/test/**",
+      "packages/core/bench/**",
+      "packages/renderers/test/**",
+    ],
     extends: [
       ...tseslint.configs.recommendedTypeChecked,
     ],
     languageOptions: {
       parserOptions: {
         projectService: {
+          // `tsup.config.ts` lives outside `src/**`, so ordinary upward `tsconfig.json`
+          // discovery never reaches it. Unlike `test/**`/`bench/**`, it does not touch any
+          // Node-global type that `projectService`'s fallback fails to resolve under
+          // `typescript@6.0.3` (no `process`, no error-typed catch bindings), so it stays on
+          // this fallback rather than moving to the classic-mode block below.
           allowDefaultProject: [
-            "packages/core/test/*.ts",
-            "packages/core/test/fixtures/*.ts",
-            "packages/core/test/bench/*.ts",
-            "packages/core/test/decimation/*.ts",
-            "packages/core/test/buffers/*.ts",
-            "packages/core/test/payload/*.ts",
-            "packages/core/test/setup/*.ts",
-            "packages/core/test/transport/*.ts",
-            "packages/core/test/viewport/*.ts",
-            "packages/core/bench/*.ts",
             "packages/core/tsup.config.ts",
-            "packages/renderers/test/node/*.ts",
-            "packages/renderers/test/dom/*.ts",
-            "packages/renderers/test/fixtures/*.ts",
             "packages/renderers/tsup.config.ts",
             // Not a real file on disk: `lint-hot-path.test.ts` lints the committed
             // `test/fixtures/hot-path-violation.ts` source under this virtual `filePath` so it
             // is evaluated against the `src/decimation/**`-scoped hot-path rules without moving
-            // the fixture into the published source tree.
+            // the fixture into the published source tree. `projectService` cannot discover a
+            // nonexistent path through ordinary `tsconfig.json` `include` matching, even though
+            // the path itself falls under `src/**`, so it still needs this fallback entry.
             "packages/core/src/decimation/__hot-path-fixture-proof__.ts",
             "packages/renderers/src/path/__hot-path-fixture-proof__.ts",
           ],
           defaultProject: "packages/core/tsconfig.test.json",
-          // `test/**` and `bench/**` are legitimately outside `tsconfig.json`'s own
-          // `include` (which stays `src/**` for the publishable build project), so every
-          // one of them lints through this same fallback default project rather than
-          // through ordinary upward `tsconfig.json` discovery. That list is bounded and
-          // explicit (the entries above), not a wildcard — this raises typescript-eslint's
-          // default safety cap (8) to fit it, not to allow unbounded growth.
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 64,
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 8,
         },
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      "@typescript-eslint/no-explicit-any": [
+        "error",
+        { fixToUnknown: false, ignoreRestArgs: false },
+      ],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "TSAsExpression > TSNeverKeyword",
+          message:
+            "`as never` suppresses type errors. Use a discriminated union or a branded-type constructor with a runtime check instead.",
+        },
+        {
+          selector: "TSTypeAssertion > TSNeverKeyword",
+          message:
+            "`<never>x` suppresses type errors. Use a discriminated union or a branded-type constructor with a runtime check instead.",
+        },
+        {
+          selector: "TSSatisfiesExpression > TSNeverKeyword",
+          message:
+            "`satisfies never` suppresses type errors. Use a discriminated union or a branded-type constructor with a runtime check instead.",
+        },
+        {
+          selector: "TSAsExpression > TSUnknownKeyword",
+          message:
+            "`as unknown as Foo` (double assertion) suppresses type errors at a boundary. Justify with an inline eslint-disable-next-line carrying a reason if this is a genuine external boundary.",
+        },
+      ],
+    },
+  },
+  {
+    // `test/**` and `bench/**` are deliberately outside each package's `tsconfig.json`
+    // `include` (which stays `src/**` for the publishable build project). Under
+    // `typescript@6.0.3`, `projectService`'s `defaultProject`/`allowDefaultProject` fallback
+    // stops constructing a program that can resolve ambient Node types for those files
+    // (`@types/node` globals like `process` come back as unresolved), producing false-positive
+    // "Unsafe call/member access of a type that could not be resolved" errors — verified against
+    // `tsc --noEmit -p packages/core/tsconfig.test.json`, which exits `0` on the same files under
+    // the same compiler. Classic `parserOptions.project`, pointed directly at the package
+    // `tsconfig.test.json` files that already include `test/**` and `bench/**`, does not go
+    // through that broken fallback and resolves correctly. Scoped to the two packages whose
+    // own `tsconfig.json` excludes `test/**`/`bench/**` from its `include` — `apps/playground`
+    // already lists `test/**` in its own `tsconfig.json` `include`, so its test files reach a
+    // program through ordinary `projectService` discovery and must stay on the block above.
+    files: [
+      "packages/core/test/**/*.ts",
+      "packages/core/bench/**/*.ts",
+      "packages/renderers/test/**/*.ts",
+    ],
+    extends: [
+      ...tseslint.configs.recommendedTypeChecked,
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: [
+          "packages/core/tsconfig.test.json",
+          "packages/renderers/tsconfig.test.json",
+        ],
         tsconfigRootDir: import.meta.dirname,
       },
     },

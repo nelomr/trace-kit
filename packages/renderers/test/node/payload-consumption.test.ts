@@ -9,11 +9,20 @@ import { Canvas2DRenderer } from "../../src/canvas2d/canvas2d-renderer.js";
 function collectSourceFiles(dirPath: string): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
-    const entryPath = path.join(dirPath, entry.name);
     if (entry.isDirectory()) {
+      // `src/fixtures/**` is a deliberate, documented exception: it builds real
+      // `SpectrumDataPayload` fixtures once at module load, to hand to a caller's renderer by
+      // reference — the same shape a real application's own payload-owning code would produce.
+      // The rule this file enforces is scoped to the renderer's own *runtime painting path*
+      // never constructing a payload during a render call, not to every file under `src/`
+      // never mentioning these two function names anywhere.
+      if (entry.name === "fixtures") continue;
+      const entryPath = path.join(dirPath, entry.name);
       files.push(...collectSourceFiles(entryPath));
-    } else if (entry.name.endsWith(".ts")) {
-      files.push(entryPath);
+      continue;
+    }
+    if (entry.name.endsWith(".ts")) {
+      files.push(path.join(dirPath, entry.name));
     }
   }
   return files;

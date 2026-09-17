@@ -47,4 +47,17 @@ describe("lint-rules meta-test", () => {
     },
     LINT_TIMEOUT_MS,
   );
+
+  // `bench/**` lints through the classic `parserOptions.project` block in `eslint.config.js`
+  // (pointed at `tsconfig.test.json`), a different code path from `test/**`'s fixture above.
+  // This proves type-aware rules stayed live on that tree specifically, not just on `test/**`.
+  it(
+    "fires @typescript-eslint/no-explicit-any on bench/fixtures/lint-any.ts",
+    async () => {
+      const messages = await lintFixture("packages/core/bench/fixtures/lint-any.ts");
+      const ruleIds = messages.map((message) => message.ruleId);
+      expect(ruleIds).toContain("@typescript-eslint/no-explicit-any");
+    },
+    LINT_TIMEOUT_MS,
+  );
 });

@@ -1,5 +1,8 @@
 {
   "compilerOptions": {
+    // `target` governs the JavaScript syntax level that downstream consumer browsers must
+    // support at runtime. It is independent of the Node.js version used to build and test this
+    // repository — bumping the repo's Node engine does not require (or imply) bumping `target`.
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
@@ -12,6 +15,13 @@
     "declarationMap": true,
     "sourceMap": true,
     "isolatedModules": true,
-    "noUncheckedIndexedAccess": true
+    "noUncheckedIndexedAccess": true,
+    // `tsup`'s bundled declaration build hardcodes `baseUrl: compilerOptions.baseUrl || "."`
+    // (node_modules/.../tsup/dist/rollup.js:6837) even though no tsconfig in this repository
+    // sets `baseUrl` itself. TypeScript 6 only warns about the option's presence; the suppression
+    // below silences that warning. It has a fixed expiry: `ignoreDeprecations` itself stops
+    // functioning entirely in TypeScript 7, so this must be revisited (and tsup checked for a
+    // fix) at that point, not carried forward as-is.
+    "ignoreDeprecations": "6.0"
   }
 }

@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { defineConfig } from "vitest/config";
+import { playwright } from "@vitest/browser-playwright";
 
 // Root Vitest configuration using `test.projects` from the outset (design.md §D5),
 // rather than a flat config. A single project today (`core`, pinned to the `node`
@@ -9,34 +10,17 @@ import { defineConfig } from "vitest/config";
 // `test.projects` that is an added array entry, not a migration of `core`'s Node
 // isolation.
 //
-// Each project's `root` is resolved to an absolute path from this file's own
-// location rather than left as a bare relative string. Vitest resolves a relative
-// project `root` against the CLI's invocation cwd, not against this config file's
-// directory — so a per-package `"test": "vitest run"` script (which Turborepo runs
-// with cwd set to the package directory) would otherwise resolve `"packages/core"`
-// relative to `packages/core` itself, doubling the path and finding zero test files.
-// An absolute root removes that dependency on invocation cwd entirely.
+// Each project's `root` is resolved to an absolute path from this file's own location
+// rather than left as a bare relative string. On Vitest 5, a relative project `root`
+// resolves correctly against this config file's directory regardless of invocation cwd,
+// so the absolute construction is no longer required to find test files — it is kept as
+// a defensive default that stays correct no matter which cwd a script is invoked from
+// (a per-package `"test": "vitest run"` script, run by Turborepo with cwd set to the
+// package directory, is one such case).
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   test: {
-    // `--expose-gc` is a V8 flag: `NODE_OPTIONS` rejects V8 flags outright, and the default
-    // `threads` pool's `worker_threads` rejects them in `execArgv`
-    // (`ERR_WORKER_INVALID_EXEC_ARGV`). A forked child process is the only pool whose
-    // `execArgv` accepts V8 flags (design.md §D6). This MUST live on the top-level `test`
-    // object, not inside a `projects[].test` entry — per-project `pool`/`poolOptions` are
-    // resolved but not propagated to the process pool that actually spawns workers in
-    // Vitest 3.2.7 (verified empirically: a project-scoped `execArgv` silently has no
-    // effect on the forked child's `process.execArgv`, while the same option at this
-    // top level does). With a single `core` project today this is equivalent to scoping it
-    // there; when a `jsdom` project is added later, `--expose-gc` in a browser-like
-    // environment is inert, so applying it workspace-wide is harmless.
-    pool: "forks",
-    poolOptions: {
-      forks: {
-        execArgv: ["--expose-gc"],
-      },
-    },
     projects: [
       {
         extends: true,
@@ -46,6 +30,15 @@ export default defineConfig({
           environment: "node",
           include: ["test/**/*.test.ts"],
           setupFiles: ["test/setup/fast-check.ts"],
+          // `--expose-gc` is a V8 flag: `NODE_OPTIONS` rejects V8 flags outright, and the
+          // default `threads` pool's `worker_threads` rejects them in `execArgv`
+          // (`ERR_WORKER_INVALID_EXEC_ARGV`). A forked child process is the only pool whose
+          // `execArgv` accepts V8 flags. On Vitest 5, a project-scoped `pool`/`execArgv`
+          // propagates correctly to the forked worker, so it is scoped to only the two
+          // projects whose allocation-gate tests read `globalThis.gc` rather than applied
+          // workspace-wide.
+          pool: "forks",
+          execArgv: ["--expose-gc"],
         },
       },
       {
@@ -68,6 +61,10 @@ export default defineConfig({
           root: path.join(rootDir, "apps/playground"),
           environment: "happy-dom",
           include: ["test/**/*.test.ts"],
+          // Same `--expose-gc` scoping as `core`/`renderers` above — `test/node/buffer-reuse.test.ts`
+          // and `test/node/lorentzian-gc-gate.test.ts` also read `globalThis.gc`.
+          pool: "forks",
+          execArgv: ["--expose-gc"],
         },
       },
       {
@@ -77,6 +74,10 @@ export default defineConfig({
           root: path.join(rootDir, "packages/renderers"),
           environment: "node",
           include: ["test/node/**/*.test.ts"],
+          // Same `--expose-gc` scoping as the `core` project above — this project's
+          // `test/node/allocation-gate.test.ts` also reads `globalThis.gc`.
+          pool: "forks",
+          execArgv: ["--expose-gc"],
         },
       },
       {
@@ -86,6 +87,59 @@ export default defineConfig({
           root: path.join(rootDir, "packages/renderers"),
           environment: "happy-dom",
           include: ["test/dom/**/*.test.ts"],
+        },
+      },
+      {
+        extends: true,
+        // Baked in at config-evaluation time (Node-side, here) rather than read at test
+        // runtime: browser-mode test code executes inside the actual browser, where
+        // `process.platform` does not exist. `define` replaces this identifier with a
+        // literal boolean in the bundle the browser loads, so the visual test file can skip
+        // off-Linux without needing any Node global at runtime. Must be a sibling of `test`,
+        // not nested inside it — this project entry is a full Vite config, matching the
+        // `playground` project's own `resolve.alias` sibling placement above.
+        define: {
+          __TRACEKIT_VISUAL_IS_LINUX_CI__: process.platform === "linux",
+        },
+        test: {
+          name: "visual",
+          root: path.join(rootDir, "packages/renderers"),
+          include: ["test/visual/**/*.test.ts"],
+          // No `environment` key: this project renders in a real browser (Chromium, via
+          // Playwright) rather than in a simulated DOM. No `execArgv`/`pool` override either —
+          // `--expose-gc` has nothing to instrument here; visual cases assert painted pixels,
+          // not allocation counts.
+          browser: {
+            enabled: true,
+            headless: true,
+            provider: playwright(),
+            instances: [{ browser: "chromium" }],
+            expect: {
+              toMatchScreenshot: {
+                comparatorName: "pixelmatch",
+                comparatorOptions: {
+                  threshold: 0.1,
+                  includeAA: true,
+                  allowedMismatchedPixelRatio: 0.001,
+                },
+                // Flat, no platform/browser token — the corpus is generated and compared on
+                // `ubuntu-latest` only (P5), so a platform-keyed filename would only ever have
+                // one value and adds nothing; adding a second platform later is a one-line
+                // change to these two functions, not a corpus rename.
+                resolveScreenshotPath: ({ testFileDirectory, arg, ext }) =>
+                  path.join(rootDir, "packages/renderers", testFileDirectory, "__screenshots__", `${arg}${ext}`),
+                resolveDiffPath: ({ testFileDirectory, arg, ext }) =>
+                  path.join(
+                    rootDir,
+                    "packages/renderers",
+                    testFileDirectory,
+                    "__screenshots__",
+                    "__diffs__",
+                    `${arg}${ext}`,
+                  ),
+              },
+            },
+          },
         },
       },
     ],

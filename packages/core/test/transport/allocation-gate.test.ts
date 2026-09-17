@@ -29,7 +29,7 @@ async function measureGcEvents(run: () => void, iterations: number): Promise<num
   return count;
 }
 
-describe.sequential("allocation-gate — synchronous port round trip", () => {
+describe("allocation-gate — synchronous port round trip", () => {
   it("an allocating control variant (fresh sink object per call, retained) reports > 0 GC events", async () => {
     const port = createSyncDecimationPort({ poolPairs: 3, transitCapacitySamples: 4_096 });
     // Retaining every allocated sink in `garbage` (instead of discarding it) prevents V8's

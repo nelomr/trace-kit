@@ -36,7 +36,7 @@ export const DEFAULT_FIGURE_STYLE: FigureStyle = Object.freeze({
   axisColor: "#3a4756",
   labelColor: "#8a97a8",
   lineWidthCss: 1.5,
-  font: "10px sans-serif",
+  font: '10px "TraceKit Inter"',
 });
 
 export const DEFAULT_AXIS_LAYOUT: AxisLayout = Object.freeze({
