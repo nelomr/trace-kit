@@ -35,6 +35,28 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Cache Playwright browser binaries
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: Install Playwright Chromium
+        # `playwright` is a devDependency of `packages/renderers` only, not of the root
+        # package — `pnpm exec playwright` at the repo root does not resolve the binary
+        # (verified: `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL`). `--filter` runs it in the package
+        # that actually declares it.
+        #
+        # Placed here, before any `turbo run`/`pnpm run test` invocation — not after, as this
+        # workflow's own first pass had it. `turbo.json`'s `test` task `dependsOn: ["test:visual"]`
+        # (D5), so plain `pnpm run test` below pulls `test:visual` in transitively; discovered
+        # for real when a rerun of this exact job failed with "Executable doesn't exist at
+        # .../chromium_headless_shell.../chrome-headless-shell" during the "Unit tests" step,
+        # because Chromium had not been installed yet at that point in the file.
+        run: pnpm --filter @trace-kit/renderers exec playwright install --with-deps chromium
+
       - name: Restore Turborepo cache
         uses: actions/cache@v6
         with:
@@ -63,21 +85,6 @@ jobs:
 
       - name: Lint-rules ban is enforced (regression meta-test)
         run: pnpm exec vitest run packages/core/test/lint-rules.test.ts
-
-      - name: Cache Playwright browser binaries
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            playwright-${{ runner.os }}-
-
-      - name: Install Playwright Chromium
-        # `playwright` is a devDependency of `packages/renderers` only, not of the root
-        # package — `pnpm exec playwright` at the repo root does not resolve the binary
-        # (verified: `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL`). `--filter` runs it in the package
-        # that actually declares it.
-        run: pnpm --filter @trace-kit/renderers exec playwright install --with-deps chromium
 
       - name: Verify test:visual task is non-vacuous
         run: node scripts/verify-turbo-ran.mjs test:visual
@@ -131,7 +138,16 @@ jobs:
             OUTPUT="$($CMD 2>&1)" || true
             echo "$OUTPUT"
             echo "::endgroup::"
-            CODES="$(echo "$OUTPUT" | grep -oE '\[DEP[0-9]+\]' | tr -d '[]' | sort -u)"
+            # `|| true` on the whole pipeline, not just on `$CMD` above: GitHub Actions runs
+            # every `run:` step under `bash -e -o pipefail` by default (not just the
+            # `pipefail` this script sets itself). `grep -oE` exits 1 when it finds no match —
+            # the GOOD case, no deprecations at all — and `pipefail` propagates that 1 to the
+            # whole pipeline. Assigning that pipeline's output straight into `CODES=` puts the
+            # failing exit code where `-e` DOES apply (a bare assignment's command
+            # substitution, unlike one guarded by `if`/`&&`/`||`), which killed the entire step
+            # silently on every clean run — reproduced directly with
+            # `bash -c 'set -e -o pipefail; …'` before adding this guard.
+            CODES="$(echo "$OUTPUT" | grep -oE '\[DEP[0-9]+\]' | tr -d '[]' | sort -u)" || true
             for CODE in $CODES; do
               if ! echo "$ALLOWLIST" | grep -qw "$CODE"; then
                 echo "Unexpected deprecation warning $CODE from: $CMD"
