@@ -35,5 +35,10 @@
     "typescript": "catalog:",
     "typescript-eslint": "catalog:",
     "vitest": "catalog:"
+  },
+  "pnpm": {
+    "overrides": {
+      "esbuild": ">=0.28.1"
+    }
   }
 }
