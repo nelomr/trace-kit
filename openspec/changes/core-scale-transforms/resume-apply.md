@@ -114,3 +114,45 @@ expression are unchanged), then add the two new `SCENARIO_FIXTURES` entries (log
 dual-axis) and their `canvas2d.visual.test.ts` cases, generate+commit their goldens via the
 repository's designated golden-update invocation, then re-run 11.7 and the full 12.1–12.4
 verification block on that platform before recommending archive.
+
+## Phase 11 resumed (this session)
+
+- 11.1 marked `[x]`: per the user's confirmation, the full Linux CI run at current `main` HEAD
+  was green across all 5 pre-existing goldens (`axes-grid.png`, `decimation-minmax.png`,
+  `noise-floor.png`, `resonance-peak.png`, `simple-trace.png`). This is the one task in this
+  batch verified by an external CI run, not by this session directly — no local execution of the
+  real comparison was possible (macOS host, `__TRACEKIT_VISUAL_IS_LINUX_CI__` false).
+- 11.3 and 11.5 marked `[x]`: added two new RED cases to
+  `packages/renderers/test/visual/canvas2d.visual.test.ts` —
+  - `log-axis`: single `Y_SCALE_KIND_LOG` axis, domain `[1, 1000]` (3 decades), driven through
+    `Canvas2DRenderer`'s real `yAxes` constructor option (not a hand-rolled mock), rendering a
+    deterministic xorshift32 exponential-sweep payload so decade thinning and mantissa minors are
+    both visible.
+  - `dual-axis`: two left-stacked `YAxisRegistration`s (one `Y_SCALE_KIND_LOG` `[1,1000]`, one
+    `Y_SCALE_KIND_LINEAR` `[-1,1]`) via `createAxisTransforms`'s real multi-axis entry point
+    (through the renderer's `yAxes` option, never two single-axis transforms glued together by
+    hand), proving the gutter-stacking arithmetic renders correctly.
+  Both cases follow the file's existing `it.skipIf(!runsWhereGoldensAreValid)` house style
+  exactly, no golden committed yet, confirmed locally to report **skipped**, not passed
+  (`vitest run --project visual` → `7 skipped (7)`, up from 5).
+- Verified locally: `pnpm exec turbo run typecheck --filter=@trace-kit/renderers` and
+  `pnpm exec turbo run lint --filter=@trace-kit/renderers` both pass on the modified file. No
+  `any`/`as never` introduced, no SDD-artifact-name references in the added comments.
+- 11.2 left unchecked (its condition — a non-zero diff on 11.1 — did not occur, nothing to do).
+- 11.4, 11.6, 11.7 left unchecked — they require the actual `ubuntu-latest`
+  `workflow_dispatch`-triggered golden-generation run described below. Not attempted, not
+  simulated.
+
+### Exact next steps (GitHub Actions, in order)
+
+1. Push this commit to `main`.
+2. From the Actions tab, manually dispatch **Update Visual Goldens**
+   (`.github/workflows/update-visual-goldens.yml`), entering a `reason` such as "generate
+   log-axis and dual-axis goldens for core-scale-transforms".
+3. Confirm that workflow's "Guard — the diff must touch only `__screenshots__/`" step passed
+   (nothing outside the golden images changed).
+4. Confirm the two new PNGs landed in
+   `packages/renderers/test/visual/__screenshots__/` (expected stems: `log-axis`, `dual-axis`).
+5. Re-run the ordinary `CI` workflow (the push already triggers it, or re-run manually) and
+   confirm `Visual regression tests` passes clean — all 7 cases actually compared, not skipped.
+6. Only then mark 11.4, 11.6, 11.7 (and 12.3/12.8) done and proceed toward `/sdd:verify`.

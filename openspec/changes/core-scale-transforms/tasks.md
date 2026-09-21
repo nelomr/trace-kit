@@ -494,7 +494,7 @@
 > "The Golden Corpus Includes a Log-Scale Y-Axis Figure", "The Golden Corpus Includes a Dual-Y-Axis
 > Figure".
 
-- [ ] 11.1 Run the existing visual test suite (`pnpm run test:visual` or the repository's designated
+- [x] 11.1 Run the existing visual test suite (`pnpm run test:visual` or the repository's designated
       CI-only visual invocation, on `ubuntu-latest` or an equivalent pinned environment) against
       every pre-existing single-linear-axis golden and confirm each reports a pixel diff of exactly
       zero. This is the explicit, early regression gate the `visual-golden-corpus` delta requires —
@@ -503,7 +503,7 @@
 - [ ] 11.2 If 11.1 reports any non-zero diff on a pre-existing golden: this is a regression to
       investigate and fix in Phases 8–9's renderer changes, never a golden to regenerate. Do not
       proceed to 11.3 until 11.1 is clean.
-- [ ] 11.3 RED — `packages/renderers/test/visual/canvas2d.visual.test.ts` (extend): add a new,
+- [x] 11.3 RED — `packages/renderers/test/visual/canvas2d.visual.test.ts` (extend): add a new,
       initially-failing (no golden yet committed) test case rendering a single Y axis with
       `yScaleKind: Y_SCALE_KIND_LOG`, including its decade gridlines and axis labels, under the
       same CI-only, single-Linux-corpus, no-LFS rules as every other case in this file; the test
@@ -512,7 +512,7 @@
 - [ ] 11.4 GREEN — via the golden corpus's own designated, separate golden-update invocation (never
       the standard comparison run), generate and commit the log-axis golden image. Confirm the
       standard comparison run then passes 11.3 against the newly committed golden. Satisfies 11.3.
-- [ ] 11.5 RED — extend `canvas2d.visual.test.ts`: add a new, initially-failing test case rendering
+- [x] 11.5 RED — extend `canvas2d.visual.test.ts`: add a new, initially-failing test case rendering
       two independent, left-stacked Y axes sharing one X domain (one linear and one log, or two
       differing scale kinds) with correctly stacked left gutters, under the same CI-only rules.
 - [ ] 11.6 GREEN — via the same designated golden-update invocation, generate and commit the
