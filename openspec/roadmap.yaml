@@ -37,8 +37,8 @@
 # Evidence backing the acceptance criteria: openspec/changes/00-roadmap-decomposition/research.md
 
 schema: trace-kit.sdd-roadmap/v1
-revision: 5
-total_changes: 16
+revision: 6
+total_changes: 26  # 16 numbered + 5.5 (rev 5) + 9 inserted at rev 6; the pre-rev-6 value of 16 never counted 5.5
 
 changes:
   - order: 1
@@ -153,11 +153,97 @@ changes:
       - renderers-canvas2d
     capabilities: not_yet_specified
 
+  # Inserted at revision 6. Same fractional-key rationale as 5.5: `order` is a sort key, not an
+  # identity, and renumbering 6-16 would invalidate the prose references of the form "change N"
+  # already written into the change artifacts.
+  #
+  # Why this change exists at all, and why it is FIRST
+  #   `viewport-transform` shipped in change 5 is strictly linear and strictly single-Y-axis:
+  #   its eight requirements define one forward projection, one inverse, one tick selector, all
+  #   over a single `{x,y}` domain pair. Every photonic sweep an instrument produces is at least
+  #   two co-plotted quantities on incompatible scales — optical power in dBm (logarithmic) and
+  #   phase in radians (linear) against one wavelength axis in nm. There is no way to draw that
+  #   with the transform as archived.
+  #
+  #   It is placed before `svg-vector-export` and `renderers-webgl2` deliberately. Both consume
+  #   the projection: the exporter emits axis ticks and path coordinates, the GL pipeline bakes
+  #   the domain-to-clipspace matrix into a uniform. Adding a second axis and a log scale after
+  #   either exists means rewriting a shipped shader and a shipped exporter against a changed
+  #   contract. Doing it here changes an unimplemented consumer instead.
+  - order: 5.6
+    name: core-scale-transforms
+    prerequisites: 
+      - browser-visual-regression-harness
+    capabilities: not_yet_specified
+    # Intended capability surface (to be pinned by sdd-propose/sdd-spec):
+    #   scale-logarithmic-transform ADDED    — base-10 decade projection, log-aware tick selection
+    #   multi-axis-viewport         ADDED    — N independent Y domains sharing one X domain
+    #   viewport-transform          MODIFIED — numeric scale-kind discriminant; inverse stays total
+    # Amended at the proposal phase: this block previously listed
+    # `scale-linear-transform ADDED — extracted from viewport-transform`. The proposal rejects
+    # that extraction. The accepted migration generalizes `ViewportTransform` in place by
+    # composition — one frozen flat object instantiated once per Y axis — so pulling the linear
+    # path out into its own capability would add a capability and a seam that buy nothing. The
+    # authoritative capabilities contract is `openspec/changes/core-scale-transforms/proposal.md`;
+    # this comment is a summary of it and loses to it on any disagreement.
+    #   canvas2d-axes-grid          MODIFIED — decade gridlines and per-axis gutters
+    #   visual-golden-corpus        MODIFIED — goldens for log and dual-axis scenarios
+
+  # Inserted at revision 6. The two data-model gaps that are cheap now and breaking later.
+  #
+  # Why: gaps
+  #   `decimation-lttb` and `decimation-min-max` guarantee they never EMIT `NaN`/`Infinity`.
+  #   Neither says what happens when `NaN` ARRIVES — a dead detector pixel, an aborted sweep, a
+  #   saturated ADC sample. Today LTTB would interpolate a straight line across the hole and the
+  #   min/max envelope would poison a whole bucket. Both outcomes are a chart that lies about the
+  #   measurement, which is the one failure mode a characterization tool may not have. Gap
+  #   semantics must be decided in the decimator, because by render time the hole is gone.
+  #
+  # Why: multi-trace
+  #   `SpectrumDataPayload` models exactly one trace. Comparing two sweeps — before/after a
+  #   thermal tune, two output ports, a reference against a device under test — is the primary
+  #   workflow this library exists to serve, and it is not expressible. Retrofitting it after
+  #   changes 10-11 is a breaking change to the published component props of both adapters, so it
+  #   lands before any renderer or adapter is written against the single-trace shape.
+  - order: 5.7
+    name: core-gap-and-multi-trace-model
+    prerequisites: 
+      - core-scale-transforms
+    capabilities: not_yet_specified
+    # Intended capability surface (to be pinned by sdd-propose/sdd-spec):
+    #   gap-sentinel-semantics    ADDED    — NaN is a break, not a value; never interpolated across
+    #   decimation-lttb           MODIFIED — buckets split at gaps; gap survives decimation
+    #   decimation-min-max        MODIFIED — envelope preserves the hole instead of poisoning it
+    #   trace-collection-payload  ADDED    — N payloads sharing an X domain, per-trace axis binding
+    #   canvas2d-trace-rendering  MODIFIED — path break on gap; per-trace style resolution
+    #   visual-golden-corpus      MODIFIED — goldens for gapped and overlaid traces
+
   - order: 6
     name: svg-vector-export
     prerequisites: 
       - renderers-canvas2d
+      - core-scale-transforms
+      - core-gap-and-multi-trace-model
     capabilities: not_yet_specified
+
+
+  # Inserted at revision 6.
+  #
+  # Why: `svg-vector-export` covers the figure that goes into an IEEE paper. It does not cover the
+  # other half of the same gesture — the engineer zooms onto an anomaly and needs THOSE samples,
+  # at full resolution, in Python or MATLAB. Exporting the decimated screen-space points would be
+  # scientifically worthless, so this extracts from the authoritative payload using the current
+  # domain as a window, not from what the renderer drew. It sits here because it shares the
+  # "serialize the current view" surface with change 6 and reuses its viewport-window resolution.
+  - order: 6.5
+    name: raw-data-viewport-export
+    prerequisites: 
+      - svg-vector-export
+    capabilities: not_yet_specified
+    # Intended capability surface:
+    #   viewport-window-resolution ADDED — domain range -> source index span, pre-decimation
+    #   csv-export                 ADDED — streamed, precision-preserving, multi-trace columns
+    #   binary-export-contract     ADDED — interface + one concrete typed-array dump; HDF5 deferred
 
   - order: 7
     name: renderers-webgl2
@@ -165,6 +251,7 @@ changes:
       - renderers-canvas2d
       - browser-visual-regression-harness
       - svg-vector-export
+      - core-gap-and-multi-trace-model
     capabilities: not_yet_specified
 
   - order: 8
@@ -181,6 +268,55 @@ changes:
       - worker-streaming-transport
     capabilities: not_yet_specified
 
+  # Inserted at revision 6.
+  #
+  # Why this was missing entirely
+  #   The README promises "continuous pan/zoom operations" and `viewport-transform` ships a total
+  #   inverse projection specifically so screen pixels can be mapped back to the data domain. No
+  #   change in the roadmap ever captured a pointer event. The engine is, as ordered, a device
+  #   that renders a domain nobody can change. This closes that.
+  #
+  #   It belongs to the controller, not to Vue or React: a zoom mutates the domain, which forces a
+  #   re-decimation at the new resolution, which may cross the engine-switch hysteresis band. That
+  #   is exactly the state the controller owns. Implementing it twice in two adapters is the same
+  #   duplication hazard that justified extracting change 9 in the first place.
+  - order: 9.3
+    name: viewport-interaction-controller
+    prerequisites: 
+      - engine-controller
+    capabilities: not_yet_specified
+    # Intended capability surface:
+    #   pointer-input-normalization ADDED — framework- and device-agnostic; pointer events, not mouse
+    #   wheel-zoom-anchoring        ADDED — cursor-anchored, per-axis, allocation-free
+    #   drag-pan-domain-mutation    ADDED — rAF-coalesced, no allocation per move
+    #   box-zoom-selection          ADDED — drag rectangle -> domain commit
+    #   decimation-invalidation     ADDED — domain change -> re-decimate, debounced against the frame budget
+
+  # Inserted at revision 6.
+  #
+  # Why: browsers destroy GL contexts routinely to reclaim GPU memory. A lab session leaves a
+  # sweep on screen for hours, so this is not an edge case — it is a Tuesday. The DATA half of
+  # the recovery is already contracted: `spectrum-data-payload` requires the payload to be the
+  # authoritative main-thread CPU reference, re-uploadable at any instant including immediately
+  # after `webglcontextrestored`, with `revision` distinguishing a restore from new data, and the
+  # transport is type-forbidden from ever transferring a payload buffer away. What does not exist
+  # is the LIFECYCLE: nothing listens for the events, nothing suspends the loop, nothing rebuilds
+  # shaders, programs and VBOs. Scope is deliberately narrow because of that.
+  #
+  # It is the controller's job, not the renderer's: the renderer is an engine implementation, the
+  # controller already owns init/resize/destroy and engine swapping. Suspension must also survive
+  # a context loss that happens mid-switch.
+  - order: 9.5
+    name: engine-context-recovery
+    prerequisites: 
+      - engine-controller
+    capabilities: not_yet_specified
+    # Intended capability surface:
+    #   context-loss-lifecycle   ADDED    — listeners, loop suspension, preventDefault, no throw
+    #   gl-resource-rehydration  ADDED    — shaders/programs/VBOs rebuilt, re-upload from payload.revision
+    #   renderer-lifecycle-manager MODIFIED — loss during an engine switch is not a lost state machine
+    #   browser-visual-regression MODIFIED — forced loss via WEBGL_lose_context; pixels match the pre-loss golden
+
   - order: 10
     name: vue-adapter
     prerequisites: 
@@ -192,6 +328,30 @@ changes:
     prerequisites: 
       - engine-controller
     capabilities: not_yet_specified
+
+  # Inserted at revision 6.
+  #
+  # Why: a canvas is an opaque rectangle to a screen reader. For procurement in listed companies,
+  # public research institutes and anything EU-public-funded, an inaccessible instrument UI is a
+  # blocker before it is ever a technical question.
+  #
+  # Why AFTER both adapters rather than inside them
+  #   The headless core and the renderers must stay DOM-free, so the semantic layer cannot live
+  #   there. But writing it inside change 10 and again inside change 11 produces two divergent
+  #   accessibility behaviors. The split: the tabular PROJECTION (which decimated samples, at what
+  #   precision, with what unit labels) is pure data and belongs in core; the DOM rendering of it
+  #   is per-adapter and thin. One change, both adapters, parity asserted in the same suite.
+  - order: 11.5
+    name: dom-a11y-layer
+    prerequisites: 
+      - vue-adapter
+      - react-adapter
+    capabilities: not_yet_specified
+    # Intended capability surface:
+    #   a11y-tabular-projection  ADDED — DOM-free: decimated samples -> labelled rows, in core
+    #   aria-canvas-semantics    ADDED — role/img, aria-label, live summary of the current domain
+    #   visually-hidden-table    ADDED — rendered by both adapters, parity-tested
+    #   keyboard-viewport-control ADDED — pan/zoom reachable without a pointer (pairs with 9.3)
 
   - order: 12
     name: package-exports-and-treeshaking-gates
@@ -207,6 +367,51 @@ changes:
       - react-adapter
     capabilities: not_yet_specified
 
+  # Inserted at revision 6.
+  #
+  # Why here: change 13 builds the inter-chart event bus and the inverse pixel->domain projection
+  # for the crosshair. Brushing is the same bus and the same maths evaluated over a vector
+  # (pointerdown -> pointerup) instead of a point. Landing it immediately after maximises reuse
+  # and keeps the box-zoom gesture from change 9.3 and the range-selection gesture from sharing
+  # nothing but a name. It also produces the range that 6.5 exports and that 13.5 measures over.
+  - order: 13.3
+    name: range-selection-events
+    prerequisites: 
+      - crosshair-sync-bus
+      - viewport-interaction-controller
+    capabilities: not_yet_specified
+    # Intended capability surface:
+    #   brush-state-machine    ADDED — explicit states; cancel, escape and pointer-capture loss are states
+    #   range-dispatch-bus     ADDED — selected domain range over the change-13 bus, cross-chart
+    #   selection-overlay      ADDED — CSS/compositor-layer rectangle, never repaints the trace
+
+  # Inserted at revision 6.
+  #
+  # Why this is the change that decides whether TraceKit is a chart or an instrument
+  #   Crosshairs report where the pointer is. An optical engineer does not need to know where the
+  #   pointer is; they need a number. Park marker 1 on a resonance peak, marker 2 at -3 dB, read
+  #   the FWHM, derive the Q factor, step to the next resonance and read the FSR. That loop IS the
+  #   job. Until it exists, TraceKit renders faster than the vendor software it would replace and
+  #   still cannot replace it.
+  #
+  #   The hard part is not the arithmetic, it is honesty about it: a marker parked between two
+  #   decimated samples must interpolate against the AUTHORITATIVE payload, never against the
+  #   screen-space points, or the reported peak drifts with the zoom level. That constraint is why
+  #   this is core maths with a thin UI, and why it depends on 6.5's pre-decimation window
+  #   resolution rather than on anything the renderer holds.
+  - order: 13.5
+    name: analytical-measurement-markers
+    prerequisites: 
+      - range-selection-events
+      - raw-data-viewport-export
+    capabilities: not_yet_specified
+    # Intended capability surface:
+    #   marker-anchoring          ADDED — pinned to a domain coordinate, survives pan/zoom/re-decimation
+    #   delta-cursor-math         ADDED — dx/dy in domain units, log-aware (dB is a ratio, not a difference)
+    #   sub-sample-interpolation  ADDED — resolved against the full-resolution payload, not the drawn points
+    #   peak-detection            ADDED — local extrema with a prominence threshold, allocation-free
+    #   optical-parameter-extraction ADDED — FWHM, FSR, Q; unit-aware; validated against known fixtures
+
   - order: 14
     name: wafer-die-map
     prerequisites: 
@@ -214,12 +419,35 @@ changes:
       - package-exports-and-treeshaking-gates
     capabilities: not_yet_specified
 
+  # Inserted at revision 6.
+  #
+  # Why: a programmable photonic chip is characterized by sweeping two variables at once —
+  # wavelength against heater voltage, for instance. The result is a matrix, and a matrix is not a
+  # set of lines. No amount of overlaid traces reads like a spectrogram.
+  #
+  # It follows the wafer map because both upload a dense 2D array to the GPU and colour it through
+  # a LUT in a fragment shader; the difference is a regular grid versus a die layout. Reusing that
+  # pipeline is the whole reason this is a small change instead of a second renderer.
+  - order: 14.5
+    name: spectral-heatmap-engine
+    prerequisites: 
+      - wafer-die-map
+    capabilities: not_yet_specified
+    # Intended capability surface:
+    #   matrix-data-payload       ADDED — branded 2D buffer, row-major, explicit strides
+    #   float-texture-upload      ADDED — float textures with an 8-bit-normalized fallback path
+    #   color-scale-shaders       ADDED — LUT-driven, perceptually uniform, shared with the wafer map
+    #   heatmap-hit-testing       ADDED — pixel -> (row, col) -> value, O(1)
+
   - order: 15
     name: docs-portal
     prerequisites: 
       - package-exports-and-treeshaking-gates
       - crosshair-sync-bus
       - wafer-die-map
+      - dom-a11y-layer
+      - analytical-measurement-markers
+      - spectral-heatmap-engine
     capabilities: not_yet_specified
 
   - order: 16
@@ -228,3 +456,17 @@ changes:
       - docs-portal
     capabilities: not_yet_specified
 
+# ---------------------------------------------------------------------------------------------
+# Backlog — deliberately NOT scheduled for 1.0.0
+# ---------------------------------------------------------------------------------------------
+#
+# webgpu-compute-decimation (v2.0.0 epic)
+#   Moving LTTB and the min/max envelope into compute shaders would remove the Web Worker hop
+#   entirely and decimate millions of points on the GPU. It is the correct long-term direction and
+#   it is the wrong 1.0.0 decision: it rewrites the graphics pipeline against an API whose browser
+#   support is still uneven, and it would do so while the Canvas2D/WebGL2 pair already delivers the
+#   throughput this release promises. Recorded here so it is a deferral with a reason rather than
+#   an omission. Revisit once 1.0.0 is stable and the dual-engine strategy has real field use.
+#
+#   The architecture already leaves the door open: `decimation-port` (change 3) is the seam a
+#   GPU-backed implementation would plug into without touching a single consumer.

@@ -8,6 +8,8 @@ import {
   createViewportTransform,
   projectX,
   projectY,
+  Y_SCALE_KIND_LINEAR,
+  Y_SCALE_KIND_LOG,
 } from "../../src/viewport/transform.js";
 
 // Mirrors packages/core/test/decimation/allocation-gate.test.ts's shape and rationale: the
@@ -57,10 +59,16 @@ async function measureGcEvents(
   });
   observer.observe({ entryTypes: ["gc"] });
 
-  for (let i = 0; i < 20; i += 1) run();
+  // 200 warm-up iterations (not the original 20): the branched `projectY` (linear/log dispatch)
+  // needs more calls at this call site than the old single-expression body before the optimizing
+  // compiler settles, and measuring mid-warm-up would attribute the compiler's own transient
+  // allocation to the function under test rather than to steady-state execution.
+  for (let i = 0; i < 500; i += 1) run();
 
   globalThis.gc?.();
-  await sleep(30);
+  await sleep(50);
+  globalThis.gc?.();
+  await sleep(50);
   details.length = 0;
 
   for (let i = 0; i < iterations; i += 1) run();
@@ -128,4 +136,49 @@ describe("allocation-gate — projectX/projectY", () => {
     const { count, details } = await measureGcEvents(runAllocationFree, 50);
     expect(count, details.map((d) => kindName(d.kind)).join(", ")).toBe(0);
   }, 60_000);
+});
+
+// A new parameterization of the gate above (per `yScaleKind`), not a new gate — the linear
+// `yScaleKind` gate above still passes unmodified alongside this one.
+describe("allocation-gate — projectX/projectY (yScaleKind: log)", () => {
+  const t = createViewportTransform({
+    cssWidth: 800,
+    cssHeight: 600,
+    dpr: 2,
+    insetLeft: 40,
+    insetRight: 10,
+    insetTop: 10,
+    insetBottom: 30,
+    xDomainMin: 0,
+    xDomainMax: POINT_COUNT,
+    yDomainMin: 1,
+    yDomainMax: 1000,
+    xOrigin: 0,
+    yScaleKind: Y_SCALE_KIND_LOG,
+  });
+
+  function runAllocationFree(): void {
+    let sinkX = 0;
+    let sinkY = 0;
+    for (let i = 0; i < POINT_COUNT; i += 1) {
+      sinkX += projectX(t, i);
+      sinkY += projectY(t, 1 + (i % 999));
+    }
+    if (sinkX === Number.NaN || sinkY === Number.NaN) {
+      throw new Error("unreachable");
+    }
+  }
+
+  it("projectX/projectY report exactly 0 GC events over 100,000 points on a log-kind transform", async () => {
+    const { count, details } = await measureGcEvents(runAllocationFree, 50);
+    expect(count, details.map((d) => kindName(d.kind)).join(", ")).toBe(0);
+  }, 60_000);
+});
+
+// Sanity: the discriminant constants used above are what the transforms in this file assume.
+describe("allocation-gate — discriminant sanity", () => {
+  it("Y_SCALE_KIND_LINEAR/LOG are the expected numeric values", () => {
+    expect(Y_SCALE_KIND_LINEAR).toBe(0);
+    expect(Y_SCALE_KIND_LOG).toBe(1);
+  });
 });

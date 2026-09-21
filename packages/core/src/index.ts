@@ -59,6 +59,8 @@ export { resolveDecimationParameter } from './decimation/selection.js';
 export type {
   ViewportTransform,
   CreateViewportTransformOptions,
+  YAxisRegistration,
+  SharedViewportOptions,
 } from './viewport/index.js';
 export {
   createViewportTransform,
@@ -69,6 +71,11 @@ export {
   isInsidePlotArea,
   transformMatchesPayload,
   selectTicks,
+  selectLogTicks,
+  Y_SCALE_KIND_LINEAR,
+  Y_SCALE_KIND_LOG,
+  AXIS_SIDE_LEFT,
+  createAxisTransforms,
 } from './viewport/index.js';
 
 export type {

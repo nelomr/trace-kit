@@ -9,6 +9,12 @@
  */
 import type { SpectrumDataPayload } from "../payload/spectrum-data-payload.js";
 
+/** Linear Y projection. The value `0` is the historical, and remains the default, behaviour. */
+export const Y_SCALE_KIND_LINEAR = 0;
+/** Base-10 logarithmic Y projection. */
+export const Y_SCALE_KIND_LOG = 1;
+// Values >= 2 are reserved for future scale kinds (e.g. symlog) and must not be assigned here.
+
 export interface ViewportTransform {
   readonly xDomainMin: number;
   readonly xDomainMax: number;
@@ -27,8 +33,19 @@ export interface ViewportTransform {
   readonly plotHeight: number;
 
   readonly xScale: number;
+  /**
+   * Device pixels per domain unit on a linear Y axis. Deliberately `NaN` on a logarithmic axis:
+   * there is no single pixels-per-unit ratio there, and a consumer that multiplies by it without
+   * checking the scale kind produces a non-finite result that fails visibly on first render
+   * instead of a plausible-looking wrong plot.
+   */
   readonly yScale: number;
   readonly yBase: number;
+  readonly yScaleKind: number;
+  /** Base-10 logarithm of `yDomainMin`. `0` on a linear axis. */
+  readonly yLogDomainMin: number;
+  /** Device pixels per decade. `0` on a linear axis, and on a log axis of zero span. */
+  readonly yLogScale: number;
 }
 
 export interface CreateViewportTransformOptions {
@@ -44,6 +61,8 @@ export interface CreateViewportTransformOptions {
   readonly yDomainMin: number;
   readonly yDomainMax: number;
   readonly xOrigin: number;
+  /** Defaults to `Y_SCALE_KIND_LINEAR` when omitted, matching pre-change behaviour verbatim. */
+  readonly yScaleKind?: number;
 }
 
 function requireFinite(value: number, name: string): void {
@@ -69,6 +88,7 @@ export function createViewportTransform(
     yDomainMax,
     xOrigin,
   } = options;
+  const yScaleKind = options.yScaleKind ?? Y_SCALE_KIND_LINEAR;
 
   requireFinite(cssWidth, "cssWidth");
   requireFinite(cssHeight, "cssHeight");
@@ -99,6 +119,16 @@ export function createViewportTransform(
       `insetTop + insetBottom (${insetTop + insetBottom}) must be < cssHeight (${cssHeight}).`,
     );
   }
+  if (!Number.isInteger(yScaleKind) || yScaleKind < 0 || yScaleKind > 1) {
+    throw new RangeError(
+      `yScaleKind must be an integer in [0, 1] (0 = linear, 1 = log); received ${yScaleKind}.`,
+    );
+  }
+  if (yScaleKind === Y_SCALE_KIND_LOG && yDomainMin <= 0) {
+    throw new RangeError(
+      `a logarithmic Y axis requires yDomainMin > 0; received ${yDomainMin}.`,
+    );
+  }
 
   const deviceWidth = Math.round(cssWidth * dpr);
   const deviceHeight = Math.round(cssHeight * dpr);
@@ -109,10 +139,25 @@ export function createViewportTransform(
   const plotHeight = deviceHeight - (insetTop + insetBottom) * dpr;
 
   const xSpan = xDomainMax - xDomainMin;
-  const ySpan = yDomainMax - yDomainMin;
   const xScale = xSpan === 0 ? 0 : plotWidth / xSpan;
-  const yScale = ySpan === 0 ? 0 : plotHeight / ySpan;
-  const yBase = plotTop + plotHeight + yDomainMin * yScale;
+
+  let yScale: number;
+  let yBase: number;
+  let yLogDomainMin: number;
+  let yLogScale: number;
+  if (yScaleKind === Y_SCALE_KIND_LOG) {
+    yScale = Number.NaN;
+    yBase = plotTop + plotHeight;
+    yLogDomainMin = Math.log10(yDomainMin);
+    const logSpan = Math.log10(yDomainMax) - yLogDomainMin;
+    yLogScale = logSpan === 0 ? 0 : plotHeight / logSpan;
+  } else {
+    const ySpan = yDomainMax - yDomainMin;
+    yScale = ySpan === 0 ? 0 : plotHeight / ySpan;
+    yBase = plotTop + plotHeight + yDomainMin * yScale;
+    yLogDomainMin = 0;
+    yLogScale = 0;
+  }
 
   return Object.freeze({
     xDomainMin,
@@ -130,6 +175,9 @@ export function createViewportTransform(
     xScale,
     yScale,
     yBase,
+    yScaleKind,
+    yLogDomainMin,
+    yLogScale,
   });
 }
 
@@ -138,7 +186,11 @@ export function projectX(t: ViewportTransform, xOffset: number): number {
 }
 
 export function projectY(t: ViewportTransform, yValue: number): number {
-  return t.yBase - yValue * t.yScale;
+  // The scale kind is fixed for the lifetime of a transform, so this branch is loop-invariant
+  // within any render pass and the predictor resolves it after the first sample.
+  return t.yScaleKind === Y_SCALE_KIND_LINEAR
+    ? t.yBase - yValue * t.yScale
+    : t.yBase - (Math.log10(yValue) - t.yLogDomainMin) * t.yLogScale;
 }
 
 export function unprojectX(t: ViewportTransform, devicePixelX: number): number {
@@ -148,9 +200,13 @@ export function unprojectX(t: ViewportTransform, devicePixelX: number): number {
 }
 
 export function unprojectY(t: ViewportTransform, devicePixelY: number): number {
-  return t.yScale === 0
-    ? t.yDomainMin
-    : (t.yBase - devicePixelY) / t.yScale;
+  if (t.yScaleKind === Y_SCALE_KIND_LINEAR) {
+    return t.yScale === 0 ? t.yDomainMin : (t.yBase - devicePixelY) / t.yScale;
+  }
+  // A zero-decade domain has no invertible mapping; every pixel reads back as the single
+  // domain value, matching the linear zero-span behaviour rather than dividing by zero.
+  if (t.yLogScale === 0) return t.yDomainMin;
+  return 10 ** ((t.yBase - devicePixelY) / t.yLogScale + t.yLogDomainMin);
 }
 
 export function isInsidePlotArea(

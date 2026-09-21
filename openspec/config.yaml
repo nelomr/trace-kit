@@ -15,5 +15,9 @@ test_command: pnpm run test
 session:
   execution_mode: interactive
   artifact_store: both
-  delivery_strategy: ask-always
+  # `ask-always` was not a value this contract defines (the domain is ask-on-risk | single-pr |
+  # auto-chain | exception-ok), so it could not be routed on. Replaced after the user explicitly
+  # accepted `size:exception` up front for oversized changes: one PR, no size-driven split, and
+  # no stop to re-confirm the exception per change.
+  delivery_strategy: exception-ok
   review_budget_lines: 400

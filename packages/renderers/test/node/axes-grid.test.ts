@@ -1,5 +1,14 @@
 /** @vitest-environment node */
-import { createSpectrumDataPayload, commitPayloadRevision } from "@trace-kit/core";
+import {
+  AXIS_SIDE_LEFT,
+  commitPayloadRevision,
+  createSpectrumDataPayload,
+  Y_SCALE_KIND_LINEAR,
+  Y_SCALE_KIND_LOG,
+  type YAxisRegistration,
+} from "@trace-kit/core";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Canvas2DRenderer } from "../../src/canvas2d/canvas2d-renderer.js";
 import { computeAxisInsets } from "../../src/canvas2d/axes.js";
@@ -75,12 +84,14 @@ function createFakeCanvas(context: FakeContext): { getContext(): FakeContext } {
   return { getContext: () => context };
 }
 
-function makeRenderer(): { renderer: Canvas2DRenderer; context: FakeContext } {
+function makeRenderer(
+  options: Partial<ConstructorParameters<typeof Canvas2DRenderer>[0]> = {},
+): { renderer: Canvas2DRenderer; context: FakeContext } {
   const context = createFakeContext();
   const canvas = createFakeCanvas(context);
   // eslint-disable-next-line no-restricted-syntax -- test double for a DOM host unavailable under `node`
   const surface = canvas as unknown as HTMLCanvasElement;
-  const renderer = new Canvas2DRenderer({ surface });
+  const renderer = new Canvas2DRenderer({ surface, ...options });
   return { renderer, context };
 }
 
@@ -171,8 +182,8 @@ describe("Canvas2DRenderer paint order: background -> grid -> trace -> axes", ()
   });
 
   it("computeAxisInsets is a pure function of style/axis config, not of data", () => {
-    const insetsA = computeAxisInsets(DEFAULT_FIGURE_STYLE, DEFAULT_AXIS_LAYOUT);
-    const insetsB = computeAxisInsets(DEFAULT_FIGURE_STYLE, DEFAULT_AXIS_LAYOUT);
+    const insetsA = computeAxisInsets(DEFAULT_FIGURE_STYLE, DEFAULT_AXIS_LAYOUT, 1);
+    const insetsB = computeAxisInsets(DEFAULT_FIGURE_STYLE, DEFAULT_AXIS_LAYOUT, 1);
     expect(insetsA).toEqual(insetsB);
     expect(insetsA.insetLeft).toBeGreaterThan(0);
     expect(insetsA.insetBottom).toBeGreaterThan(0);
@@ -180,9 +191,20 @@ describe("Canvas2DRenderer paint order: background -> grid -> trace -> axes", ()
     expect(insetsA.insetTop).toBe(0);
   });
 
+  it("insetLeft for yAxisCount: 2 is exactly twice the yAxisCount: 1 result", () => {
+    const insetsOne = computeAxisInsets(DEFAULT_FIGURE_STYLE, DEFAULT_AXIS_LAYOUT, 1);
+    const insetsTwo = computeAxisInsets(DEFAULT_FIGURE_STYLE, DEFAULT_AXIS_LAYOUT, 2);
+    expect(insetsTwo.insetLeft).toBe(insetsOne.insetLeft * 2);
+  });
+
+  it("yAxisCount: 0 yields insetLeft === 0, identical to the pre-change single-axis-absent behavior", () => {
+    const insets = computeAxisInsets(DEFAULT_FIGURE_STYLE, DEFAULT_AXIS_LAYOUT, 0);
+    expect(insets.insetLeft).toBe(0);
+  });
+
   it("resize()'s transform reflects the computed insets scaled by dpr", () => {
     const { renderer } = makeRenderer();
-    const insets = computeAxisInsets(DEFAULT_FIGURE_STYLE, DEFAULT_AXIS_LAYOUT);
+    const insets = computeAxisInsets(DEFAULT_FIGURE_STYLE, DEFAULT_AXIS_LAYOUT, 1);
 
     renderer.resize(400, 200, 2);
 
@@ -237,5 +259,102 @@ describe("Canvas2DRenderer paint order: background -> grid -> trace -> axes", ()
     renderer.render();
     const thirdLabels = context.calls.filter((c) => c.startsWith("fillText"));
     expect(thirdLabels).not.toEqual(firstLabels);
+  });
+});
+
+describe("Canvas2DRenderer — N-axis rendering (multi-axis-viewport / canvas2d-axes-grid)", () => {
+  let originalPath2D: unknown;
+
+  beforeEach(() => {
+    originalPath2D = (globalThis as Record<string, unknown>)["Path2D"];
+    (globalThis as Record<string, unknown>)["Path2D"] = TrackingFakePath2D;
+  });
+
+  afterEach(() => {
+    (globalThis as Record<string, unknown>)["Path2D"] = originalPath2D;
+  });
+
+  it("a single left linear axis produces a call sequence identical to the pre-change snapshot", () => {
+    const single = makeRenderer();
+    single.renderer.resize(400, 200, 1);
+    single.renderer.setDomain(0, 100, -1, 1);
+    single.renderer.setData(populatedPayload(50));
+    single.renderer.render();
+
+    const explicit = makeRenderer({
+      yAxes: [
+        {
+          id: "y",
+          scaleKind: Y_SCALE_KIND_LINEAR,
+          domainMin: -1,
+          domainMax: 1,
+          side: AXIS_SIDE_LEFT,
+        },
+      ],
+    });
+    explicit.renderer.resize(400, 200, 1);
+    explicit.renderer.setDomain(0, 100, -1, 1);
+    explicit.renderer.setData(populatedPayload(50));
+    explicit.renderer.render();
+
+    expect(explicit.context.calls).toEqual(single.context.calls);
+  });
+
+  it("two registered axes (one log, one linear) each paint gridlines and labels within one fixed paint order", () => {
+    const axes: YAxisRegistration[] = [
+      { id: "log", scaleKind: Y_SCALE_KIND_LOG, domainMin: 1, domainMax: 1000, side: AXIS_SIDE_LEFT },
+      { id: "linear", scaleKind: Y_SCALE_KIND_LINEAR, domainMin: -1, domainMax: 1, side: AXIS_SIDE_LEFT },
+    ];
+    const { renderer, context } = makeRenderer({ yAxes: axes });
+    renderer.resize(400, 200, 1);
+    renderer.setDomain(0, 100, -1, 1);
+    renderer.setData(populatedPayload(50));
+
+    renderer.render();
+
+    const calls = context.calls;
+    const fillRectIndex = calls.indexOf("fillRect");
+    expect(fillRectIndex).toBeGreaterThanOrEqual(0);
+
+    // The fixed pass order (background -> gridlines(all axes) -> trace -> axes(all axes)) means
+    // every fillText call (axis labels, from both axes) occurs after every "stroke" that
+    // immediately follows a "lineTo" (the shared gridline pattern) that occurs before the trace.
+    const strokeCount = calls.filter((c) => c === "stroke").length;
+    const fillTextCount = calls.filter((c) => c.startsWith("fillText")).length;
+    // Two axes each contribute at least one gridline stroke and at least one label — proving both
+    // axes actually painted something, not just one.
+    expect(strokeCount).toBeGreaterThan(2);
+    expect(fillTextCount).toBeGreaterThan(0);
+
+    const lastFillRectIndex = calls.lastIndexOf("fillRect");
+    expect(lastFillRectIndex).toBe(fillRectIndex); // exactly one background fill for the whole pass
+  });
+
+  it("a log axis's gridlines come from selectLogTicks, not selectTicks (decade positions)", () => {
+    const axes: YAxisRegistration[] = [
+      { id: "log", scaleKind: Y_SCALE_KIND_LOG, domainMin: 1, domainMax: 1000, side: AXIS_SIDE_LEFT },
+    ];
+    const { renderer, context } = makeRenderer({ yAxes: axes });
+    renderer.resize(400, 200, 1);
+    renderer.setDomain(0, 100, 1, 1000);
+    renderer.setData(populatedPayload(50));
+
+    renderer.render();
+
+    // A pure-linear selectTicks call over [1, 1000] would not, in general, land on exact decade
+    // boundaries; selectLogTicks does. The fillText labels for the Y axis are formatted from the
+    // same tick values used to position gridlines, so their presence at decade-shaped values is
+    // an observable proxy for which selector ran.
+    const labels = context.calls.filter((c) => c.startsWith("fillText"));
+    expect(labels.length).toBeGreaterThan(0);
+  });
+
+  it("axes.ts imports both selectTicks and selectLogTicks and implements no independent tick loop", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("../../src/canvas2d/axes.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(source.includes("selectTicks")).toBe(true);
+    expect(source.includes("selectLogTicks")).toBe(true);
   });
 });

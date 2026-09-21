@@ -7,7 +7,15 @@ export {
   unprojectY,
   isInsidePlotArea,
   transformMatchesPayload,
+  Y_SCALE_KIND_LINEAR,
+  Y_SCALE_KIND_LOG,
   type ViewportTransform,
   type CreateViewportTransformOptions,
 } from "./transform.js";
-export { selectTicks } from "./ticks.js";
+export { selectTicks, selectLogTicks } from "./ticks.js";
+export {
+  createAxisTransforms,
+  AXIS_SIDE_LEFT,
+  type YAxisRegistration,
+  type SharedViewportOptions,
+} from "./axes.js";

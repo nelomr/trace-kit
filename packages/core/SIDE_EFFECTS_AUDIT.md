@@ -37,5 +37,6 @@ does. The audit cannot silently go stale in either direction.
 | `src/transport/streaming-contract.ts` | Yes | Exports frozen types, constants and pure factory/selection functions only. No code runs at module-evaluation time. |
 | `src/transport/index.ts` | Yes | Pure public re-export barrel for the transport surface — every binding is `export … from './…js'`. No code runs at module-evaluation time. |
 | `src/viewport/transform.ts` | Yes | Exports the `ViewportTransform`/`CreateViewportTransformOptions` types and the `createViewportTransform`/`projectX`/`projectY`/`unprojectX`/`unprojectY`/`isInsidePlotArea`/`transformMatchesPayload` functions only. No code runs at module-evaluation time. |
-| `src/viewport/ticks.ts` | Yes | Exports the `selectTicks` function only; the module-level `NICE_STEPS` array is a frozen-by-convention constant read, never mutated. No code runs at module-evaluation time beyond that literal's construction. |
+| `src/viewport/ticks.ts` | Yes | Exports the `selectTicks`/`selectLogTicks` functions only; the module-level `NICE_STEPS` array is a frozen-by-convention constant read, never mutated. No code runs at module-evaluation time beyond that literal's construction. |
+| `src/viewport/axes.ts` | Yes | Exports the `YAxisRegistration`/`SharedViewportOptions` types, the `AXIS_SIDE_LEFT` constant, and the `createAxisTransforms` function only. No code runs at module-evaluation time. |
 | `src/viewport/index.ts` | Yes | Internal re-export barrel for the viewport module only. No code runs at module-evaluation time. |

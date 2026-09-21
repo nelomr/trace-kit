@@ -52,6 +52,11 @@ describe("export surface", () => {
       "isInsidePlotArea",
       "transformMatchesPayload",
       "selectTicks",
+      "selectLogTicks",
+      "Y_SCALE_KIND_LINEAR",
+      "Y_SCALE_KIND_LOG",
+      "AXIS_SIDE_LEFT",
+      "createAxisTransforms",
     ];
     for (const name of expected) {
       expect(coreExports).toHaveProperty(name);
