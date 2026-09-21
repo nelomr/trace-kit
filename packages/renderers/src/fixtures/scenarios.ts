@@ -117,8 +117,9 @@ function buildFlatNoisePayload(
 }
 
 /** A flat baseline with exactly one deliberate single-sample spike, so a Min-Max-decimated
- * render can be asserted to still show the spike as painted pixels — the point of this
- * fixture, per design.md D7. */
+ * render can be asserted to still show the spike as painted pixels — a naive uniform
+ * sub-sample would drop a single-sample spike entirely, so this is the minimal fixture that
+ * proves the envelope algorithm preserves it instead. */
 function buildSingleSpikePayload(sampleCount: number, spikeIndex: number): SpectrumDataPayload {
   const payload = createSpectrumDataPayload({
     capacity: sampleCount,
@@ -159,9 +160,9 @@ export const SCENARIO_FIXTURES: readonly ScenarioFixture[] = Object.freeze([
   Object.freeze({
     id: "resonance-peak",
     description: "resonance peak",
-    // Domain clipped to roughly ±5 linewidths (fwhm=60) around the centre frequency (2048),
-    // per design.md D7 — the golden asserts the apex survives, not the full flat wings either
-    // side of it.
+    // Domain clipped to roughly ±5 linewidths (fwhm=60) around the centre frequency (2048):
+    // the golden only needs to assert the apex survives decimation, not the full flat wings
+    // either side of it, so there is no reason to render domain the golden never inspects.
     domain: { xMin: 1_748, xMax: 2_348, yMin: -0.05, yMax: 1.05 },
     payload: resonancePeakPayload,
     viewport: STANDARD_VIEWPORT,

@@ -15,20 +15,40 @@
 
 ## 🚧 Estado del proyecto
 
-> **TraceKit está en pre-alpha. Nada está publicado en npm todavía, y la mayor parte de lo que
-> describe este documento no está implementado.** Este README documenta la arquitectura y la API
-> *previstas*. Es un documento de diseño, no una guía de uso.
+> **TraceKit está en pre-alpha. Nada está publicado en npm todavía.** Este README documenta tanto
+> la implementación actual como, allí donde se marca `[PREVISTO]`, la arquitectura y la API
+> previstas.
 >
-> **Lo que existe hoy:** `packages/core` con una única exportación `VERSION`, el workspace de
-> pnpm + Turborepo, y CI. Nada más.
+> **Lo que existe hoy:**
+> - `packages/core` — sustancial: buffers tipados con marca, decimación LTTB y envolvente
+>   Min-Max (camino caliente sin asignaciones, con benchmarks), el contrato de transporte sin
+>   copia para Web Workers (protocolo de propiedad, detección de capacidad `SharedArrayBuffer`,
+>   contrapresión), y la capa de transformación de viewport: proyección de eje Y lineal y
+>   logarítmica (base 10), soporte de viewport multi-eje (N ejes Y independientes apilados a la
+>   izquierda compartiendo un dominio X), y selección de ticks para ambas escalas.
+> - `packages/renderers` — **únicamente un renderizador Canvas2D** (`Canvas2DRenderer`, batching
+>   con Path2D, gutters con soporte multi-eje, líneas de rejilla por década para ejes
+>   logarítmicos) más el contrato headless `FigureRenderer`. **Todavía no existe ningún
+>   renderizador WebGL2.**
+> - `apps/playground` — una app Vite en funcionamiento, con una ruta de inicio y una ruta
+>   `core-math` que visualiza los algoritmos de decimación.
+> - El workspace de pnpm + Turborepo, cientos de tests unitarios/de integración con Vitest en
+>   verde, una suite de regresión visual basada en Chromium (exclusiva de CI en Linux por
+>   diseño), comprobaciones de asignación cero en Node, y una puerta de calidad de CI
+>   (comprobación de tipos, lint, tests unitarios, regresión visual, comprobación de
+>   dependencias obsoletas) que se ejecuta y pasa en `main`.
 >
-> **Lo que todavía no existe:** `packages/renderers`, `packages/vue`, `packages/react`,
-> `apps/docs`, `apps/playground`, las suites de tests, y todos los paquetes publicados. Los
-> comandos de instalación y los ejemplos de inicio rápido de abajo no funcionan.
+> **Lo que todavía no existe:** `packages/vue`, `packages/react`, `apps/docs`, y ningún
+> renderizador WebGL2. Todos los paquetes siguen sin publicar (`0.0.0`, privados). Los ejemplos
+> de Vue/React del inicio rápido de abajo describen una API que todavía no existe; los comandos
+> de instalación no funcionan.
 >
-> El desarrollo sigue Spec-Driven Development; la secuencia de trabajo prevista y su orden están
-> en [`openspec/roadmap.yaml`](openspec/roadmap.yaml), y el alcance y la justificación en
-> `openspec/changes/`.
+> El desarrollo sigue Spec-Driven Development; el progreso se registra en
+> [`openspec/roadmap.yaml`](openspec/roadmap.yaml). A fecha de esta revisión, los pasos 1 a
+> **5.6** del roadmap (`core-scale-transforms` — transformaciones de viewport logarítmicas y
+> multi-eje) están archivados y completos. El siguiente paso previsto es **5.7**
+> (`core-gap-and-multi-trace-model` — semántica de huecos/NaN en la decimación y soporte de
+> payload multi-traza), todavía no iniciado.
 
 ---
 
@@ -41,8 +61,10 @@ Construido sobre una arquitectura desacoplada, **TraceKit** aísla la decimació
 ### Pilares clave de rendimiento
 
 * **Ingestión sin copia con propiedad explícita:** Web Workers dedicados ejecutan la decimación sobre `ArrayBuffer` transferidos, eliminando el coste de serialización. Como una transferencia *desvincula* (detach) el buffer en el emisor, el transporte es un round-trip agrupado con un único propietario en cada instante y contrapresión que descarta en lugar de asignar. El hilo principal conserva siempre una copia autoritativa, que es lo que hace posible la restauración del contexto WebGL.
-* **Estrategia de motor dual híbrido:** Conmutación estabilizada por histéresis entre un **renderizador Canvas 2D por lotes** y un **pipeline WebGL2** de alta densidad con Vertex Buffer Objects duales para evitar la intercalación en CPU. El umbral de conmutación es una constante medida y configurable, evaluada sobre el conteo de puntos *decimado* y no sobre un número fijo de puntos crudos, con dos umbrales y un tiempo mínimo de permanencia para que un stream en vivo no pueda oscilar entre motores.
-* **Decimación que preserva la física:** Combina **LTTB** estándar (fidelidad perceptual de la traza) con algoritmos de **envolvente Min-Max** para evitar la supresión de caídas de resonancia sub-picométricas, pérdidas de inserción y pisos de ruido de alta frecuencia.
+* **Estrategia de motor dual híbrido `[PARCIAL]`:** El diseño prevé una conmutación estabilizada por histéresis entre un **renderizador Canvas 2D por lotes** y un **pipeline WebGL2** de alta densidad con Vertex Buffer Objects duales para evitar la intercalación en CPU, con un umbral de conmutación evaluado sobre el conteo de puntos *decimado* y un tiempo mínimo de permanencia para evitar oscilaciones. **Hoy solo existe el renderizador Canvas2D; WebGL2 todavía no está implementado**, por lo que actualmente hay un único motor, no un sistema híbrido.
+* **Decimación que preserva la física:** Combina **LTTB** estándar (fidelidad perceptual de la traza) con algoritmos de **envolvente Min-Max** para evitar la supresión de caídas de resonancia sub-picométricas, pérdidas de inserción y pisos de ruido de alta frecuencia. Implementado y con benchmarks en `@trace-kit/core`.
+* **Viewport logarítmico y multi-eje:** La capa de proyección de `@trace-kit/core` soporta transformaciones de eje Y logarítmicas en base 10 (con selección de ticks por década/mantisa) junto con la transformación lineal, y viewports multi-eje con N ejes Y independientes apilados a la izquierda que comparten un dominio X — base directa para instrumentación en escala dBm y comparación multi-traza.
+* **Arnés de regresión visual:** Una suite de regresión visual basada en Chromium (`packages/renderers/test/visual/`) compara la salida renderizada de Canvas2D contra capturas de pantalla de referencia (goldens) versionadas. Los goldens se generan y comparan exclusivamente en `ubuntu-latest` en CI (una comprobación de plataforma impide que las ejecuciones locales se traten como autoritativas), y solo pueden regenerarse mediante un workflow separado, disparado manualmente — una ejecución de tests ordinaria nunca puede sobrescribir un golden en silencio.
 * **Motor de mapa de obleas semiconductoras:** Pipeline de renderizado instanciado (`gl.drawArraysInstanced`) para inspección multi-die con objetivo de 60.000 dies activos, y hit-testing analítico en $O(1)$ para retícula uniforme que degrada a $O(\log n)$ mediante tablas de pitch acumulado cuando los anchos de street no son uniformes. Las obleas circulares y los dies parciales de borde se mantienen en $O(1)$ mediante una rejilla densa de ocupación.
 * **Telemetría sincronizada entre gráficos:** Bus desacoplado `BroadcastChannel` / `EventTarget` sincronizando múltiples canales de telemetría (p. ej., potencia óptica, temperatura, corrientes de bias) a través de canvas aislados con transformaciones CSS de cruceta aceleradas por GPU.
 * **Reportes vectoriales sin pérdida:** Generador matemático independiente que exporta vistas sub-muestreadas a paths SVG limpios, con calidad de publicación, sin artefactos de rasterización del canvas.
@@ -56,19 +78,27 @@ TraceKit está estructurado como un monorepo de grado empresarial impulsado por 
 ```text
 trace-kit/
 ├── packages/
-│   ├── core/           # [EXISTE, mínimo] TS isomórfico. Hoy solo exporta VERSION
-│   ├── renderers/      # [PREVISTO] Canvas2D (Path2D) y WebGL2 headless
+│   ├── core/           # [IMPLEMENTADO] TS isomórfico. Decimación (LTTB, Min-Max), contrato
+│   │                   #   de transporte, transformación de viewport (lineal + logarítmica,
+│   │                   #   multi-eje)
+│   ├── renderers/      # [IMPLEMENTADO, solo Canvas2D] Batching con Path2D, gutters
+│   │                   #   multi-eje. Todavía sin WebGL2.
 │   ├── vue/            # [PREVISTO] Vue 3: shallowRef/markRaw, composable useSpectrumEngine
 │   └── react/          # [PREVISTO] React: hooks de canvas, SSR-safe en Next.js
 ├── apps/
 │   ├── docs/           # [PREVISTO] Docs VitePress con selector de framework
-│   └── playground/     # [PREVISTO] Banco de estrés con telemetría de FPS y Tweakpane
-└── tests/              # [PREVISTO] Los tests viven junto a cada paquete, no en una raíz común
-    ├── unit/           # [PREVISTO] Vitest sobre matemática pura y decimación
-    └── e2e/            # [PREVISTO] Regresión visual con Playwright
+│   └── playground/     # [IMPLEMENTADO] App Vite: ruta de inicio + ruta de visualización core-math
+└── tests/              # Los tests viven junto a cada paquete, no en una raíz común
+    ├── unit/           # [IMPLEMENTADO] Vitest sobre core y renderers (cientos de tests)
+    └── visual/          # [IMPLEMENTADO] Regresión visual Playwright/Chromium de Canvas2D,
+                          #   exclusiva de CI en Linux, goldens actualizados manualmente
 ```
 
 ### Pipeline gráfico desacoplado
+
+> El diagrama siguiente muestra el pipeline completo previsto. Hoy solo está implementada la
+> rama `Canvas2DRenderer`; `WebGL2Renderer`, `@trace-kit/vue` y `@trace-kit/react` están
+> `[PREVISTO]`.
 
 ```text
 [ Fuente de datos / Stream ]
@@ -197,18 +227,22 @@ export const OpticalBenchMonitor: React.FC = () => {
 
 ### 3. Uso headless con Vanilla JS / Node.js
 
-Ejecutar algoritmos de decimación en el servidor o integrar directamente con canvas no gestionados:
+La matemática de decimación y de viewport en `@trace-kit/core`, y el `Canvas2DRenderer` de
+`@trace-kit/renderers`, son reales e implementados hoy; este ejemplo se acerca más a la
+superficie de API real que los ejemplos de Vue/React anteriores, aunque los nombres y firmas
+pueden cambiar antes de una publicación. `WebGL2Renderer` todavía no existe — Canvas2D es el
+único renderizador disponible:
 
 ```ts
-import { lttb, minMaxEnvelope } from '@trace-kit/core';
-import { WebGL2Renderer } from '@trace-kit/renderers';
+import { minMaxEnvelope } from '@trace-kit/core';
+import { Canvas2DRenderer } from '@trace-kit/renderers';
 
 // Decimación del lado del servidor (100% isomórfico, compatible con Node.js)
 const { reducedX, reducedY } = minMaxEnvelope(rawX, rawY, { targetPoints: 2000 });
 
-// Montaje directo del renderizador en el cliente
+// Montaje directo del renderizador en el cliente (solo Canvas2D — WebGL2 está [PREVISTO])
 const canvas = document.getElementById('plot') as HTMLCanvasElement;
-const renderer = new WebGL2Renderer();
+const renderer = new Canvas2DRenderer();
 renderer.initialize(canvas);
 renderer.setData({ id: 'trace-1', wavelengths: rawX, powers: rawY });
 renderer.setTransform({
@@ -216,7 +250,7 @@ renderer.setTransform({
   height: 600,
   dpr: window.devicePixelRatio,
   domainX: [1500, 1600],
-  domainY: [-40, 10],
+  domainY: [-40, 10], // también soporta escala Y logarítmica (base 10)
 });
 renderer.render();
 ```
@@ -225,7 +259,11 @@ renderer.render();
 
 ## 📊 Benchmarks y verificación técnica
 
-Todavía no hay benchmarks publicados, porque no hay nada implementado que medir.
+Todavía no hay *cifras* de benchmark publicadas. El comportamiento de asignación de memoria ya
+se verifica de forma continua, solo que no se reporta como cifras: comprobaciones en Node con
+`--expose-gc` + `PerformanceObserver({entryTypes:["gc"]})` aseveran cero eventos de GC en N
+iteraciones para las funciones de decimación del camino caliente, con controles positivos que
+demuestran que la comprobación puede realmente fallar.
 
 Una revisión anterior de este README contenía una tabla de rendimiento con tiempos de frame
 concretos, una columna `JS Heap Delta` con `0.0 MB` y tasas de refresco sostenidas, descritas
@@ -262,13 +300,22 @@ pnpm typecheck
 # Compilar los paquetes del workspace
 pnpm build
 
-# Tests unitarios (el script existe, pero todavía no hay ningún test que ejecutar)
-pnpm test:unit
+# Tests unitarios y de integración (Vitest, cientos de tests en verde en core y renderers)
+pnpm run test
 
-# --- Todavía no disponibles: los workspaces y scripts no existen ---
-# pnpm test:visual              (regresión visual con Playwright)
-# pnpm --filter docs dev        (documentación VitePress)
-# pnpm --filter playground dev  (banco de pruebas de estrés)
+# Lint
+pnpm exec turbo run lint
+
+# Ejecutar la app del playground localmente
+pnpm --filter playground dev
+
+# --- Todavía no disponible: este workspace no existe ---
+# pnpm --filter docs dev        (documentación VitePress — apps/docs está [PREVISTO])
+
+# --- Exclusivo de CI por diseño, no autoritativo en local ---
+# La regresión visual (Chromium vía Playwright) se ejecuta contra goldens generados en
+# ubuntu-latest; ver .github/workflows/ci.yml. Los goldens solo se (re)generan mediante el
+# workflow separado y disparado manualmente update-visual-goldens.yml.
 ```
 
 ---
