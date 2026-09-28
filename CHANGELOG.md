@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.9](https://github.com/nelomr/trace-kit/releases/tag/v0.0.9) (2026-09-28)
+
+### ⚡ Core Engine (`@trace-kit/core` @ 0.0.9)
+
+**Patch Changes**
+
+- [`2f9de6d`](https://github.com/nelomr/trace-kit/commit/2f9de6dbabdc8faa56b8dee8d771036cd6a2c0bf) Thanks [@nelomr](https://github.com/nelomr)! - Define `NaN` in a Y buffer as a gap sentinel that no decimator or renderer may bridge:
+  `lttb` and `minMaxEnvelope`/`minMaxEnvelopeIndices` now preserve a gap through decimation
+  instead of silently absorbing it into a neighbouring bucket, emitting `-1`/`NaN` break markers
+  consumers can detect without re-scanning the source buffer. Gap-free input is unchanged —
+  `lttb`'s single-traversal path and both min-max functions' output are byte-identical to before
+  this change.
+
+  Adds `TraceCollection` to `@trace-kit/core`: an ordered, frozen set of `SpectrumDataPayload`
+  entries sharing one X domain, each bound to a `YAxisRegistration.id` with its own style.
+
+  `Canvas2DRenderer` gains `setTraces(collection)`, drawing one `Path2D` per trace against its
+  own resolved transform and style, with per-trace decimation memoization (a revision bump on one
+  trace never re-decimates its siblings) and a `minMaxEnvelopeIndices` fallback when `lttb` cannot
+  represent a trace's gaps within its threshold. `setData(payload)` keeps its existing single-trace
+  behavior unchanged. A finite segment that resolves to exactly one source sample (an isolated
+  sample between two gaps) is painted as a filled square marker by default, so a real measured
+  sample is never silently invisible; opt out per trace via `TraceStyle.markIsolatedSamples`.
+
+### 🎨 Renderers (`@trace-kit/renderers` @ 0.0.4)
+
+**Patch Changes**
+
+- [`2f9de6d`](https://github.com/nelomr/trace-kit/commit/2f9de6dbabdc8faa56b8dee8d771036cd6a2c0bf) Thanks [@nelomr](https://github.com/nelomr)! - Define `NaN` in a Y buffer as a gap sentinel that no decimator or renderer may bridge:
+  `lttb` and `minMaxEnvelope`/`minMaxEnvelopeIndices` now preserve a gap through decimation
+  instead of silently absorbing it into a neighbouring bucket, emitting `-1`/`NaN` break markers
+  consumers can detect without re-scanning the source buffer. Gap-free input is unchanged —
+  `lttb`'s single-traversal path and both min-max functions' output are byte-identical to before
+  this change.
+
+  Adds `TraceCollection` to `@trace-kit/core`: an ordered, frozen set of `SpectrumDataPayload`
+  entries sharing one X domain, each bound to a `YAxisRegistration.id` with its own style.
+
+  `Canvas2DRenderer` gains `setTraces(collection)`, drawing one `Path2D` per trace against its
+  own resolved transform and style, with per-trace decimation memoization (a revision bump on one
+  trace never re-decimates its siblings) and a `minMaxEnvelopeIndices` fallback when `lttb` cannot
+  represent a trace's gaps within its threshold. `setData(payload)` keeps its existing single-trace
+  behavior unchanged. A finite segment that resolves to exactly one source sample (an isolated
+  sample between two gaps) is painted as a filled square marker by default, so a real measured
+  sample is never silently invisible; opt out per trace via `TraceStyle.markIsolatedSamples`.
+
+- Updated dependencies [[`2f9de6d`](https://github.com/nelomr/trace-kit/commit/2f9de6dbabdc8faa56b8dee8d771036cd6a2c0bf)]:
+  - @trace-kit/core@0.0.9
+
+### 📦 Playground (`@trace-kit/playground` @ 0.0.5)
+
+**Patch Changes**
+
+- Updated dependencies [[`2f9de6d`](https://github.com/nelomr/trace-kit/commit/2f9de6dbabdc8faa56b8dee8d771036cd6a2c0bf)]:
+  - @trace-kit/core@0.0.9
+  - @trace-kit/renderers@0.0.4
+
+
 ## [0.0.8](https://github.com/nelomr/trace-kit/releases/tag/v0.0.8) (2026-09-21)
 
 ### ⚡ Core Engine (`@trace-kit/core` @ 0.0.8)

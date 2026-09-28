@@ -1,5 +1,13 @@
 # @trace-kit/playground
 
+## 0.0.5
+
+### Patch Changes
+
+- Updated dependencies [[`2f9de6d`](https://github.com/nelomr/trace-kit/commit/2f9de6dbabdc8faa56b8dee8d771036cd6a2c0bf)]:
+  - @trace-kit/core@0.0.9
+  - @trace-kit/renderers@0.0.4
+
 ## 0.0.4
 
 ### Patch Changes
