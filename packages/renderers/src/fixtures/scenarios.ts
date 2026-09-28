@@ -135,10 +135,51 @@ function buildSingleSpikePayload(sampleCount: number, spikeIndex: number): Spect
   return payload;
 }
 
+/** A Lorentzian peak with a leading gap, an interior gap, a trailing gap, and one isolated
+ * single-sample run between two gaps — every gap-shape category `gap-sentinel-semantics`
+ * defines, in one fixture, so the golden this drives proves a visible break (not a bridged
+ * line) at each shape and a filled-square marker at the isolated sample. */
+function buildGappedPayload(
+  sampleCount: number,
+  centerFrequency: number,
+  fwhm: number,
+  seed: number,
+): SpectrumDataPayload {
+  const payload = createSpectrumDataPayload({
+    capacity: sampleCount,
+    xOrigin: 0,
+    xUnit: "index",
+    yUnit: "a.u.",
+  });
+  const halfWidth = fwhm / 2;
+  const halfWidthSquared = halfWidth * halfWidth;
+  let prngState = seed >>> 0;
+  // Leading gap: [0, 20). Interior gap: [200, 230). Isolated sample: index 300, flanked by
+  // gaps on both sides ([299] and [301, 305)). Trailing gap: [sampleCount - 15, sampleCount).
+  for (let i = 0; i < sampleCount; i += 1) {
+    const dx = i - centerFrequency;
+    const lineshape = halfWidthSquared / (dx * dx + halfWidthSquared);
+    prngState = nextUint32(prngState);
+    const noise = ((prngState / 0xffffffff) * 2 - 1) * 0.01;
+    payload.x[i] = i;
+    const inLeadingGap = i < 20;
+    const inInteriorGap = i >= 200 && i < 230;
+    const inIsolatingGap = i === 299 || (i > 300 && i < 305);
+    const inTrailingGap = i >= sampleCount - 15;
+    payload.y[i] =
+      inLeadingGap || inInteriorGap || inIsolatingGap || inTrailingGap
+        ? NaN
+        : lineshape + noise;
+  }
+  commitPayloadRevision(payload, sampleCount);
+  return payload;
+}
+
 const smoothCurvePayload = buildLorentzianPayload(512, 256, 80, 0, 1);
 const resonancePeakPayload = buildLorentzianPayload(4_096, 2_048, 60, 0, 7);
 const noiseFloorPayload = buildFlatNoisePayload(8_192, 0.02, 13);
 const decimationSpikePayload = buildSingleSpikePayload(200_000, 100_000);
+const gappedTracePayload = buildGappedPayload(512, 256, 80, 5);
 
 export const SCENARIO_FIXTURES: readonly ScenarioFixture[] = Object.freeze([
   Object.freeze({
@@ -183,5 +224,13 @@ export const SCENARIO_FIXTURES: readonly ScenarioFixture[] = Object.freeze([
     domain: { xMin: 0, xMax: 200_000, yMin: -0.1, yMax: 1.1 },
     viewport: STANDARD_VIEWPORT,
     dpr: 1,
+  }),
+  Object.freeze({
+    id: "gapped-trace",
+    description: "gapped trace",
+    payload: gappedTracePayload,
+    domain: { xMin: 0, xMax: 512, yMin: -0.1, yMax: 1.1 },
+    viewport: STANDARD_VIEWPORT,
+    dpr: 2,
   }),
 ]);

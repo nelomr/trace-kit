@@ -23,6 +23,12 @@ export interface TraceDrawingContext {
   lineTo(x: number, y: number): void;
   stroke(path?: Path2D): void;
   fillText(text: string, x: number, y: number): void;
+  /** Per-trace dash pattern, device pixels. A reference to a caller-owned array — never
+   * allocated inside `render()`. */
+  setLineDash(segments: number[]): void;
+  /** Fills a `Path2D` with the context's current `fillStyle` — used for isolated-sample
+   * markers, a separate `Path2D` from the stroked trace line (D10). */
+  fill(path: Path2D): void;
 }
 
 /**

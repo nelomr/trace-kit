@@ -172,6 +172,8 @@ describe("Canvas2DRenderer decimation boundary and per-frame paint sequence", ()
     lineTo(x: number, y: number): void;
     stroke(path?: unknown): void;
     fillText(text: string, x: number, y: number): void;
+    setLineDash(segments: number[]): void;
+    fill(path?: unknown): void;
   }
 
   function createFakeContext(): FakeContext {
@@ -203,6 +205,12 @@ describe("Canvas2DRenderer decimation boundary and per-frame paint sequence", ()
       },
       fillText(): void {
         this.calls.push("fillText");
+      },
+      setLineDash(segments: number[]): void {
+        this.calls.push(`setLineDash(${segments.join(",")})`);
+      },
+      fill(): void {
+        this.calls.push("fill");
       },
     };
   }
@@ -472,10 +480,11 @@ describe("Canvas2DRenderer decimation boundary and per-frame paint sequence", ()
       );
       const source = readFileSync(filePath, "utf8");
       const hash = createHash("sha256").update(source).digest("hex");
-      // Captured before the phase-14 memo-key widening touched canvas2d-renderer.ts; any edit to
-      // build-trace-path.ts changes this hash and fails the guard.
+      // Recaptured for the gap-aware pen-state walk (one moveTo per finite segment, none across
+      // a break): the previous hash pinned the pre-gap-awareness unconditional-moveTo body. Any
+      // further edit to build-trace-path.ts changes this hash and fails the guard, same as before.
       expect(hash).toBe(
-        "6a635251247dd963935b1b1ae987482b2ba53450764495e4e4a48c5504ebac94",
+        "7c2cec8e5240d06697a9ce2f0f36093d02cb221b373dacc7180a6344d3bc74ad",
       );
     });
   });

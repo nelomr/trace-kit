@@ -74,17 +74,27 @@ export function minMaxEnvelope(
 
     let lo = Infinity;
     let hi = -Infinity;
+    let sawGap = false;
 
     for (let i = start; i < end; i += 1) {
       // `noUncheckedIndexedAccess` types `y[i]` as `number | undefined`; the boundary
       // validation above already proves `i` is in range, so the non-null assertion is a
       // documented consequence of that proof rather than a per-sample branch.
       const value = y[i]!;
+      // `value !== value` is true only for NaN; a self-compare on the value already read costs
+      // nothing extra and needs no `Number.isNaN` call in the hot loop.
+      if (value !== value) sawGap = true;
       if (value < lo) lo = value;
       if (value > hi) hi = value;
     }
 
-    if (lo === Infinity && hi === -Infinity) {
+    if (sawGap) {
+      // A bucket that touches even one gap sample can never report a trustworthy envelope of
+      // its neighbours: the missing sample could have been the true extreme. Collapsing to
+      // NaN/NaN keeps the break visible instead of silently bridging over it.
+      lo = NaN;
+      hi = NaN;
+    } else if (lo === Infinity && hi === -Infinity) {
       lo = NaN;
       hi = NaN;
     }

@@ -28,6 +28,7 @@ does. The audit cannot silently go stale in either direction.
 | `src/decimation/selection.ts` | Yes | Exports the `DecimationAlgorithm`/`DecimationSelection`/`LttbSelection`/`MinMaxSelection` types and the `resolveDecimationParameter` function only. No code runs at module-evaluation time. |
 | `src/decimation/index.ts` | Yes | Internal re-export barrel for the decimation algorithms and selection types only. No code runs at module-evaluation time. |
 | `src/payload/spectrum-data-payload.ts` | Yes | Exports the `SpectrumDataPayload` type and the `commitPayloadRevision`/`isCursorCurrent` functions. No code runs at module-evaluation time. |
+| `src/payload/trace-collection.ts` | Yes | Exports the `TraceStyle`/`TraceEntry`/`TraceCollection` types and the `createTraceCollection`/`withTraceAxis`/`withTraceStyle`/`resolveTraceAxisIndices` functions only. No code runs at module-evaluation time. |
 | `src/transport/ownership.ts` | Yes | Exports lease pack/unpack functions and phantom-typed lease/enum declarations only. No code runs at module-evaluation time. |
 | `src/transport/backpressure.ts` | Yes | Exports the stats-contract types, enums and pure functions (`createTransportStats`, `readStatsInto`, `deriveHealth`) only. No code runs at module-evaluation time. |
 | `src/transport/capabilities.ts` | Yes | Exports `detectTransportCapabilities`/`selectBufferBacking` functions and the `BufferBacking` enum; every global reference lives inside a function body. No code runs at module-evaluation time. |

@@ -31,6 +31,8 @@ function typeLevelFixture(): void {
     lineTo(): void {},
     stroke(): void {},
     fillText(): void {},
+    setLineDash(): void {},
+    fill(): void {},
   };
   void s1;
   void s2;

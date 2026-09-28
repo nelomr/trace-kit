@@ -77,20 +77,20 @@ export function minMaxEnvelopeIndices(
     const end =
       sourceOffset + ((((bucket + 1) * sampleCount) / bucketCount) | 0);
 
-    // Initialised to `start`, not a sentinel: a bucket whose samples are all `NaN` (both
-    // comparisons below stay false) still emits two valid indices — its own first one, twice —
-    // rather than an unset value, deterministically breaking the drawn subpath instead of
-    // corrupting it.
     let loIndex = start;
     let hiIndex = start;
     let lo = Infinity;
     let hi = -Infinity;
+    let sawGap = false;
 
     for (let i = start; i < end; i += 1) {
       // `noUncheckedIndexedAccess` types `y[i]` as `number | undefined`; the boundary validation
       // above already proves `i` is in range, so the non-null assertion is a documented
       // consequence of that proof rather than a per-sample branch.
       const value = y[i]!;
+      // `value !== value` is true only for NaN; reuses the value already read for the min/max
+      // comparisons below instead of a second `Number.isNaN` pass.
+      if (value !== value) sawGap = true;
       if (value < lo) {
         lo = value;
         loIndex = i;
@@ -101,7 +101,15 @@ export function minMaxEnvelopeIndices(
       }
     }
 
-    if (loIndex <= hiIndex) {
+    if (sawGap) {
+      // A bucket touching a gap can no longer point at a trustworthy argmin/argmax — the
+      // missing sample could have been either extreme. `-1` is out of range for every real
+      // index (validated to be >= 0 elsewhere), so a consumer detects the break with the same
+      // integer compare used for the decimated LTTB break sentinel, instead of dereferencing a
+      // `NaN` coordinate.
+      out[writeCursor] = -1;
+      out[writeCursor + 1] = -1;
+    } else if (loIndex <= hiIndex) {
       out[writeCursor] = loIndex;
       out[writeCursor + 1] = hiIndex;
     } else {

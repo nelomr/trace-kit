@@ -46,3 +46,20 @@ export const DEFAULT_AXIS_LAYOUT: AxisLayout = Object.freeze({
   showLeftAxis: true,
   showBottomAxis: true,
 });
+
+/**
+ * Default per-trace colors for a `TraceCollection` entry that carries no explicit
+ * `TraceStyle.color`. Renderer-owned, not core-owned: `@trace-kit/core`'s `TraceCollection`
+ * validates and composes traces without ever picking a color, so two different renderer
+ * consumers (Canvas2D, later WebGL2) can each ship their own palette without a core release.
+ * Index `i % TRACE_PALETTE.length` so a collection with more traces than colors cycles rather
+ * than running out.
+ */
+export const TRACE_PALETTE: readonly string[] = Object.freeze([
+  "#3fb6ff",
+  "#ff7a45",
+  "#7cd992",
+  "#f2c94c",
+  "#c792ea",
+  "#ff6b81",
+]);

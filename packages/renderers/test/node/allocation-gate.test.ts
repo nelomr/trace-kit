@@ -113,4 +113,29 @@ describe("buildTracePath allocation gate", () => {
     observer.disconnect();
     expect(events).toBeGreaterThan(0);
   }, 60_000);
+
+  it("reports 0 GC events for gap-free input with a decimated -1 break stream (5% break pattern)", async () => {
+    const sink = new NoopSink();
+    const gappedIndices = new Int32Array(DECIMATED_COUNT);
+    for (let i = 0; i < DECIMATED_COUNT; i += 1) {
+      gappedIndices[i] =
+        i % 20 === 0 ? -1 : Math.floor((i * SAMPLE_COUNT) / DECIMATED_COUNT);
+    }
+    const events = await countGcEvents(() => {
+      buildTracePath(sink, transform, x, y, gappedIndices, DECIMATED_COUNT, 0);
+    });
+    expect(events).toBe(0);
+  }, 60_000);
+
+  it("reports 0 GC events for the direct-range path over gap-containing input (5% NaN pattern)", async () => {
+    const sink = new NoopSink();
+    const gappedY = new Float32Array(SAMPLE_COUNT);
+    for (let i = 0; i < SAMPLE_COUNT; i += 1) {
+      gappedY[i] = i % 20 === 0 ? NaN : Math.sin(i * 0.001);
+    }
+    const events = await countGcEvents(() => {
+      buildTracePath(sink, transform, x, gappedY, new Int32Array(0), 0, SAMPLE_COUNT);
+    });
+    expect(events).toBe(0);
+  }, 60_000);
 });

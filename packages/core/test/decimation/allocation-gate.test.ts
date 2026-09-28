@@ -268,3 +268,49 @@ describe("allocation-gate — widening (resolveDecimationParameter, minMaxEnvelo
     expect(count, details.map((d) => kindName(d.kind)).join(", ")).toBe(0);
   }, 60_000);
 });
+
+// Gap-aware paths (the `sawGap` register in min-max.ts/min-max-indices.ts, the segmented gapped
+// path in lttb.ts) run different branches than the gap-free configurations above; each must be
+// proven zero-GC on its own, not inferred from the gap-free result.
+function buildGappedSignal(sampleCount: number): Float32Array {
+  const y = new Float32Array(sampleCount);
+  for (let i = 0; i < sampleCount; i += 1) {
+    // Fixed 5% pattern (every 20th sample), deterministic across runs.
+    y[i] = i % 20 === 0 ? NaN : i;
+  }
+  return y;
+}
+
+describe("allocation-gate — gapped input (small configuration)", () => {
+  it("minMaxEnvelope reports exactly 0 GC events for gapped input (small)", async () => {
+    const y = buildGappedSignal(SMALL.sampleCount);
+    const out = new Float32Array(SMALL.bucketCount * 2);
+    const { count, details } = await measureGcEvents(
+      () => minMaxEnvelope(y, 0, SMALL.sampleCount, out, 0, SMALL.bucketCount),
+      SMALL.iterations,
+    );
+    expect(count, details.map((d) => kindName(d.kind)).join(", ")).toBe(0);
+  }, 60_000);
+
+  it("minMaxEnvelopeIndices reports exactly 0 GC events for gapped input (small)", async () => {
+    const y = buildGappedSignal(SMALL.sampleCount);
+    const out = new Int32Array(SMALL.bucketCount * 2);
+    const { count, details } = await measureGcEvents(
+      () => minMaxEnvelopeIndices(y, 0, SMALL.sampleCount, out, 0, SMALL.bucketCount),
+      SMALL.iterations,
+    );
+    expect(count, details.map((d) => kindName(d.kind)).join(", ")).toBe(0);
+  }, 60_000);
+
+  it("lttb reports exactly 0 GC events for gapped input (small)", async () => {
+    const x = new Float32Array(LTTB_SMALL.sampleCount);
+    for (let i = 0; i < x.length; i += 1) x[i] = i;
+    const y = buildGappedSignal(LTTB_SMALL.sampleCount);
+    const out = new Int32Array(LTTB_SMALL.threshold);
+    const { count, details } = await measureGcEvents(
+      () => lttb(x, y, 0, LTTB_SMALL.sampleCount, out, 0, LTTB_SMALL.threshold),
+      LTTB_SMALL.iterations,
+    );
+    expect(count, details.map((d) => kindName(d.kind)).join(", ")).toBe(0);
+  }, 60_000);
+});

@@ -44,6 +44,28 @@ export {
   isCursorCurrent,
 } from './payload/spectrum-data-payload.js';
 
+export type {
+  TraceStyle,
+  TraceEntry,
+  TraceCollection,
+  TraceCollectionEntryInput,
+} from './payload/trace-collection.js';
+export {
+  createTraceCollection,
+  withTraceAxis,
+  withTraceStyle,
+  resolveTraceAxisIndices,
+} from './payload/trace-collection.js';
+
+/**
+ * Out-of-range sentinel shared by every emitted index stream (decimated LTTB output, decimated
+ * min-max output, a future decimated buffer): no real sample index is ever negative, so `-1`
+ * unambiguously means "no sample here, pen up". Re-exported as a named constant instead of a
+ * bare literal so every consumer (renderers, later WebGL2 primitive-restart wiring) references
+ * one definition rather than repeating the magic number.
+ */
+export const BREAK_INDEX = -1;
+
 export { minMaxEnvelope } from './decimation/min-max.js';
 export { lttb } from './decimation/lttb.js';
 export { minMaxEnvelopeIndices } from './decimation/min-max-indices.js';

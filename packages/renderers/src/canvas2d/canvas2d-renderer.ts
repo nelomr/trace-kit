@@ -11,24 +11,29 @@ import {
   AXIS_SIDE_LEFT,
   allocateIndexBuffer,
   createAxisTransforms,
+  createViewportTransform,
   lttb,
   minMaxEnvelopeIndices,
   resolveDecimationParameter,
+  resolveTraceAxisIndices,
   selectTicks,
   Y_SCALE_KIND_LINEAR,
   type DecimationAlgorithm,
   type DecimationSelection,
   type IndexBuffer,
   type SpectrumDataPayload,
+  type TraceCollection,
   type ViewportTransform,
   type YAxisRegistration,
 } from "@trace-kit/core";
 import type { FigureRenderer, FigureRendererKind } from "../figure-renderer.js";
 import { buildTracePath } from "../path/build-trace-path.js";
+import { buildIsolatedMarkers, countIsolatedSegments } from "../path/isolated-markers.js";
 import { acquire2dContext, type Canvas2DSurface, type TraceDrawingContext } from "../surface.js";
 import {
   DEFAULT_AXIS_LAYOUT,
   DEFAULT_FIGURE_STYLE,
+  TRACE_PALETTE,
   type AxisLayout,
   type FigureStyle,
 } from "../style.js";
@@ -46,6 +51,11 @@ import {
 /** Pre-decimate to at most twice the plot-area width — enough oversampling to keep sub-pixel
  * detail visible without rendering more points than the display can resolve. */
 const OVERSAMPLE = 2;
+
+/** Shared, frozen, never-mutated dash pattern for a trace with no explicit `dash` style — a
+ * solid line takes `setLineDash([])`, and reusing one frozen empty array across every such
+ * trace avoids allocating a fresh one per trace per `setTraces` call. */
+const EMPTY_DASH: number[] = [];
 
 export interface Canvas2DRendererOptions {
   readonly surface: Canvas2DSurface;
@@ -110,6 +120,33 @@ export class Canvas2DRenderer implements FigureRenderer {
   #memoYMin = NaN;
   #memoYMax = NaN;
 
+  /** `null` until `setTraces` is first called. Once set, `render()` draws the trace set instead
+   * of the single `#payload`; `setData` clears this back to `null` so the two entry points stay
+   * mutually exclusive rather than both partially applying. */
+  #traceCollection: TraceCollection | null = null;
+  #traceCount = 0;
+  #traceIds: string[] = [];
+  #tracePayloads: SpectrumDataPayload[] = [];
+  #traceAxisIndex: Int32Array = new Int32Array(0);
+  #traceIndices: IndexBuffer[] = [];
+  #traceDecimatedCount: Int32Array = new Int32Array(0);
+  #traceTransforms: ViewportTransform[] = [];
+  #traceStroke: string[] = [];
+  #traceLineWidthCss: Float64Array = new Float64Array(0);
+  #traceDashDevice: number[][] = [];
+  #traceMarkIsolated: boolean[] = [];
+  #traceIsolatedCount: Int32Array = new Int32Array(0);
+
+  /** Per-trace memo columns — same staleness key as the single-payload memo below, but one slot
+   * per trace so a revision bump on one trace never re-decimates its siblings. */
+  #traceMemoRevision: Float64Array = new Float64Array(0);
+  #traceMemoAlgorithm: (DecimationAlgorithm | null)[] = [];
+  #traceMemoParameter: Int32Array = new Int32Array(0);
+  #traceMemoXMin: Float64Array = new Float64Array(0);
+  #traceMemoXMax: Float64Array = new Float64Array(0);
+  #traceMemoYMin: Float64Array = new Float64Array(0);
+  #traceMemoYMax: Float64Array = new Float64Array(0);
+
   readonly #xTicks: Float64Array = new Float64Array(MAX_TICKS);
   #xTickCount = 0;
   readonly #xLabels: string[] = new Array<string>(MAX_TICKS).fill("");
@@ -166,6 +203,58 @@ export class Canvas2DRenderer implements FigureRenderer {
     if (this.#disposed) return;
     this.#payload = payload;
     this.#xOrigin = payload.xOrigin;
+    // Mutually exclusive with `setTraces`: a payload set through the single-trace entry point
+    // replaces whatever trace set was there, rather than drawing both.
+    this.#traceCollection = null;
+  }
+
+  setTraces(collection: TraceCollection): void {
+    if (this.#disposed) return;
+    this.#traceCollection = collection;
+    this.#payload = null;
+
+    const entries = collection.entries;
+    const count = entries.length;
+    this.#traceCount = count;
+    this.#traceIds = new Array<string>(count);
+    this.#tracePayloads = new Array<SpectrumDataPayload>(count);
+    this.#traceAxisIndex = new Int32Array(count);
+    this.#traceIndices = new Array<IndexBuffer>(count);
+    this.#traceDecimatedCount = new Int32Array(count);
+    this.#traceStroke = new Array<string>(count);
+    this.#traceLineWidthCss = new Float64Array(count);
+    this.#traceDashDevice = new Array<number[]>(count);
+    this.#traceMarkIsolated = new Array<boolean>(count);
+    this.#traceIsolatedCount = new Int32Array(count);
+    this.#traceMemoRevision = new Float64Array(count).fill(-1);
+    this.#traceMemoAlgorithm = new Array<DecimationAlgorithm | null>(count).fill(null);
+    this.#traceMemoParameter = new Int32Array(count).fill(-1);
+    this.#traceMemoXMin = new Float64Array(count).fill(NaN);
+    this.#traceMemoXMax = new Float64Array(count).fill(NaN);
+    this.#traceMemoYMin = new Float64Array(count).fill(NaN);
+    this.#traceMemoYMax = new Float64Array(count).fill(NaN);
+
+    resolveTraceAxisIndices(collection, this.#resolveYAxes(), this.#traceAxisIndex);
+
+    for (let i = 0; i < count; i += 1) {
+      const entry = entries[i];
+      if (entry === undefined) continue;
+      this.#traceIds[i] = entry.id;
+      this.#tracePayloads[i] = entry.payload;
+      this.#traceIndices[i] = allocateIndexBuffer(2);
+      this.#traceStroke[i] = entry.style.color ?? (TRACE_PALETTE[i % TRACE_PALETTE.length] ?? "#3fb6ff");
+      this.#traceLineWidthCss[i] = entry.style.lineWidthCss ?? this.#style.lineWidthCss;
+      const dash = entry.style.dash;
+      this.#traceDashDevice[i] =
+        dash === undefined || dash.length === 0 ? EMPTY_DASH : dash.map((v) => v * this.#dpr);
+      this.#traceMarkIsolated[i] = entry.style.markIsolatedSamples ?? true;
+    }
+
+    this.#xDomainMin = collection.xDomainMin;
+    this.#xDomainMax = collection.xDomainMax;
+
+    this.#recomputeTraceTransforms();
+    this.#ensureTraceIndexCapacities();
   }
 
   setDomain(xMin: number, xMax: number, yMin: number, yMax: number): void {
@@ -177,6 +266,9 @@ export class Canvas2DRenderer implements FigureRenderer {
     this.#yDomainMin = yMin;
     this.#yDomainMax = yMax;
     this.#recomputeTransforms();
+    if (this.#traceCollection !== null) {
+      this.#recomputeTraceTransforms();
+    }
   }
 
   resize(width: number, height: number, dpr: number): void {
@@ -191,6 +283,10 @@ export class Canvas2DRenderer implements FigureRenderer {
     }
     this.#recomputeTransforms();
     this.#ensureIndexCapacity();
+    if (this.#traceCollection !== null) {
+      this.#recomputeTraceTransforms();
+      this.#ensureTraceIndexCapacities();
+    }
   }
 
   #recomputeTransforms(): void {
@@ -230,23 +326,27 @@ export class Canvas2DRenderer implements FigureRenderer {
       );
     }
 
-    const payload = this.#payload;
-    if (payload !== null && payload.sampleCount > 0) {
-      this.#recomputeDecimationIfStale(payload, t);
+    if (this.#traceCollection !== null) {
+      this.#renderTraces(context);
+    } else {
+      const payload = this.#payload;
+      if (payload !== null && payload.sampleCount > 0) {
+        this.#recomputeDecimationIfStale(payload, t);
 
-      const path = new Path2D();
-      buildTracePath(
-        path,
-        t,
-        payload.x,
-        payload.y,
-        this.#indices,
-        this.#decimatedCount,
-        payload.sampleCount,
-      );
-      context.strokeStyle = this.#style.traceColor;
-      context.lineWidth = this.#style.lineWidthCss * t.dpr;
-      context.stroke(path);
+        const path = new Path2D();
+        buildTracePath(
+          path,
+          t,
+          payload.x,
+          payload.y,
+          this.#indices,
+          this.#decimatedCount,
+          payload.sampleCount,
+        );
+        context.strokeStyle = this.#style.traceColor;
+        context.lineWidth = this.#style.lineWidthCss * t.dpr;
+        context.stroke(path);
+      }
     }
 
     drawBottomAxis(context, t, this.#style, this.#axes, this.#xTicks, this.#xTickCount, this.#xLabels);
@@ -273,6 +373,9 @@ export class Canvas2DRenderer implements FigureRenderer {
     // Invalidate the memoized decimated result without recomputing it here — recompute happens
     // lazily, in `#recomputeDecimationIfStale`, only when `render()` is next called.
     this.#memoAlgorithm = null;
+    for (let i = 0; i < this.#traceMemoAlgorithm.length; i += 1) {
+      this.#traceMemoAlgorithm[i] = null;
+    }
   }
 
   clear(): void {
@@ -291,6 +394,7 @@ export class Canvas2DRenderer implements FigureRenderer {
     this.#context = null;
     this.#surface = null;
     this.#payload = null;
+    this.#traceCollection = null;
   }
 
   /** The registered axes: the caller's explicit list, or — the default, pre-change behaviour —
@@ -452,5 +556,171 @@ export class Canvas2DRenderer implements FigureRenderer {
     this.#memoXMax = t.xDomainMax;
     this.#memoYMin = t.yDomainMin;
     this.#memoYMax = t.yDomainMax;
+  }
+
+  /** Rebuilds one `ViewportTransform` per trace: same Y axis domain/scale as
+   * `#computeTransforms`' shared-plot-geometry insets, but each trace's own `xOrigin` — payloads
+   * sharing one X domain may still have been sampled from different absolute origins (two sweep
+   * runs), and sharing one axis transform across them would misplace every trace but the first. */
+  #recomputeTraceTransforms(): void {
+    const axes = this.#resolveYAxes();
+    const insets = computeAxisInsets(this.#style, this.#axes, this.#yAxisCount);
+    const maxHorizontal = Math.max(0, this.#cssWidth - 1);
+    const maxVertical = Math.max(0, this.#cssHeight - 1);
+    const insetLeft = Math.min(insets.insetLeft, maxHorizontal);
+    const insetRight = Math.min(insets.insetRight, Math.max(0, maxHorizontal - insetLeft));
+    const insetTop = Math.min(insets.insetTop, maxVertical);
+    const insetBottom = Math.min(insets.insetBottom, Math.max(0, maxVertical - insetTop));
+
+    const count = this.#traceCount;
+    const transforms: ViewportTransform[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const payload = this.#tracePayloads[i];
+      if (payload === undefined) continue;
+      const axisIndex = this.#traceAxisIndex[i] ?? -1;
+      const axis = axisIndex >= 0 ? axes[axisIndex] : undefined;
+      const transform: ViewportTransform = createViewportTransform({
+        cssWidth: this.#cssWidth,
+        cssHeight: this.#cssHeight,
+        dpr: this.#dpr,
+        insetLeft,
+        insetRight,
+        insetTop,
+        insetBottom,
+        xDomainMin: this.#xDomainMin,
+        xDomainMax: this.#xDomainMax,
+        xOrigin: payload.xOrigin,
+        yDomainMin: axis?.domainMin ?? -1,
+        yDomainMax: axis?.domainMax ?? 1,
+        yScaleKind: axis?.scaleKind ?? Y_SCALE_KIND_LINEAR,
+      });
+      transforms[i] = transform;
+    }
+    this.#traceTransforms = transforms;
+  }
+
+  #ensureTraceIndexCapacity(i: number, required: number): void {
+    const t = this.#traceTransforms[i];
+    const plotWidth = t?.plotWidth ?? 0;
+    const capacity = Math.max(2, Math.ceil(plotWidth * OVERSAMPLE), required);
+    const current = this.#traceIndices[i];
+    if (current === undefined || capacity > current.length) {
+      this.#traceIndices[i] = allocateIndexBuffer(capacity);
+    }
+  }
+
+  #ensureTraceIndexCapacities(): void {
+    for (let i = 0; i < this.#traceCount; i += 1) {
+      this.#ensureTraceIndexCapacity(i, 0);
+    }
+  }
+
+  /** Per-trace twin of `#recomputeDecimationIfStale`, plus the D3 infeasible-LTTB fallback: when
+   * `lttb` cannot represent this trace's gaps within `threshold` (returns `0`), immediately
+   * falls back to `minMaxEnvelopeIndices` over the same trace and records that result under the
+   * same memo key, so an unchanged frame never re-runs either decimator. Refreshes the isolated-
+   * sample count only when this trace's memo actually recomputes. */
+  #recomputeTraceDecimationIfStale(i: number, payload: SpectrumDataPayload, t: ViewportTransform): void {
+    const algorithm = this.#decimation.algorithm;
+    const parameter = resolveDecimationParameter(this.#decimation, t.plotWidth, payload.sampleCount);
+    const emittedVertexCount = algorithm === "lttb" ? parameter : parameter * 2;
+    const stale =
+      this.#traceMemoRevision[i] !== payload.revision ||
+      this.#traceMemoAlgorithm[i] !== algorithm ||
+      this.#traceMemoParameter[i] !== parameter ||
+      this.#traceMemoXMin[i] !== t.xDomainMin ||
+      this.#traceMemoXMax[i] !== t.xDomainMax ||
+      this.#traceMemoYMin[i] !== t.yDomainMin ||
+      this.#traceMemoYMax[i] !== t.yDomainMax;
+    if (!stale) return;
+
+    let decimatedCount: number;
+    if (payload.sampleCount <= emittedVertexCount) {
+      decimatedCount = 0;
+    } else if (algorithm === "lttb") {
+      this.#ensureTraceIndexCapacity(i, emittedVertexCount);
+      const indices = this.#traceIndices[i];
+      decimatedCount =
+        indices === undefined
+          ? 0
+          : lttb(payload.x, payload.y, 0, payload.sampleCount, indices, 0, parameter);
+      if (decimatedCount === 0 && indices !== undefined) {
+        // Infeasible: the trace is fragmented below what `threshold` can represent without
+        // bridging a gap. Min-max's fixed `2 * bucketCount` output is always representable, so
+        // the fallback always succeeds; it is recorded under this same `lttb` memo slot.
+        const bucketCount = Math.max(1, (parameter / 2) | 0);
+        this.#ensureTraceIndexCapacity(i, bucketCount * 2);
+        const fallbackIndices = this.#traceIndices[i];
+        decimatedCount =
+          fallbackIndices === undefined
+            ? 0
+            : minMaxEnvelopeIndices(payload.y, 0, payload.sampleCount, fallbackIndices, 0, bucketCount);
+      }
+    } else {
+      this.#ensureTraceIndexCapacity(i, emittedVertexCount);
+      const indices = this.#traceIndices[i];
+      decimatedCount =
+        indices === undefined
+          ? 0
+          : minMaxEnvelopeIndices(payload.y, 0, payload.sampleCount, indices, 0, parameter);
+    }
+
+    this.#traceDecimatedCount[i] = decimatedCount;
+    const indices = this.#traceIndices[i];
+    this.#traceIsolatedCount[i] =
+      indices === undefined
+        ? 0
+        : countIsolatedSegments(payload.x, payload.y, indices, decimatedCount, payload.sampleCount);
+
+    this.#traceMemoRevision[i] = payload.revision;
+    this.#traceMemoAlgorithm[i] = algorithm;
+    this.#traceMemoParameter[i] = parameter;
+    this.#traceMemoXMin[i] = t.xDomainMin;
+    this.#traceMemoXMax[i] = t.xDomainMax;
+    this.#traceMemoYMin[i] = t.yDomainMin;
+    this.#traceMemoYMax[i] = t.yDomainMax;
+  }
+
+  /** The per-trace `render()` loop (D7): one `Path2D` per trace, its pre-resolved style, and —
+   * only for a trace whose memo just proved it has an isolated sample and whose style opts in —
+   * one further `Path2D` filled for the markers. `setTransform` is not called here; it runs once
+   * per frame in the caller, outside this loop. */
+  #renderTraces(context: TraceDrawingContext): void {
+    for (let i = 0; i < this.#traceCount; i += 1) {
+      const payload = this.#tracePayloads[i];
+      const t = this.#traceTransforms[i];
+      const indices = this.#traceIndices[i];
+      if (payload === undefined || t === undefined || indices === undefined) continue;
+      if (payload.sampleCount === 0) continue;
+
+      this.#recomputeTraceDecimationIfStale(i, payload, t);
+      const decimatedCount = this.#traceDecimatedCount[i] ?? 0;
+
+      const path = new Path2D();
+      buildTracePath(path, t, payload.x, payload.y, indices, decimatedCount, payload.sampleCount);
+      const lineWidthCss = this.#traceLineWidthCss[i] ?? this.#style.lineWidthCss;
+      const lineWidthDevice = lineWidthCss * t.dpr;
+      context.strokeStyle = this.#traceStroke[i] ?? this.#style.traceColor;
+      context.lineWidth = lineWidthDevice;
+      context.setLineDash(this.#traceDashDevice[i] ?? EMPTY_DASH);
+      context.stroke(path);
+
+      const isolatedCount = this.#traceIsolatedCount[i] ?? 0;
+      if (isolatedCount > 0 && (this.#traceMarkIsolated[i] ?? true)) {
+        const markers = new Path2D();
+        buildIsolatedMarkers(
+          markers,
+          t,
+          payload.x,
+          payload.y,
+          indices,
+          decimatedCount,
+          payload.sampleCount,
+          lineWidthDevice,
+        );
+        context.fillStyle = this.#traceStroke[i] ?? this.#style.traceColor;
+        context.fill(markers);
+      }
+    }
   }
 }

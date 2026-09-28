@@ -18,9 +18,18 @@ import {
 // below even though the factory itself needs no assertion against them.
 
 export interface SpectrumDataPayload {
-  /** Capacity-sized. Holds X **offsets from `xOrigin`**, not absolute X. */
+  /**
+   * Capacity-sized. Holds X **offsets from `xOrigin`**, not absolute X. Every value in
+   * `[0, sampleCount)` MUST be finite: X is the sampling grid a decimator walks in source order,
+   * and a `NaN` there has no defined meaning (unlike a `NaN` in `y`, it is never checked in the
+   * hot path). This is a contract on the producer, not a runtime guarantee validated per point.
+   */
   readonly x: Retained<XBuffer>;
-  /** Capacity-sized. Holds Y samples. */
+  /**
+   * Capacity-sized. Holds Y samples. `NaN` at index `i` (for `i` in `[0, sampleCount)`) denotes
+   * a gap — a missing measurement, not a value of zero or of the neighbouring samples. No
+   * consumer (decimator, path builder, exporter) may interpolate across it.
+   */
   readonly y: Retained<YBuffer>;
   /** `x.length === y.length === capacity`. Fixed for the payload's lifetime. */
   readonly capacity: number;

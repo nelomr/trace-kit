@@ -45,6 +45,8 @@ interface FakeContext {
   lineTo(x: number, y: number): void;
   stroke(path?: unknown): void;
   fillText(text: string, x: number, y: number): void;
+  setLineDash(segments: number[]): void;
+  fill(path?: unknown): void;
 }
 
 function createFakeContext(): FakeContext {
@@ -76,6 +78,12 @@ function createFakeContext(): FakeContext {
     },
     fillText(text: string): void {
       this.calls.push(`fillText(${text})`);
+    },
+    setLineDash(segments: number[]): void {
+      this.calls.push(`setLineDash(${segments.join(",")})`);
+    },
+    fill(): void {
+      this.calls.push("fill");
     },
   };
 }
@@ -356,5 +364,22 @@ describe("Canvas2DRenderer — N-axis rendering (multi-axis-viewport / canvas2d-
     );
     expect(source.includes("selectTicks")).toBe(true);
     expect(source.includes("selectLogTicks")).toBe(true);
+  });
+});
+
+describe("TraceDrawingContext — setLineDash and fill", () => {
+  it("records setLineDash and fill in the same ordered call log as stroke", () => {
+    const { context } = makeRenderer();
+
+    context.setLineDash([4, 2]);
+    context.stroke();
+    context.fillStyle = "#f00";
+    context.fill();
+
+    expect(context.calls).toEqual([
+      "setLineDash(4,2)",
+      "stroke",
+      "fill",
+    ]);
   });
 });

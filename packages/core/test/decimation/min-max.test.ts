@@ -49,7 +49,7 @@ describe("minMaxEnvelope", () => {
     }
   });
 
-  it("reports the finite min/max of a bucket with 99 finite samples and 1 NaN", () => {
+  it("collapses a bucket with 99 finite samples and 1 NaN to NaN/NaN rather than bridging it", () => {
     const y = new Float32Array(100);
     for (let i = 0; i < 99; i += 1) y[i] = i + 1;
     y[99] = NaN;
@@ -57,8 +57,8 @@ describe("minMaxEnvelope", () => {
 
     minMaxEnvelope(y, 0, 100, out, 0, 1);
 
-    expect(out[0]).toBe(1);
-    expect(out[1]).toBe(99);
+    expect(Number.isNaN(out[0])).toBe(true);
+    expect(Number.isNaN(out[1])).toBe(true);
   });
 
   it("reports NaN/NaN for an all-NaN bucket, never Infinity", () => {

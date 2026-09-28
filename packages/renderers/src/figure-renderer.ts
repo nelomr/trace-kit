@@ -3,7 +3,12 @@
 // (`CanvasRenderingContext2D`, `Path2D`) or a DOM host type (`HTMLCanvasElement`,
 // `OffscreenCanvas`) — those stay behind `Canvas2DSurface`/`acquire2dContext` in `surface.ts`,
 // never crossing into this contract.
-import type { DecimationSelection, SpectrumDataPayload, ViewportTransform } from "@trace-kit/core";
+import type {
+  DecimationSelection,
+  SpectrumDataPayload,
+  TraceCollection,
+  ViewportTransform,
+} from "@trace-kit/core";
 
 /** Discriminant in the shape of zrender's `getType()`. */
 export type FigureRendererKind = "canvas2d" | "webgl2";
@@ -25,6 +30,15 @@ export interface FigureRenderer {
    * never placed in a transfer list. Does not draw. Does not copy.
    */
   setData(payload: SpectrumDataPayload): void;
+
+  /**
+   * Replaces the whole trace set. Retains `collection` by reference: never copied, never
+   * mutated. Resolves per-trace axis binding and rebuilds per-trace transforms/style/memo
+   * columns; view X domain is seeded from `collection.xDomainMin`/`xDomainMax`. Does not draw.
+   * `setData(payload)` is retained as the single-trace convenience it always was — internally
+   * equivalent to a one-entry collection bound to the first registered Y axis.
+   */
+  setTraces(collection: TraceCollection): void;
 
   /** Replaces the visible data window. Recomputes `transform`. Does not draw. */
   setDomain(xMin: number, xMax: number, yMin: number, yMax: number): void;

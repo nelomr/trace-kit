@@ -57,6 +57,11 @@ describe("export surface", () => {
       "Y_SCALE_KIND_LOG",
       "AXIS_SIDE_LEFT",
       "createAxisTransforms",
+      "BREAK_INDEX",
+      "createTraceCollection",
+      "withTraceAxis",
+      "withTraceStyle",
+      "resolveTraceAxisIndices",
     ];
     for (const name of expected) {
       expect(coreExports).toHaveProperty(name);
@@ -72,6 +77,13 @@ describe("export surface", () => {
       "selectBufferBacking",
       "createBufferPool",
     ];
+    for (const name of forbidden) {
+      expect(coreExports).not.toHaveProperty(name);
+    }
+  });
+
+  it("exposes no default color palette", () => {
+    const forbidden = ["TRACE_PALETTE", "DEFAULT_PALETTE", "COLOR_PALETTE", "PALETTE"];
     for (const name of forbidden) {
       expect(coreExports).not.toHaveProperty(name);
     }

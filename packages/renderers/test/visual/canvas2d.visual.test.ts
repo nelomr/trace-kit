@@ -2,6 +2,7 @@ import {
   AXIS_SIDE_LEFT,
   commitPayloadRevision,
   createSpectrumDataPayload,
+  createTraceCollection,
   Y_SCALE_KIND_LINEAR,
   Y_SCALE_KIND_LOG,
   type SpectrumDataPayload,
@@ -48,6 +49,50 @@ function buildLogSweepPayload(sampleCount: number, seed: number): SpectrumDataPa
 
 const logSweepPayload = buildLogSweepPayload(512, 41);
 const dualAxisPayload = buildLogSweepPayload(512, 43);
+
+/** The overlay scenario's linear-axis trace: a bounded oscillation, sampled from `xOrigin: 0` —
+ * proves two traces sharing one X domain but sampled from different absolute origins still land
+ * correctly against their own transform (D7's per-trace `xOrigin`). */
+function buildOverlayLinearPayload(sampleCount: number, seed: number, xOrigin: number): SpectrumDataPayload {
+  const payload = createSpectrumDataPayload({
+    capacity: sampleCount,
+    xOrigin,
+    xUnit: "index",
+    yUnit: "a.u.",
+  });
+  let prngState = seed >>> 0;
+  for (let i = 0; i < sampleCount; i += 1) {
+    prngState = nextUint32(prngState);
+    const noise = ((prngState / 0xffffffff) * 2 - 1) * 0.05;
+    payload.x[i] = i;
+    payload.y[i] = Math.sin(i * 0.05) * 5 + noise;
+  }
+  commitPayloadRevision(payload, sampleCount);
+  return payload;
+}
+
+/** The overlay scenario's log-axis trace: strictly positive (a log Y domain has no meaning for
+ * a non-positive value), sampled from a distinct `xOrigin`. */
+function buildOverlayLogPayload(sampleCount: number, seed: number, xOrigin: number): SpectrumDataPayload {
+  const payload = createSpectrumDataPayload({
+    capacity: sampleCount,
+    xOrigin,
+    xUnit: "index",
+    yUnit: "a.u.",
+  });
+  let prngState = seed >>> 0;
+  for (let i = 0; i < sampleCount; i += 1) {
+    prngState = nextUint32(prngState);
+    const noise = 1 + ((prngState / 0xffffffff) * 2 - 1) * 0.05;
+    payload.x[i] = i;
+    payload.y[i] = 1 * 10 ** ((i / (sampleCount - 1)) * 2) * noise;
+  }
+  commitPayloadRevision(payload, sampleCount);
+  return payload;
+}
+
+const overlayLinearPayload = buildOverlayLinearPayload(300, 17, 0);
+const overlayLogPayload = buildOverlayLogPayload(300, 19, 1000);
 
 // Goldens are generated and compared exclusively in CI on `ubuntu-latest` (P5) — Chromium's
 // font/AA rasterisation is not guaranteed byte-identical across host operating systems, and a
@@ -165,6 +210,58 @@ describe("Canvas2D visual regression", () => {
           renderer.render();
 
           await expect(page.elementLocator(canvas)).toMatchScreenshot("dual-axis");
+        } finally {
+          renderer.dispose();
+        }
+      } finally {
+        canvas.remove();
+      }
+    },
+  );
+
+  it.skipIf(!runsWhereGoldensAreValid)(
+    "renders overlay-two-axis (two traces, two Y axes — linear and log, distinct colors, one dashed) matching the committed golden — visual goldens are Linux-CI-only",
+    async () => {
+      const canvas = document.createElement("canvas");
+      canvas.style.width = `${STANDARD_VIEWPORT.width}px`;
+      canvas.style.height = `${STANDARD_VIEWPORT.height}px`;
+      document.body.appendChild(canvas);
+
+      try {
+        const fontReady = await ensureDefaultFont();
+        expect(fontReady).toBe(true);
+        expect(document.fonts.check('10px "TraceKit Inter"')).toBe(true);
+
+        const axes: YAxisRegistration[] = [
+          { id: "linear", scaleKind: Y_SCALE_KIND_LINEAR, domainMin: -10, domainMax: 10, side: AXIS_SIDE_LEFT },
+          { id: "log", scaleKind: Y_SCALE_KIND_LOG, domainMin: 1, domainMax: 200, side: AXIS_SIDE_LEFT },
+        ];
+        const renderer = new Canvas2DRenderer({ surface: canvas, yAxes: axes });
+        try {
+          const collection = createTraceCollection(
+            [
+              {
+                id: "linear-trace",
+                payload: overlayLinearPayload,
+                yAxisId: "linear",
+                style: { color: "#3fb6ff" },
+              },
+              {
+                id: "log-trace",
+                payload: overlayLogPayload,
+                yAxisId: "log",
+                style: { color: "#ff7a45", dash: [6, 4] },
+              },
+            ],
+            axes,
+            0,
+            299,
+          );
+          renderer.setTraces(collection);
+          renderer.resize(STANDARD_VIEWPORT.width, STANDARD_VIEWPORT.height, 2);
+          renderer.render();
+
+          await expect(page.elementLocator(canvas)).toMatchScreenshot("overlay-two-axis");
         } finally {
           renderer.dispose();
         }

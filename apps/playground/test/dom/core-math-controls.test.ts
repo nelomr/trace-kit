@@ -63,6 +63,8 @@ beforeEach(() => {
     moveTo(): void {},
     lineTo(): void {},
     stroke(): void {},
+    setLineDash(): void {},
+    fill(): void {},
     fillText(): void {},
   };
   // Test double: a real DOM boundary (happy-dom has no 2D canvas backend), not a production

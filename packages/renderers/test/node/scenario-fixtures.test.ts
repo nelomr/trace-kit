@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type {
   DecimationSelection,
   SpectrumDataPayload,
+  TraceCollection,
   ViewportTransform,
 } from "@trace-kit/core";
 import { createViewportTransform } from "@trace-kit/core";
@@ -36,6 +37,11 @@ class RecordingStandInRenderer implements FigureRenderer {
   setData(payload: SpectrumDataPayload): void {
     void payload;
     this.calls.push("setData");
+  }
+
+  setTraces(collection: TraceCollection): void {
+    void collection;
+    this.calls.push("setTraces");
   }
 
   setDomain(xMin: number, xMax: number, yMin: number, yMax: number): void {
@@ -77,11 +83,12 @@ const EXPECTED_DESCRIPTIONS = [
   "resonance peak",
   "noise floor",
   "decimation case",
+  "gapped trace",
 ];
 
 describe("scenario fixtures", () => {
-  it("contains exactly five entries with the P4-agreed descriptions", () => {
-    expect(SCENARIO_FIXTURES.length).toBe(5);
+  it("contains exactly six entries with the P4-agreed descriptions plus the gap-awareness addition", () => {
+    expect(SCENARIO_FIXTURES.length).toBe(6);
     expect(SCENARIO_FIXTURES.map((f) => f.description)).toEqual(EXPECTED_DESCRIPTIONS);
   });
 
@@ -131,6 +138,8 @@ interface FakeContext {
   lineTo(x: number, y: number): void;
   stroke(path?: unknown): void;
   fillText(text: string, x: number, y: number): void;
+  setLineDash(segments: number[]): void;
+  fill(path?: unknown): void;
 }
 
 /** Matches `test/node/axes-grid.test.ts`'s own fake-canvas pattern: this project runs under
@@ -150,6 +159,8 @@ function makeFakeSurface(): HTMLCanvasElement {
     lineTo(): void {},
     stroke(): void {},
     fillText(): void {},
+    setLineDash(): void {},
+    fill(): void {},
   };
   const canvas = { getContext: () => context };
   // eslint-disable-next-line no-restricted-syntax -- test double for a DOM host unavailable under `node`
