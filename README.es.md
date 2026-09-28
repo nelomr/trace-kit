@@ -45,10 +45,9 @@
 >
 > El desarrollo sigue Spec-Driven Development; el progreso se registra en
 > [`openspec/roadmap.yaml`](openspec/roadmap.yaml). A fecha de esta revisión, los pasos 1 a
-> **5.6** del roadmap (`core-scale-transforms` — transformaciones de viewport logarítmicas y
-> multi-eje) están archivados y completos. El siguiente paso previsto es **5.7**
-> (`core-gap-and-multi-trace-model` — semántica de huecos/NaN en la decimación y soporte de
-> payload multi-traza), todavía no iniciado.
+> **5.7** del roadmap (`core-gap-and-multi-trace-model` — semántica de huecos/NaN en la
+> decimación y soporte de payload multi-traza) están archivados y completos. El siguiente paso
+> previsto es **6** (`svg-vector-export`), todavía no iniciado.
 
 ---
 

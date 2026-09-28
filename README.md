@@ -41,9 +41,9 @@
 >
 > Development follows Spec-Driven Development; progress is tracked in
 > [`openspec/roadmap.yaml`](openspec/roadmap.yaml). As of this writing, roadmap steps 1 through
-> **5.6** (`core-scale-transforms` — logarithmic and multi-axis viewport transforms) are archived
-> and complete. The next planned step is **5.7** (`core-gap-and-multi-trace-model` — gap/NaN
-> semantics in decimation and multi-trace payload support), not yet started.
+> **5.7** (`core-gap-and-multi-trace-model` — gap/NaN semantics in decimation and multi-trace
+> payload support) are archived and complete. The next planned step is **6**
+> (`svg-vector-export`), not yet started.
 
 ---
 
