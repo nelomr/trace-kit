@@ -14,6 +14,12 @@ import { Canvas2DRenderer } from "../../src/canvas2d/canvas2d-renderer.js";
 import { computeAxisInsets } from "../../src/canvas2d/axes.js";
 import { DEFAULT_AXIS_LAYOUT, DEFAULT_FIGURE_STYLE } from "../../src/style.js";
 import type { PolylineSink } from "../../src/path/polyline-sink.js";
+import {
+  contextSegments,
+  installRecordingPath2D,
+  RecordingContext,
+  recordingSurface,
+} from "./support/recording-context.js";
 
 class FakePath2D implements PolylineSink {
   moveTo(x: number, y: number): void {
@@ -357,9 +363,9 @@ describe("Canvas2DRenderer — N-axis rendering (multi-axis-viewport / canvas2d-
     expect(labels.length).toBeGreaterThan(0);
   });
 
-  it("axes.ts imports both selectTicks and selectLogTicks and implements no independent tick loop", () => {
+  it("the layout module imports both selectTicks and selectLogTicks and implements no independent tick loop", () => {
     const source = readFileSync(
-      fileURLToPath(new URL("../../src/canvas2d/axes.ts", import.meta.url)),
+      fileURLToPath(new URL("../../src/layout/figure-layout.ts", import.meta.url)),
       "utf8",
     );
     expect(source.includes("selectTicks")).toBe(true);
@@ -381,5 +387,111 @@ describe("TraceDrawingContext — setLineDash and fill", () => {
       "stroke",
       "fill",
     ]);
+  });
+});
+
+describe("Canvas2DRenderer — stacked Y-axis columns and explicit axis width", () => {
+  let restorePath2D: () => void;
+  beforeEach(() => {
+    restorePath2D = installRecordingPath2D();
+  });
+  afterEach(() => {
+    restorePath2D();
+  });
+
+  function twoAxisRender(dpr: number) {
+    const axes: YAxisRegistration[] = [
+      { id: "a", scaleKind: Y_SCALE_KIND_LINEAR, domainMin: -1, domainMax: 1, side: AXIS_SIDE_LEFT },
+      { id: "b", scaleKind: Y_SCALE_KIND_LINEAR, domainMin: 0, domainMax: 10, side: AXIS_SIDE_LEFT },
+    ];
+    const context = new RecordingContext();
+    const renderer = new Canvas2DRenderer({ surface: recordingSurface(context), yAxes: axes });
+    renderer.resize(400, 200, dpr);
+    renderer.setDomain(0, 100, -1, 1);
+    renderer.setData(populatedPayload(50));
+    renderer.render();
+    const traceStroke = context.calls.findIndex((c) => c.name === "stroke" && c.args.length === 1);
+    const axisCalls = context.calls.slice(traceStroke + 1);
+    return { renderer, context, axisCalls };
+  }
+
+  it("draws each registered axis in its own column, one per-axis gutter further left", () => {
+    const dpr = 2;
+    const { renderer, axisCalls } = twoAxisRender(dpr);
+    const t = renderer.transform;
+    const gutterDevice = (DEFAULT_AXIS_LAYOUT.tickLength + DEFAULT_AXIS_LAYOUT.labelGutter + 10) * dpr;
+
+    const vertical = contextSegments(axisCalls).filter(
+      (s) => s.x1 === s.x2 && s.y1 === t.plotTop && s.y2 === t.plotTop + t.plotHeight,
+    );
+    expect(vertical.map((s) => s.x1)).toEqual([t.plotLeft, t.plotLeft - gutterDevice]);
+
+    const tickLengthDevice = DEFAULT_AXIS_LAYOUT.tickLength * dpr;
+    const ticksOf = (axisX: number) =>
+      contextSegments(axisCalls).filter((s) => s.x2 === axisX && s.x1 === axisX - tickLengthDevice);
+    expect(ticksOf(t.plotLeft).length).toBeGreaterThan(0);
+    expect(ticksOf(t.plotLeft - gutterDevice).length).toBeGreaterThan(0);
+
+    const labelXs = axisCalls
+      .filter((c) => c.name === "fillText")
+      .map((c) => Number(c.args[1]));
+    expect(labelXs).toContain(t.plotLeft - tickLengthDevice);
+    expect(labelXs).toContain(t.plotLeft - gutterDevice - tickLengthDevice);
+  });
+
+  it("keeps a single axis at plotLeft", () => {
+    const context = new RecordingContext();
+    const renderer = new Canvas2DRenderer({ surface: recordingSurface(context) });
+    renderer.resize(400, 200, 2);
+    renderer.setDomain(0, 100, -1, 1);
+    renderer.setData(populatedPayload(50));
+    renderer.render();
+    const t = renderer.transform;
+    const traceStroke = context.calls.findIndex((c) => c.name === "stroke" && c.args.length === 1);
+    const vertical = contextSegments(context.calls.slice(traceStroke + 1)).filter(
+      (s) => s.x1 === s.x2 && s.y1 === t.plotTop && s.y2 === t.plotTop + t.plotHeight,
+    );
+    expect(vertical.map((s) => s.x1)).toEqual([t.plotLeft]);
+  });
+
+  it("sets the axis stroke width explicitly, independent of the trace width", () => {
+    const context = new RecordingContext();
+    const renderer = new Canvas2DRenderer({
+      surface: recordingSurface(context),
+      style: { lineWidthCss: 4 },
+    });
+    renderer.resize(400, 200, 2);
+    renderer.setDomain(0, 100, -1, 1);
+    renderer.setData(populatedPayload(50));
+    renderer.render();
+
+    const traceStroke = context.calls.findIndex((c) => c.name === "stroke" && c.args.length === 1);
+    const afterTrace = context.calls.slice(traceStroke + 1);
+    const widths = afterTrace.filter((c) => c.name === "set lineWidth").map((c) => c.args[0]);
+    // bottom axis, then left axis, each sets the width before its first stroke.
+    expect(widths).toEqual([3, 3]);
+    const firstAxisStroke = afterTrace.findIndex((c) => c.name === "stroke");
+    const firstWidth = afterTrace.findIndex((c) => c.name === "set lineWidth");
+    expect(firstWidth).toBeGreaterThanOrEqual(0);
+    expect(firstWidth).toBeLessThan(firstAxisStroke);
+  });
+
+  it("honours a custom axisLineWidthCss and defaults to 1.5", () => {
+    expect(DEFAULT_AXIS_LAYOUT.axisLineWidthCss).toBe(1.5);
+    const context = new RecordingContext();
+    const renderer = new Canvas2DRenderer({
+      surface: recordingSurface(context),
+      axes: { axisLineWidthCss: 2 },
+    });
+    renderer.resize(400, 200, 2);
+    renderer.setDomain(0, 100, -1, 1);
+    renderer.setData(populatedPayload(50));
+    renderer.render();
+    const traceStroke = context.calls.findIndex((c) => c.name === "stroke" && c.args.length === 1);
+    const widths = context.calls
+      .slice(traceStroke + 1)
+      .filter((c) => c.name === "set lineWidth")
+      .map((c) => c.args[0]);
+    expect(widths).toEqual([4, 4]);
   });
 });

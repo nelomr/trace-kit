@@ -2,17 +2,22 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": true,
-    "rootDir": ".",
+    "rootDir": "../..",
     "lib": [
       "ES2022",
       "DOM"
     ],
     "types": [
       "node"
-    ]
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@trace-kit/bench-harness": ["../core/bench/runner-core.ts"]
+    }
   },
   "include": [
     "src/**/*",
-    "test/**/*"
+    "test/**/*",
+    "bench/**/*"
   ]
 }

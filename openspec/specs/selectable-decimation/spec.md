@@ -1,14 +1,9 @@
 # Capability: selectable-decimation
 
-> Change: `renderers-canvas2d`. New capability.
->
-> Source: `proposal.md` §7 (capability contract, backward-compatible default) and `design.md`
-> §D10 (`minMaxEnvelopeIndices`, absolute-index normal form, unchanged walk) and §D11
-> (`DecimationSelection` discriminated union, `setDecimation` runtime setter and constructor
-> default, memo key widened with an algorithm field). Requirements here govern the selection
-> type, its two entry points on the shared `FigureRenderer` surface, the new core function, and
-> the widened memoization — not the unchanged `buildTracePath` walk, which is governed by
-> `canvas2d-trace-rendering`.
+> Governs the selection type `DecimationSelection` (a discriminated union), its two entry points on the
+> shared `FigureRenderer` surface (`setDecimation` and the constructor default), the core function
+> `minMaxEnvelopeIndices`, and the widened memoization key. The unchanged `buildTracePath` walk is
+> governed by `canvas2d-trace-rendering`.
 
 ## ADDED Requirements
 
@@ -44,26 +39,57 @@ the sole mechanism enforcing exclusivity.
 - **WHEN**: the file is scanned for `as never`, `as any`, `as unknown as`, and `<any>`
 - **THEN**: none of these patterns appears; only a declared `?: never` field type is present
 
-### Requirement: A Caller That Selects Nothing Gets Today's LTTB Behavior Unchanged
-`Canvas2DRenderer` MUST default to LTTB with `threshold = min(sampleCount, max(2,
-ceil(plotWidth * 2)))` whenever no `DecimationSelection` is in effect — neither passed to
-`Canvas2DRendererOptions.decimation` at construction nor set later via `setDecimation`. The
-resulting decimated index set and drawn vertex sequence MUST be identical, index for index, to the
-renderer's behavior before this capability existed.
+### Requirement: A Caller That Selects Nothing Gets the Backend's Default
+When no `DecimationSelection` is in effect, meaning none was passed as the renderer's constructor
+`decimation` option and none has been set through `setDecimation` since (or `setDecimation(undefined)`
+was called), each backend MUST apply its own default, and the per-engine difference is normative:
 
-#### Scenario: An unconfigured renderer draws the pre-existing LTTB default
+- `Canvas2DRenderer` MUST default to LTTB with `threshold = min(sampleCount, max(2,
+  ceil(plotWidth * 2)))`. The resulting decimated index set and drawn vertex sequence MUST be
+  identical, index for index, to the renderer's behaviour before this capability existed.
+- `WebGL2FigureRenderer` MUST draw the full payload, `[0, sampleCount)` of every trace, with no
+  decimator invoked and no decimated index set held.
+
+A caller that selects an explicit `DecimationSelection` MUST get the same decimated index set on
+both backends for the same payload, selection and plot width. `DecimationSelection` MUST NOT gain
+a `"none"` (or any other full-resolution) member; full resolution is reachable only through
+"selecting nothing" on a backend whose default is full resolution. A consumer that switches
+engines MUST re-apply or translate the selection itself, because `undefined` selects a different
+behaviour on each engine (hand-off to `engine-controller`).
+
+#### Scenario: An unconfigured Canvas2D renderer draws the pre-existing LTTB default
 - **GIVEN**: a `Canvas2DRenderer` constructed with no `decimation` option, over a payload of
   100,000 samples and a plot width producing threshold `T`
 - **WHEN**: `render()` runs for the first time
 - **THEN**: `lttb` is invoked exactly once with `threshold === T`, and `minMaxEnvelopeIndices` is
   not invoked
 
-#### Scenario: setDecimation(undefined) restores the default after a prior selection
-- **GIVEN**: a renderer with `setDecimation({ algorithm: "min-max" })` already applied and rendered
-  at least once
-- **WHEN**: `setDecimation(undefined)` is called and `render()` runs again
-- **THEN**: the drawn index set for that render call is byte-for-byte identical to the index set
-  the same renderer would produce with no selection ever applied, at the same revision and domain
+#### Scenario: An unconfigured WebGL2 renderer draws the full payload
+- **GIVEN**: a `WebGL2FigureRenderer` over the recording fake GL, constructed with no
+  `decimation` option, over a payload of 100,000 samples
+- **WHEN**: `render()` runs
+- **THEN**: neither `lttb` nor `minMaxEnvelopeIndices` is invoked, and the line pass has 99,999
+  instances
+
+#### Scenario: setDecimation(undefined) restores each backend's own default after a prior selection
+- **GIVEN**: two renderers, one per backend, each with `setDecimation({ algorithm: "min-max" })`
+  applied and rendered at least once
+- **WHEN**: `setDecimation(undefined)` is called on both and both render again
+- **THEN**: the Canvas2D drawn index set is byte-for-byte identical to the set the same renderer
+  produces with no selection ever applied, and the WebGL2 line pass again draws `sampleCount - 1`
+  segments with no decimator invoked
+
+#### Scenario: An explicit selection yields the same index set on both backends
+- **GIVEN**: the same 100,000-sample payload, the same plot width, and
+  `setDecimation({ algorithm: "lttb", threshold: 1000 })` on both renderers
+- **WHEN**: both render
+- **THEN**: the decimated index set used by the WebGL2 renderer (gathered from its upload) equals
+  the Canvas2D index set element for element
+
+#### Scenario: The selection type gains no full-resolution member
+- **GIVEN**: the compiled `DecimationSelection` declaration
+- **WHEN**: its `algorithm` literals are enumerated
+- **THEN**: they are exactly `"lttb"` and `"min-max"`
 
 ### Requirement: `setDecimation` Recomputes the Decimated Result but Issues No Drawing Call
 `FigureRenderer.setDecimation(selection: DecimationSelection | undefined): void` MUST invalidate
@@ -186,7 +212,7 @@ emits for that same bucket (its minimum and its maximum), independent of emissio
 #### Scenario: minMaxEnvelope itself is unmodified
 - **GIVEN**: `packages/core/src/decimation/min-max.ts`
 - **WHEN**: its exported `minMaxEnvelope` signature and write order (`min` then `max`, lines
-  92-93 as documented in `design.md` §D10) are compared against the pre-change implementation
+  92-93) are compared against the pre-change implementation
 - **THEN**: no difference is observed; `minMaxEnvelopeIndices` is added as a sibling file and does
   not alter, wrap, or deprecate the existing function
 
@@ -212,6 +238,6 @@ indices, count)`.
 #### Scenario: buildTracePath's guarded file is untouched by this capability
 - **GIVEN**: `packages/renderers/src/path/build-trace-path.ts` as committed for
   `canvas2d-trace-rendering`
-- **WHEN**: the file is diffed against its state after this capability's implementation lands
+- **WHEN**: the file is diffed against the version committed for `canvas2d-trace-rendering`
 - **THEN**: no difference is observed; the existing `--expose-gc` allocation gate and ESLint
   hot-path block continue to cover the same unchanged function

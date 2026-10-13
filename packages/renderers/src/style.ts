@@ -27,6 +27,12 @@ export interface AxisLayout {
   readonly targetTickCount: number;
   readonly showLeftAxis: boolean;
   readonly showBottomAxis: boolean;
+  /**
+   * CSS pixels. Axis lines and tick marks are stroked at this width, set explicitly: without it
+   * the stroke would inherit whatever width the last trace left on the context, so the same
+   * figure would draw heavier axes just because its final trace is wider.
+   */
+  readonly axisLineWidthCss: number;
 }
 
 export const DEFAULT_FIGURE_STYLE: FigureStyle = Object.freeze({
@@ -45,6 +51,7 @@ export const DEFAULT_AXIS_LAYOUT: AxisLayout = Object.freeze({
   targetTickCount: 6,
   showLeftAxis: true,
   showBottomAxis: true,
+  axisLineWidthCss: 1.5,
 });
 
 /**

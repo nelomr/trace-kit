@@ -1,6 +1,6 @@
 // Shared GC-observation helper for the ownership prototype (and any future `--expose-gc`
-// instrumented probe under `bench/`). Extracted from the committed
-// `openspec/changes/00-roadmap-decomposition/evidence/gc-observer-probe.mjs` pattern: the same
+// instrumented probe under `bench/`). Extracted from the earlier
+// standalone GC-observer probes: the same
 // `PerformanceObserver({ entryTypes: ['gc'] })` instrumentation, but splitting scavenge (minor)
 // GC events from major GC events by `entry.detail.kind` against the Node `NODE_PERFORMANCE_GC_*`
 // constants — a major GC can be triggered by anything else in the process and must

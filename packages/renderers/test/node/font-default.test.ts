@@ -32,7 +32,7 @@ describe("default figure font", () => {
   it("keeps the built font entry within the committed size budget", () => {
     const builtEntry = path.join(packageRoot, "dist/font/index.js");
     if (!existsSync(builtEntry)) {
-      // Meaningful only once `tsup` has actually produced `dist/font/index.js` (task 9.5) —
+      // Meaningful only once `tsup` has actually produced `dist/font/index.js` —
       // running `pnpm run build` in this package first is a precondition, not a defect in the
       // budget itself, so this reports as a skip rather than a failure when unbuilt.
       return;

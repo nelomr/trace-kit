@@ -19,6 +19,16 @@
       "import": "./dist/font/index.js",
       "require": "./dist/font/index.cjs"
     },
+    "./svg": {
+      "types": "./dist/svg/index.d.ts",
+      "import": "./dist/svg/index.js",
+      "require": "./dist/svg/index.cjs"
+    },
+    "./webgl2": {
+      "types": "./dist/webgl2/index.d.ts",
+      "import": "./dist/webgl2/index.js",
+      "require": "./dist/webgl2/index.cjs"
+    },
     "./fixtures": {
       "types": "./dist/fixtures/scenarios.d.ts",
       "import": "./dist/fixtures/scenarios.js",
@@ -26,11 +36,13 @@
     }
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && tsc -p tsconfig.svg-dts.json",
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run --config ../../vitest.config.ts --project renderers --project renderers-dom",
+    "test:update-svg-goldens": "TRACEKIT_UPDATE_SVG_GOLDENS=1 vitest run --config ../../vitest.config.ts --project renderers svg-golden",
     "test:visual": "vitest run --config ../../vitest.config.ts --project visual",
+    "bench:engines": "vitest run --config ../../vitest.config.ts --project engine-bench",
     "lint": "eslint ."
   },
   "dependencies": {

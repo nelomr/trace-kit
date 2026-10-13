@@ -6,8 +6,7 @@
  * [--delta-samples=N] [--stall-frames=N]`.
  *
  * Modeled directly on the working evidence probes this repository already committed
- * (`openspec/changes/00-roadmap-decomposition/evidence/gc-observer-probe.mjs` and
- * `transfer-roundtrip-probe.mjs`): same `PerformanceObserver({ entryTypes: ['gc'] })`
+ * (the standalone GC-observer and transfer-roundtrip probes): same `PerformanceObserver({ entryTypes: ['gc'] })`
  * instrumentation via `gc-gate.mjs`, same warm-up-then-measure structure, same allocating
  * control. It is a self-contained model of the pool/lease/backpressure protocol — the same
  * pattern those two precedent scripts use — not a wrapper around the real `@trace-kit/core`
@@ -377,7 +376,7 @@ export async function runPrototype(options = {}) {
 
   // The keeping-up responder: every round trip acquires, submits, settles, and immediately
   // releases — the pool never accumulates outstanding leases, so it never saturates on its own
-  // (P6). `stallFrames`/`injectResponderFailure` are exercised as dedicated, separately-counted
+  // `stallFrames`/`injectResponderFailure` are exercised as dedicated, separately-counted
   // phases below rather than interleaved into this loop, so `chunksDropped`/`remintEvents` are
   // exactly attributable to the injected condition and not to loop-order coincidence.
   function roundTrip() {
@@ -424,7 +423,7 @@ export async function runPrototype(options = {}) {
     roundTrip(); // the next accepted chunk — proves Health clears
   }
 
-  // Dedicated failure phase (P9): drive every pair in flight, inject one responder failure
+  // Dedicated failure phase: drive every pair in flight, inject one responder failure
   // (re-mints exactly `poolPairs` slots and returns Health to Ready), then replay a settlement
   // against one of the pre-failure (now stale) generations.
   if (injectResponderFailure) {

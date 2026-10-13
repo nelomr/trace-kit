@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Vacuity guard (design.md §D2). Spawns `turbo run <task> --dry=json`, parses stdout as JSON
+// Vacuity guard: a task that plans to run nothing must not pass silently. Spawns `turbo run <task> --dry=json`, parses stdout as JSON
 // (stdout is pure JSON; the "• turbo <ver>" banner goes to stderr), and fails when no planned
 // task belonging to the requested task name has a runnable command.
 //

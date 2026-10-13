@@ -159,7 +159,7 @@ describe("parseWorkspaceYaml", () => {
   });
 });
 
-describe("dependency freshness policy (P7)", () => {
+describe("dependency freshness policy", () => {
   it("no catalogued version specifier is a prerelease", () => {
     const { catalog } = parseWorkspaceYaml(readWorkspaceYamlText());
     const prereleaseTag = /-(rc|beta|alpha|next|dev)(\.|$)/;

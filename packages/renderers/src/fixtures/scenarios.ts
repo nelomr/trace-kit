@@ -1,29 +1,39 @@
 /**
- * Parity-minimal render-scenario fixtures (P4): the five payloads change 7
- * (`renderers-webgl2`) will need to compare a WebGL2 backend's output against, and this
- * change's own visual-regression goldens are generated against. Shipped as published package
- * source — reachable through the stable `@trace-kit/renderers/fixtures` subpath — rather than
- * left under `test/`, so a later package's own test suite can import a fixture without a
- * relative path that reaches across package boundaries.
+ * Render-scenario fixtures, shipped as published package source through the stable
+ * `@trace-kit/renderers/fixtures` subpath so a later package's own test suite can import a
+ * fixture without a relative path that reaches across package boundaries.
  *
- * Every field here is backend-agnostic: no field names Canvas2D or WebGL2, and `dpr` is a
+ * The corpus is split in two. The *parity set* is the five payloads a second engine (WebGL2) will
+ * be compared against, and the only group the pixel-parity loop iterates. The *SVG-extended set*
+ * adds four figures (log axis, dual axis, gapped trace, two-trace overlay) that the SVG golden
+ * corpus and the dedicated pixel tests consume. `SCENARIO_FIXTURES` is the nine, parity first.
+ *
+ * Every field here is backend-agnostic: no field names Canvas2D, WebGL2 or SVG, and `dpr` is a
  * plain numeric field driving `FigureRenderer.resize`'s own `dpr` parameter, never read from
- * `window.devicePixelRatio`. Every `payload` is a real, frozen `SpectrumDataPayload` built once
- * at module load, never re-allocated per import (this module is evaluated once per process).
+ * `window.devicePixelRatio` (an SVG export ignores it and uses CSS pixels). Every payload is a
+ * real, frozen-shape `SpectrumDataPayload` built once at module load, never re-allocated per
+ * import (this module is evaluated once per process), and every builder is deterministic: no
+ * `Math.random`, no clock.
  *
- * Every fixture renders at `800×400` CSS pixels at `dpr: 2`, except `decimation-minmax`, which
- * is the one `dpr: 1` fixture — its dpr path is covered by a golden rather than only by a
- * `resize` call assertion.
+ * Every fixture renders at `800x400` CSS pixels at `dpr: 2`, except `decimation-minmax`, which is
+ * the one `dpr: 1` fixture — its dpr path is covered by a golden rather than only by a `resize`
+ * call assertion.
  *
- * Isolation note for future framework wrappers (Vue/React, later roadmap changes): a
- * `ScenarioFixture.payload` must never be wrapped in a deep-reactive proxy or a plain
- * `useState` — isolate it with `shallowRef`/`markRaw` (Vue) or keep it behind a `useRef`
- * (React), exactly as `DEFAULT_FIGURE_STYLE`'s own module documents for `FigureStyle`.
+ * Isolation note for future framework wrappers (Vue/React): a fixture's payload or collection
+ * must never be wrapped in a deep-reactive proxy or a plain `useState` — isolate it with
+ * `shallowRef`/`markRaw` (Vue) or keep it behind a `useRef` (React), exactly as
+ * `DEFAULT_FIGURE_STYLE`'s own module documents for `FigureStyle`.
  */
 import {
+  AXIS_SIDE_LEFT,
   commitPayloadRevision,
   createSpectrumDataPayload,
+  createTraceCollection,
+  Y_SCALE_KIND_LINEAR,
+  Y_SCALE_KIND_LOG,
   type SpectrumDataPayload,
+  type TraceCollection,
+  type YAxisRegistration,
 } from "@trace-kit/core";
 
 export interface ScenarioDomain {
@@ -40,18 +50,29 @@ export interface ScenarioViewport {
   readonly height: number;
 }
 
-export interface ScenarioFixture {
-  /** Stable, kebab-case identifier — also the golden PNG's file stem (no platform/browser
-   * token; see `visual-golden-corpus`'s naming requirement). */
+interface ScenarioFixtureBase {
+  /** Stable, kebab-case identifier — also the golden file stem (no platform/browser token). */
   readonly id: string;
-  /** One of the five P4-agreed descriptions, verbatim. */
   readonly description: string;
-  readonly payload: SpectrumDataPayload;
   readonly domain: ScenarioDomain;
   readonly viewport: ScenarioViewport;
   /** Plain numeric device-pixel-ratio hint, never read from a global. */
   readonly dpr: number;
+  /** Explicit Y axes, left-stacked in order. Omitted for the default single linear axis. */
+  readonly yAxes?: readonly YAxisRegistration[];
 }
+
+export interface PayloadScenarioFixture extends ScenarioFixtureBase {
+  readonly kind: "payload";
+  readonly payload: SpectrumDataPayload;
+}
+
+export interface CollectionScenarioFixture extends ScenarioFixtureBase {
+  readonly kind: "collection";
+  readonly collection: TraceCollection;
+}
+
+export type ScenarioFixture = PayloadScenarioFixture | CollectionScenarioFixture;
 
 const STANDARD_VIEWPORT: ScenarioViewport = { width: 800, height: 400 };
 
@@ -175,14 +196,142 @@ function buildGappedPayload(
   return payload;
 }
 
+/** A monotonically rising, multi-decade payload (spanning ~3 decades) with a small amount of
+ * deterministic noise — exercises decade thinning and mantissa minors on a log Y axis, which a
+ * flat or single-decade fixture would not. */
+function buildLogSweepPayload(sampleCount: number, seed: number): SpectrumDataPayload {
+  const payload = createSpectrumDataPayload({
+    capacity: sampleCount,
+    xOrigin: 0,
+    xUnit: "index",
+    yUnit: "a.u.",
+  });
+  let prngState = seed >>> 0;
+  for (let i = 0; i < sampleCount; i += 1) {
+    prngState = nextUint32(prngState);
+    const noise = 1 + ((prngState / 0xffffffff) * 2 - 1) * 0.05;
+    payload.x[i] = i;
+    payload.y[i] = 1 * 10 ** ((i / (sampleCount - 1)) * 3) * noise;
+  }
+  commitPayloadRevision(payload, sampleCount);
+  return payload;
+}
+
+/** The overlay scenario's linear-axis trace: a bounded oscillation, sampled from `xOrigin: 0` —
+ * proves two traces sharing one X domain but sampled from different absolute origins still land
+ * correctly against their own transform. */
+function buildOverlayLinearPayload(
+  sampleCount: number,
+  seed: number,
+  xOrigin: number,
+): SpectrumDataPayload {
+  const payload = createSpectrumDataPayload({
+    capacity: sampleCount,
+    xOrigin,
+    xUnit: "index",
+    yUnit: "a.u.",
+  });
+  let prngState = seed >>> 0;
+  for (let i = 0; i < sampleCount; i += 1) {
+    prngState = nextUint32(prngState);
+    const noise = ((prngState / 0xffffffff) * 2 - 1) * 0.05;
+    payload.x[i] = i;
+    payload.y[i] = Math.sin(i * 0.05) * 5 + noise;
+  }
+  commitPayloadRevision(payload, sampleCount);
+  return payload;
+}
+
+/** The overlay scenario's log-axis trace: strictly positive (a log Y domain has no meaning for a
+ * non-positive value), sampled from a distinct `xOrigin`. */
+function buildOverlayLogPayload(
+  sampleCount: number,
+  seed: number,
+  xOrigin: number,
+): SpectrumDataPayload {
+  const payload = createSpectrumDataPayload({
+    capacity: sampleCount,
+    xOrigin,
+    xUnit: "index",
+    yUnit: "a.u.",
+  });
+  let prngState = seed >>> 0;
+  for (let i = 0; i < sampleCount; i += 1) {
+    prngState = nextUint32(prngState);
+    const noise = 1 + ((prngState / 0xffffffff) * 2 - 1) * 0.05;
+    payload.x[i] = i;
+    payload.y[i] = 1 * 10 ** ((i / (sampleCount - 1)) * 2) * noise;
+  }
+  commitPayloadRevision(payload, sampleCount);
+  return payload;
+}
+
 const smoothCurvePayload = buildLorentzianPayload(512, 256, 80, 0, 1);
 const resonancePeakPayload = buildLorentzianPayload(4_096, 2_048, 60, 0, 7);
 const noiseFloorPayload = buildFlatNoisePayload(8_192, 0.02, 13);
 const decimationSpikePayload = buildSingleSpikePayload(200_000, 100_000);
 const gappedTracePayload = buildGappedPayload(512, 256, 80, 5);
+const logSweepPayload = buildLogSweepPayload(512, 41);
+const dualAxisPayload = buildLogSweepPayload(512, 43);
+const overlayLinearPayload = buildOverlayLinearPayload(300, 17, 0);
+const overlayLogPayload = buildOverlayLogPayload(300, 19, 1000);
 
-export const SCENARIO_FIXTURES: readonly ScenarioFixture[] = Object.freeze([
+const LOG_AXIS: YAxisRegistration = Object.freeze({
+  id: "log",
+  scaleKind: Y_SCALE_KIND_LOG,
+  domainMin: 1,
+  domainMax: 1000,
+  side: AXIS_SIDE_LEFT,
+});
+const LINEAR_UNIT_AXIS: YAxisRegistration = Object.freeze({
+  id: "linear",
+  scaleKind: Y_SCALE_KIND_LINEAR,
+  domainMin: -1,
+  domainMax: 1,
+  side: AXIS_SIDE_LEFT,
+});
+const OVERLAY_LINEAR_AXIS: YAxisRegistration = Object.freeze({
+  id: "linear",
+  scaleKind: Y_SCALE_KIND_LINEAR,
+  domainMin: -10,
+  domainMax: 10,
+  side: AXIS_SIDE_LEFT,
+});
+const OVERLAY_LOG_AXIS: YAxisRegistration = Object.freeze({
+  id: "log",
+  scaleKind: Y_SCALE_KIND_LOG,
+  domainMin: 1,
+  domainMax: 200,
+  side: AXIS_SIDE_LEFT,
+});
+const OVERLAY_AXES: readonly YAxisRegistration[] = Object.freeze([
+  OVERLAY_LINEAR_AXIS,
+  OVERLAY_LOG_AXIS,
+]);
+
+const overlayCollection = createTraceCollection(
+  [
+    {
+      id: "linear-trace",
+      payload: overlayLinearPayload,
+      yAxisId: "linear",
+      style: { color: "#3fb6ff" },
+    },
+    {
+      id: "log-trace",
+      payload: overlayLogPayload,
+      yAxisId: "log",
+      style: { color: "#ff7a45", dash: [6, 4] },
+    },
+  ],
+  OVERLAY_AXES,
+  0,
+  299,
+);
+
+export const PARITY_SCENARIO_FIXTURES: readonly PayloadScenarioFixture[] = Object.freeze([
   Object.freeze({
+    kind: "payload" as const,
     id: "simple-trace",
     description: "simple trace",
     payload: smoothCurvePayload,
@@ -191,6 +340,7 @@ export const SCENARIO_FIXTURES: readonly ScenarioFixture[] = Object.freeze([
     dpr: 2,
   }),
   Object.freeze({
+    kind: "payload" as const,
     id: "axes-grid",
     description: "axes with grid",
     payload: smoothCurvePayload,
@@ -199,9 +349,10 @@ export const SCENARIO_FIXTURES: readonly ScenarioFixture[] = Object.freeze([
     dpr: 2,
   }),
   Object.freeze({
+    kind: "payload" as const,
     id: "resonance-peak",
     description: "resonance peak",
-    // Domain clipped to roughly ±5 linewidths (fwhm=60) around the centre frequency (2048):
+    // Domain clipped to roughly +-5 linewidths (fwhm=60) around the centre frequency (2048):
     // the golden only needs to assert the apex survives decimation, not the full flat wings
     // either side of it, so there is no reason to render domain the golden never inspects.
     domain: { xMin: 1_748, xMax: 2_348, yMin: -0.05, yMax: 1.05 },
@@ -210,6 +361,7 @@ export const SCENARIO_FIXTURES: readonly ScenarioFixture[] = Object.freeze([
     dpr: 2,
   }),
   Object.freeze({
+    kind: "payload" as const,
     id: "noise-floor",
     description: "noise floor",
     payload: noiseFloorPayload,
@@ -218,6 +370,7 @@ export const SCENARIO_FIXTURES: readonly ScenarioFixture[] = Object.freeze([
     dpr: 2,
   }),
   Object.freeze({
+    kind: "payload" as const,
     id: "decimation-minmax",
     description: "decimation case",
     payload: decimationSpikePayload,
@@ -225,7 +378,31 @@ export const SCENARIO_FIXTURES: readonly ScenarioFixture[] = Object.freeze([
     viewport: STANDARD_VIEWPORT,
     dpr: 1,
   }),
+]);
+
+export const SVG_EXTENDED_SCENARIO_FIXTURES: readonly ScenarioFixture[] = Object.freeze([
   Object.freeze({
+    kind: "payload" as const,
+    id: "log-axis",
+    description: "log axis",
+    payload: logSweepPayload,
+    domain: { xMin: 0, xMax: 511, yMin: 1, yMax: 1000 },
+    viewport: STANDARD_VIEWPORT,
+    dpr: 2,
+    yAxes: Object.freeze([LOG_AXIS]),
+  }),
+  Object.freeze({
+    kind: "payload" as const,
+    id: "dual-axis",
+    description: "dual axis",
+    payload: dualAxisPayload,
+    domain: { xMin: 0, xMax: 511, yMin: 1, yMax: 1000 },
+    viewport: STANDARD_VIEWPORT,
+    dpr: 2,
+    yAxes: Object.freeze([LOG_AXIS, LINEAR_UNIT_AXIS]),
+  }),
+  Object.freeze({
+    kind: "payload" as const,
     id: "gapped-trace",
     description: "gapped trace",
     payload: gappedTracePayload,
@@ -233,4 +410,19 @@ export const SCENARIO_FIXTURES: readonly ScenarioFixture[] = Object.freeze([
     viewport: STANDARD_VIEWPORT,
     dpr: 2,
   }),
+  Object.freeze({
+    kind: "collection" as const,
+    id: "overlay-two-axis",
+    description: "overlay two-axis",
+    collection: overlayCollection,
+    domain: { xMin: 0, xMax: 299, yMin: -10, yMax: 10 },
+    viewport: STANDARD_VIEWPORT,
+    dpr: 2,
+    yAxes: OVERLAY_AXES,
+  }),
+]);
+
+export const SCENARIO_FIXTURES: readonly ScenarioFixture[] = Object.freeze([
+  ...PARITY_SCENARIO_FIXTURES,
+  ...SVG_EXTENDED_SCENARIO_FIXTURES,
 ]);

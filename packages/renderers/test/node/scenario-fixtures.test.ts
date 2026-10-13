@@ -5,8 +5,13 @@ import type {
   TraceCollection,
   ViewportTransform,
 } from "@trace-kit/core";
-import { createViewportTransform } from "@trace-kit/core";
-import { SCENARIO_FIXTURES, type ScenarioFixture } from "@trace-kit/renderers/fixtures";
+import { createViewportTransform, Y_SCALE_KIND_LINEAR, Y_SCALE_KIND_LOG } from "@trace-kit/core";
+import {
+  PARITY_SCENARIO_FIXTURES,
+  SCENARIO_FIXTURES,
+  SVG_EXTENDED_SCENARIO_FIXTURES,
+  type ScenarioFixture,
+} from "@trace-kit/renderers/fixtures";
 import type { FigureRenderer, FigureRendererKind } from "../../src/figure-renderer.js";
 import { Canvas2DRenderer } from "../../src/canvas2d/canvas2d-renderer.js";
 
@@ -77,19 +82,78 @@ class RecordingStandInRenderer implements FigureRenderer {
   }
 }
 
-const EXPECTED_DESCRIPTIONS = [
+const PARITY_DESCRIPTIONS = [
   "simple trace",
   "axes with grid",
   "resonance peak",
   "noise floor",
   "decimation case",
-  "gapped trace",
 ];
 
+const EXTENDED_IDS = ["log-axis", "dual-axis", "gapped-trace", "overlay-two-axis"];
+
+const EXPECTED_IDS = new Set([
+  "simple-trace",
+  "axes-grid",
+  "resonance-peak",
+  "noise-floor",
+  "decimation-minmax",
+  ...EXTENDED_IDS,
+]);
+
+/** Fixtures outside the nine agreed scenarios; the scope check fails naming them. */
+function unexpectedFixtures(fixtures: readonly ScenarioFixture[]): string[] {
+  return fixtures.filter((f) => !EXPECTED_IDS.has(f.id)).map((f) => f.id);
+}
+
+/** FNV-1a over the raw bytes of the first `count` samples. The expected values below were taken
+ * from the inline builders in the pixel suite before those were replaced by these fixtures, so a
+ * match proves the moved data is bit-identical to what the committed goldens were drawn from. */
+function checksum(values: Float32Array, count: number): string {
+  const bytes = new Uint8Array(values.buffer, values.byteOffset, count * 4);
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < bytes.length; i += 1) {
+    hash ^= bytes[i] ?? 0;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16);
+}
+
+function fixtureById(id: string): ScenarioFixture {
+  const found = SCENARIO_FIXTURES.find((f) => f.id === id);
+  if (found === undefined) throw new Error(`no fixture ${id}`);
+  return found;
+}
+
 describe("scenario fixtures", () => {
-  it("contains exactly six entries with the P4-agreed descriptions plus the gap-awareness addition", () => {
-    expect(SCENARIO_FIXTURES.length).toBe(6);
-    expect(SCENARIO_FIXTURES.map((f) => f.description)).toEqual(EXPECTED_DESCRIPTIONS);
+  it("partitions into a parity set of five and an SVG-extended set of four", () => {
+    expect(PARITY_SCENARIO_FIXTURES.length).toBe(5);
+    expect(PARITY_SCENARIO_FIXTURES.map((f) => f.description)).toEqual(PARITY_DESCRIPTIONS);
+    expect(SVG_EXTENDED_SCENARIO_FIXTURES.map((f) => f.id)).toEqual(EXTENDED_IDS);
+  });
+
+  it("SCENARIO_FIXTURES is the nine scenarios, parity first", () => {
+    expect(SCENARIO_FIXTURES.length).toBe(9);
+    expect(SCENARIO_FIXTURES.map((f) => f.id)).toEqual([
+      ...PARITY_SCENARIO_FIXTURES.map((f) => f.id),
+      ...SVG_EXTENDED_SCENARIO_FIXTURES.map((f) => f.id),
+    ]);
+  });
+
+  it("parity fixtures carry a payload; extended fixtures are a payload or a collection", () => {
+    for (const fixture of PARITY_SCENARIO_FIXTURES) expect(fixture.kind).toBe("payload");
+    expect(fixtureById("log-axis").kind).toBe("payload");
+    expect(fixtureById("dual-axis").kind).toBe("payload");
+    expect(fixtureById("gapped-trace").kind).toBe("payload");
+    expect(fixtureById("overlay-two-axis").kind).toBe("collection");
+  });
+
+  it("a tenth fixture fails the scope check, naming the extra", () => {
+    expect(unexpectedFixtures(SCENARIO_FIXTURES)).toEqual([]);
+    const first = SCENARIO_FIXTURES[0];
+    if (first === undefined) throw new Error("no fixtures");
+    const extra: ScenarioFixture = { ...first, id: "surprise" };
+    expect(unexpectedFixtures([...SCENARIO_FIXTURES, extra])).toEqual(["surprise"]);
   });
 
   it("no field on the fixture type names a renderer backend", () => {
@@ -121,6 +185,47 @@ describe("scenario fixtures", () => {
   it("every fixture id is unique", () => {
     const ids = SCENARIO_FIXTURES.map((f) => f.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("multi-axis fixtures declare each axis scale kind and each trace its axis binding", () => {
+    const dual = fixtureById("dual-axis");
+    expect(dual.yAxes?.map((a) => [a.id, a.scaleKind])).toEqual([
+      ["log", Y_SCALE_KIND_LOG],
+      ["linear", Y_SCALE_KIND_LINEAR],
+    ]);
+    const overlay = fixtureById("overlay-two-axis");
+    if (overlay.kind !== "collection") throw new Error("overlay must be a collection");
+    expect(overlay.yAxes?.map((a) => [a.id, a.scaleKind])).toEqual([
+      ["linear", Y_SCALE_KIND_LINEAR],
+      ["log", Y_SCALE_KIND_LOG],
+    ]);
+    expect(overlay.collection.entries.map((e) => e.yAxisId)).toEqual(["linear", "log"]);
+    expect(fixtureById("log-axis").yAxes?.map((a) => a.scaleKind)).toEqual([Y_SCALE_KIND_LOG]);
+  });
+
+  it("the moved builders reproduce the original sample data bit for bit", () => {
+    const log = fixtureById("log-axis");
+    const dual = fixtureById("dual-axis");
+    const overlay = fixtureById("overlay-two-axis");
+    if (log.kind !== "payload" || dual.kind !== "payload" || overlay.kind !== "collection") {
+      throw new Error("unexpected fixture kinds");
+    }
+    expect(checksum(log.payload.y, log.payload.sampleCount)).toBe("a75eda59");
+    expect(checksum(dual.payload.y, dual.payload.sampleCount)).toBe("ed54c5f0");
+    const [linear, logTrace] = overlay.collection.entries;
+    expect(checksum(linear?.payload.y ?? new Float32Array(0), 300)).toBe("5ada5d3");
+    expect(checksum(logTrace?.payload.y ?? new Float32Array(0), 300)).toBe("591ff560");
+    expect(linear?.payload.xOrigin).toBe(0);
+    expect(logTrace?.payload.xOrigin).toBe(1000);
+  });
+
+  it("keeps the original domains and the overlay collection window", () => {
+    expect(fixtureById("log-axis").domain).toEqual({ xMin: 0, xMax: 511, yMin: 1, yMax: 1000 });
+    expect(fixtureById("dual-axis").domain).toEqual({ xMin: 0, xMax: 511, yMin: 1, yMax: 1000 });
+    const overlay = fixtureById("overlay-two-axis");
+    if (overlay.kind !== "collection") throw new Error("overlay must be a collection");
+    expect(overlay.collection.xDomainMin).toBe(0);
+    expect(overlay.collection.xDomainMax).toBe(299);
   });
 });
 
@@ -176,6 +281,7 @@ describe("scenario fixture drives a real renderer", () => {
     (globalThis as Record<string, unknown>)["Path2D"] = class {
       moveTo(): void {}
       lineTo(): void {}
+      rect(): void {}
     };
   });
   afterEach(() => {
@@ -183,17 +289,23 @@ describe("scenario fixture drives a real renderer", () => {
   });
 
   it.each(SCENARIO_FIXTURES)(
-    "$description drives Canvas2DRenderer via setData/setDomain/resize with no field renamed or omitted",
+    "$description drives Canvas2DRenderer with no field renamed or omitted",
     (fixture: ScenarioFixture) => {
       const surface = makeFakeSurface();
-      const renderer = new Canvas2DRenderer({ surface });
-      renderer.setData(fixture.payload);
-      renderer.setDomain(
-        fixture.domain.xMin,
-        fixture.domain.xMax,
-        fixture.domain.yMin,
-        fixture.domain.yMax,
+      const renderer = new Canvas2DRenderer(
+        fixture.yAxes === undefined ? { surface } : { surface, yAxes: fixture.yAxes },
       );
+      if (fixture.kind === "payload") {
+        renderer.setData(fixture.payload);
+        renderer.setDomain(
+          fixture.domain.xMin,
+          fixture.domain.xMax,
+          fixture.domain.yMin,
+          fixture.domain.yMax,
+        );
+      } else {
+        renderer.setTraces(fixture.collection);
+      }
       renderer.resize(fixture.viewport.width, fixture.viewport.height, fixture.dpr);
       expect(() => renderer.render()).not.toThrow();
       renderer.dispose();
@@ -201,7 +313,7 @@ describe("scenario fixture drives a real renderer", () => {
   );
 
   it("the same fixture record drives a real Canvas2D renderer and a stand-in second-backend renderer, with no field renamed or omitted", () => {
-    const fixture = SCENARIO_FIXTURES[0];
+    const fixture = PARITY_SCENARIO_FIXTURES[0];
     if (fixture === undefined) throw new Error("no fixtures");
 
     const canvas2d = new Canvas2DRenderer({ surface: makeFakeSurface() });

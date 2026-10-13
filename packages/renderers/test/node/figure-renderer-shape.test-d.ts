@@ -39,3 +39,12 @@ void MissingSetDecimation;
 
 declare function acceptsSelection(value: DecimationSelection | undefined): void;
 void acceptsSelection;
+
+// Both real backends satisfy `FigureRenderer` with no WebGL2-specific type on the interface.
+import type { Canvas2DRenderer } from "../../src/canvas2d/canvas2d-renderer.js";
+import type { WebGL2FigureRenderer } from "../../src/webgl2/webgl2-figure-renderer.js";
+
+declare const canvas2d: Canvas2DRenderer;
+declare const webgl2: WebGL2FigureRenderer;
+export const canvas2dIsAFigureRenderer: FigureRenderer = canvas2d;
+export const webgl2IsAFigureRenderer: FigureRenderer = webgl2;

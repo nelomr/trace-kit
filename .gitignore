@@ -51,6 +51,7 @@ coverage/
 
 # Benchmark results (machine/run-specific; design.md §D6 output, not a committed asset)
 bench-results.json
+packages/renderers/bench/*-results.json
 
 # Visual regression diff images — generated per CI run when a golden mismatches; the committed
 # corpus is only the reference PNGs in __screenshots__/ itself, never the diffs beside them.

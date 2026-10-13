@@ -41,3 +41,9 @@ does. The audit cannot silently go stale in either direction.
 | `src/viewport/ticks.ts` | Yes | Exports the `selectTicks`/`selectLogTicks` functions only; the module-level `NICE_STEPS` array is a frozen-by-convention constant read, never mutated. No code runs at module-evaluation time beyond that literal's construction. |
 | `src/viewport/axes.ts` | Yes | Exports the `YAxisRegistration`/`SharedViewportOptions` types, the `AXIS_SIDE_LEFT` constant, and the `createAxisTransforms` function only. No code runs at module-evaluation time. |
 | `src/viewport/index.ts` | Yes | Internal re-export barrel for the viewport module only. No code runs at module-evaluation time. |
+| `src/viewport/window.ts` | Yes | Exports the `SampleSpan`/`SampleWindowOptions` types and the `createSampleSpan`/`resolveSampleWindow` functions only. No code runs at module-evaluation time. |
+| `src/export/number-format.ts` | Yes | Exports the internal `formatExportNumber` function only (not part of the root entry). No code runs at module-evaluation time. |
+| `src/export/csv.ts` | Yes | Exports the `CsvTraceSource`/`CsvExportOptions` types, the `CSV_DEFAULT_ROWS_PER_CHUNK` constant and the `exportCsv` function; the module-level `NEEDS_QUOTING` regular expression has no `g`/`y` flag and so carries no state. No code runs at module-evaluation time beyond that literal. |
+| `src/export/binary-export.ts` | Yes | Exports the `BinaryArrayExport` type only; it emits no runtime code. |
+| `src/export/npy.ts` | Yes | Exports the `NpyArrayKind`/`NpyExportOptions` types, the `NPY_DEFAULT_CHUNK_BYTES` constant and the `exportNpy`/`buildNpyHeader` functions; the scratch buffer is allocated per export inside the generator, never at module level. No code runs at module-evaluation time. |
+| `src/export/index.ts` | Yes | Internal re-export barrel for the export module only. No code runs at module-evaluation time. |

@@ -26,28 +26,31 @@
 >   contrapresión), y la capa de transformación de viewport: proyección de eje Y lineal y
 >   logarítmica (base 10), soporte de viewport multi-eje (N ejes Y independientes apilados a la
 >   izquierda compartiendo un dominio X), y selección de ticks para ambas escalas.
-> - `packages/renderers` — **únicamente un renderizador Canvas2D** (`Canvas2DRenderer`, batching
->   con Path2D, gutters con soporte multi-eje, líneas de rejilla por década para ejes
->   logarítmicos) más el contrato headless `FigureRenderer`. **Todavía no existe ningún
->   renderizador WebGL2.**
-> - `apps/playground` — una app Vite en funcionamiento, con una ruta de inicio y una ruta
->   `core-math` que visualiza los algoritmos de decimación.
+> - `packages/renderers` — un renderizador Canvas2D (`Canvas2DRenderer`, batching con Path2D,
+>   gutters con soporte multi-eje, líneas de rejilla por década para ejes logarítmicos), un
+>   **renderizador WebGL2** (`WebGL2FigureRenderer`, subruta `@trace-kit/renderers/webgl2`, líneas
+>   instanciadas a resolución completa sobre tres canvas apilados) y el contrato headless
+>   `FigureRenderer`. **Todavía no existe la conmutación automática entre ambos motores.**
+> - `apps/playground` — una app Vite en funcionamiento, con una ruta de inicio, una ruta
+>   `core-math` que visualiza los algoritmos de decimación y una ruta `/engine-parity` que dibuja
+>   un mismo fixture en Canvas2D y WebGL2 en paralelo.
 > - El workspace de pnpm + Turborepo, cientos de tests unitarios/de integración con Vitest en
 >   verde, una suite de regresión visual basada en Chromium (exclusiva de CI en Linux por
 >   diseño), comprobaciones de asignación cero en Node, y una puerta de calidad de CI
 >   (comprobación de tipos, lint, tests unitarios, regresión visual, comprobación de
 >   dependencias obsoletas) que se ejecuta y pasa en `main`.
 >
-> **Lo que todavía no existe:** `packages/vue`, `packages/react`, `apps/docs`, y ningún
-> renderizador WebGL2. Todos los paquetes siguen sin publicar (`0.0.0`, privados). Los ejemplos
+> **Lo que todavía no existe:** `packages/vue`, `packages/react`, `apps/docs`, y la
+> conmutación automática de motor. Todos los paquetes siguen sin publicar (`0.0.0`, privados). Los ejemplos
 > de Vue/React del inicio rápido de abajo describen una API que todavía no existe; los comandos
 > de instalación no funcionan.
 >
 > El desarrollo sigue Spec-Driven Development; el progreso se registra en
 > [`openspec/roadmap.yaml`](openspec/roadmap.yaml). A fecha de esta revisión, los pasos 1 a
-> **5.7** del roadmap (`core-gap-and-multi-trace-model` — semántica de huecos/NaN en la
-> decimación y soporte de payload multi-traza) están archivados y completos. El siguiente paso
-> previsto es **6** (`svg-vector-export`), todavía no iniciado.
+> **7** del roadmap (`renderers-webgl2` — renderizador WebGL2 sobre canvas apilados) están
+> archivados y completos. Los siguientes pasos previstos son **7.5** (`x-domain-space-reconciliation`),
+> **7.6** (`canvas2d-parity-fixes`) y después **8** (`worker-streaming-transport`), todavía no
+> iniciados.
 
 ---
 
@@ -60,13 +63,14 @@ Construido sobre una arquitectura desacoplada, **TraceKit** aísla la decimació
 ### Pilares clave de rendimiento
 
 * **Ingestión sin copia con propiedad explícita:** Web Workers dedicados ejecutan la decimación sobre `ArrayBuffer` transferidos, eliminando el coste de serialización. Como una transferencia *desvincula* (detach) el buffer en el emisor, el transporte es un round-trip agrupado con un único propietario en cada instante y contrapresión que descarta en lugar de asignar. El hilo principal conserva siempre una copia autoritativa, que es lo que hace posible la restauración del contexto WebGL.
-* **Estrategia de motor dual híbrido `[PARCIAL]`:** El diseño prevé una conmutación estabilizada por histéresis entre un **renderizador Canvas 2D por lotes** y un **pipeline WebGL2** de alta densidad con Vertex Buffer Objects duales para evitar la intercalación en CPU, con un umbral de conmutación evaluado sobre el conteo de puntos *decimado* y un tiempo mínimo de permanencia para evitar oscilaciones. **Hoy solo existe el renderizador Canvas2D; WebGL2 todavía no está implementado**, por lo que actualmente hay un único motor, no un sistema híbrido.
+* **Estrategia de motor dual híbrido `[PARCIAL]`:** El diseño prevé una conmutación estabilizada por histéresis entre un **renderizador Canvas 2D por lotes** y un **pipeline WebGL2** de alta densidad con Vertex Buffer Objects duales para evitar la intercalación en CPU, con un umbral de conmutación evaluado sobre el conteo de puntos *decimado* y un tiempo mínimo de permanencia para evitar oscilaciones. **Hoy existen ambos renderizadores, pero no la conmutación automática**: el llamante elige el motor, por lo que todavía no hay un sistema híbrido.
 * **Decimación que preserva la física:** Combina **LTTB** estándar (fidelidad perceptual de la traza) con algoritmos de **envolvente Min-Max** para evitar la supresión de caídas de resonancia sub-picométricas, pérdidas de inserción y pisos de ruido de alta frecuencia. Implementado y con benchmarks en `@trace-kit/core`.
 * **Viewport logarítmico y multi-eje:** La capa de proyección de `@trace-kit/core` soporta transformaciones de eje Y logarítmicas en base 10 (con selección de ticks por década/mantisa) junto con la transformación lineal, y viewports multi-eje con N ejes Y independientes apilados a la izquierda que comparten un dominio X — base directa para instrumentación en escala dBm y comparación multi-traza.
 * **Arnés de regresión visual:** Una suite de regresión visual basada en Chromium (`packages/renderers/test/visual/`) compara la salida renderizada de Canvas2D contra capturas de pantalla de referencia (goldens) versionadas. Los goldens se generan y comparan exclusivamente en `ubuntu-latest` en CI (una comprobación de plataforma impide que las ejecuciones locales se traten como autoritativas), y solo pueden regenerarse mediante un workflow separado, disparado manualmente — una ejecución de tests ordinaria nunca puede sobrescribir un golden en silencio.
 * **Motor de mapa de obleas semiconductoras:** Pipeline de renderizado instanciado (`gl.drawArraysInstanced`) para inspección multi-die con objetivo de 60.000 dies activos, y hit-testing analítico en $O(1)$ para retícula uniforme que degrada a $O(\log n)$ mediante tablas de pitch acumulado cuando los anchos de street no son uniformes. Las obleas circulares y los dies parciales de borde se mantienen en $O(1)$ mediante una rejilla densa de ocupación.
 * **Telemetría sincronizada entre gráficos:** Bus desacoplado `BroadcastChannel` / `EventTarget` sincronizando múltiples canales de telemetría (p. ej., potencia óptica, temperatura, corrientes de bias) a través de canvas aislados con transformaciones CSS de cruceta aceleradas por GPU.
 * **Reportes vectoriales sin pérdida:** Generador matemático independiente que exporta vistas sub-muestreadas a paths SVG limpios, con calidad de publicación, sin artefactos de rasterización del canvas.
+* **Exportación de datos crudos de la ventana visible:** `@trace-kit/core` resuelve una ventana de X a un rango de índices sobre las muestras autoritativas (`resolveSampleWindow`, sin asignaciones, búsqueda binaria) y la emite a resolución completa, nunca diezmada: un generador CSV perezoso en formato tidy (`exportCsv`, X absoluta en f64, huecos como `NaN`, ids según RFC 4180) y un escritor NumPy `.npy` v1.0 (`exportNpy`, little-endian, un único buffer temporal reutilizado). Implementado, con un control de descarga en la vista `/svg-export` del playground.
 
 ---
 
@@ -79,9 +83,9 @@ trace-kit/
 ├── packages/
 │   ├── core/           # [IMPLEMENTADO] TS isomórfico. Decimación (LTTB, Min-Max), contrato
 │   │                   #   de transporte, transformación de viewport (lineal + logarítmica,
-│   │                   #   multi-eje)
-│   ├── renderers/      # [IMPLEMENTADO, solo Canvas2D] Batching con Path2D, gutters
-│   │                   #   multi-eje. Todavía sin WebGL2.
+│   │                   #   multi-eje), resolución de ventana, exportación CSV / .npy
+│   ├── renderers/      # [IMPLEMENTADO] Canvas2D (batching con Path2D, gutters multi-eje) y
+│   │                   #   WebGL2 (`./webgl2`). Todavía sin conmutación automática.
 │   ├── vue/            # [PREVISTO] Vue 3: shallowRef/markRaw, composable useSpectrumEngine
 │   └── react/          # [PREVISTO] React: hooks de canvas, SSR-safe en Next.js
 ├── apps/
@@ -95,9 +99,9 @@ trace-kit/
 
 ### Pipeline gráfico desacoplado
 
-> El diagrama siguiente muestra el pipeline completo previsto. Hoy solo está implementada la
-> rama `Canvas2DRenderer`; `WebGL2Renderer`, `@trace-kit/vue` y `@trace-kit/react` están
-> `[PREVISTO]`.
+> El diagrama siguiente muestra el pipeline completo previsto. Hoy existen ambas ramas de
+> renderizador (`Canvas2DRenderer`, `WebGL2FigureRenderer`) pero la conmutación automática está
+> `[PREVISTA]`, igual que `@trace-kit/vue` y `@trace-kit/react`.
 
 ```text
 [ Fuente de datos / Stream ]
@@ -229,8 +233,7 @@ export const OpticalBenchMonitor: React.FC = () => {
 La matemática de decimación y de viewport en `@trace-kit/core`, y el `Canvas2DRenderer` de
 `@trace-kit/renderers`, son reales e implementados hoy; este ejemplo se acerca más a la
 superficie de API real que los ejemplos de Vue/React anteriores, aunque los nombres y firmas
-pueden cambiar antes de una publicación. `WebGL2Renderer` todavía no existe — Canvas2D es el
-único renderizador disponible:
+pueden cambiar antes de una publicación. El renderizador WebGL2 se muestra en su propia sección más abajo:
 
 ```ts
 import { minMaxEnvelope } from '@trace-kit/core';
@@ -239,7 +242,7 @@ import { Canvas2DRenderer } from '@trace-kit/renderers';
 // Decimación del lado del servidor (100% isomórfico, compatible con Node.js)
 const { reducedX, reducedY } = minMaxEnvelope(rawX, rawY, { targetPoints: 2000 });
 
-// Montaje directo del renderizador en el cliente (solo Canvas2D — WebGL2 está [PREVISTO])
+// Montaje directo del renderizador en el cliente (Canvas2D)
 const canvas = document.getElementById('plot') as HTMLCanvasElement;
 const renderer = new Canvas2DRenderer();
 renderer.initialize(canvas);
@@ -253,6 +256,35 @@ renderer.setTransform({
 });
 renderer.render();
 ```
+
+#### Renderizador WebGL2 (`@trace-kit/renderers/webgl2`)
+
+`WebGL2FigureRenderer` dibuja todas las muestras en la GPU. Se construye a partir de **tres canvas
+que creas y apilas tú** en una misma caja CSS (underlay debajo, plot, overlay encima); no crea DOM
+por sí mismo:
+
+```ts
+import { WebGL2FigureRenderer } from '@trace-kit/renderers/webgl2';
+
+// Misma caja CSS, position: absolute, en este orden: underlay, plot, overlay.
+const renderer = new WebGL2FigureRenderer({ surfaces: { underlay, plot, overlay } });
+renderer.setData(payload);
+renderer.resize(800, 400, window.devicePixelRatio);
+renderer.render();
+```
+
+* **La decimación por defecto difiere según el motor.** Sin selección, Canvas2D decima con LTTB a
+  unos `2 × ancho del plot` vértices y WebGL2 dibuja el payload completo; `setDecimation(undefined)`
+  restaura el valor por defecto de cada backend. Una selección explícita ejecuta los mismos
+  decimadores de core en ambos.
+* **El canvas del plot es de un solo uso:** un canvas que ya produjo un contexto `2d` nunca podrá dar
+  `webgl2`, y uno liberado ha perdido su contexto. Crea canvas nuevos para cambiar de motor o remontar.
+* **Divergencias registradas respecto a Canvas2D:** el estilo `dash` de una traza se ignora (la línea
+  es continua), las trazas se recortan al rectángulo del plot (Canvas2D no recorta) y una muestra Y de
+  `±Infinity` llega al borde del plot mediante una banda de guarda, mientras que Canvas2D puentea la
+  muestra.
+* La ruta `/engine-parity` del playground dibuja cualquier fixture compartido en ambos motores en
+  paralelo, con el conteo de vértices de cada uno.
 
 ---
 

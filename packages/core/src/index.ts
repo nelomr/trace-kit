@@ -83,6 +83,8 @@ export type {
   CreateViewportTransformOptions,
   YAxisRegistration,
   SharedViewportOptions,
+  SampleSpan,
+  SampleWindowOptions,
 } from './viewport/index.js';
 export {
   createViewportTransform,
@@ -98,6 +100,8 @@ export {
   Y_SCALE_KIND_LOG,
   AXIS_SIDE_LEFT,
   createAxisTransforms,
+  createSampleSpan,
+  resolveSampleWindow,
 } from './viewport/index.js';
 
 export type {
@@ -132,3 +136,17 @@ export {
   MAX_BUCKETS,
   BUCKET_OVERSAMPLE_DEFAULT,
 } from './transport/index.js';
+
+export type {
+  CsvTraceSource,
+  CsvExportOptions,
+  BinaryArrayExport,
+  NpyArrayKind,
+  NpyExportOptions,
+} from './export/index.js';
+export {
+  exportCsv,
+  CSV_DEFAULT_ROWS_PER_CHUNK,
+  exportNpy,
+  NPY_DEFAULT_CHUNK_BYTES,
+} from './export/index.js';

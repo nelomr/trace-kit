@@ -31,11 +31,11 @@ describe("route registry", () => {
 });
 
 describe("the real view registration", () => {
-  it("resolves exactly /home and /core-math once views/index.ts is imported, and nothing else it didn't already have", async () => {
+  it("resolves exactly /home, /core-math, /svg-export and /engine-parity once views/index.ts is imported, and nothing else it didn't already have", async () => {
     const before = registeredViews().map((view) => view.path);
     await import("../../src/views/index.js");
     const after = registeredViews().map((view) => view.path);
     const added = after.filter((path) => !before.includes(path));
-    expect(added.sort()).toEqual(["/core-math", "/home"]);
+    expect(added.sort()).toEqual(["/core-math", "/engine-parity", "/home", "/svg-export"]);
   });
 });

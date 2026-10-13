@@ -1,0 +1,33 @@
+{
+  "numpy": "1.26.4",
+  "files": {
+    "x-f8.npy": {
+      "dtype": "float64",
+      "descr": "<f8",
+      "shape": [
+        5
+      ],
+      "values": [
+        1550.0,
+        1550.25,
+        1550.5,
+        1550.75,
+        1551.0
+      ]
+    },
+    "y-f4.npy": {
+      "dtype": "float32",
+      "descr": "<f4",
+      "shape": [
+        5
+      ],
+      "values": [
+        1.5,
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "-0"
+      ]
+    }
+  }
+}

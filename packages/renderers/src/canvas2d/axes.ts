@@ -1,98 +1,16 @@
 /**
- * Axes and grid for `Canvas2DRenderer`. Owns the plot-area insets — computed as
- * a pure function of style/layout configuration only, never of data, so it is safe to run on
- * every `resize()`/`setDomain()` — and the paint routines `drawGrid`/`drawAxes`, wired into
- * `render()` in the fixed order background fill → `drawGrid` → trace stroke → `drawAxes`.
- *
- * Tick *values* come from `@trace-kit/core`'s `selectTicks` (never reimplemented here); tick
- * *labels* are formatted here, in a preallocated `string[MAX_TICKS]`, because formatting is
- * presentation (locale, unit suffix) and because a string is an allocation that must not run per
- * frame — the caller gates re-formatting on a `tickRevision` bump.
+ * Paint routines for the axes and grid of `Canvas2DRenderer`, wired into `render()` in the fixed
+ * order background fill -> `drawGrid` -> trace stroke -> `drawAxes`. Everything that is computed
+ * rather than painted (plot-area insets, tick values, label strings) lives in `../layout/` and is
+ * shared with the SVG exporter; the symbols below are re-exported only so existing imports keep
+ * resolving.
  */
-import {
-  projectX,
-  projectY,
-  selectLogTicks,
-  selectTicks,
-  Y_SCALE_KIND_LOG,
-  type ViewportTransform,
-} from "@trace-kit/core";
+import { projectX, projectY, type ViewportTransform } from "@trace-kit/core";
 import type { AxisLayout, FigureStyle } from "../style.js";
 import type { TraceDrawingContext } from "../surface.js";
 
-/** 32 ticks per axis is far beyond any legible axis. */
-export const MAX_TICKS = 32;
-
-export interface AxisInsets {
-  readonly insetLeft: number;
-  readonly insetRight: number;
-  readonly insetTop: number;
-  readonly insetBottom: number;
-}
-
-const FONT_SIZE_PATTERN = /(\d+(?:\.\d+)?)px/;
-
-/** Extracts the leading `<n>px` size from a CSS font shorthand; falls back to 10 CSS px. */
-function extractFontSizeCss(font: string): number {
-  const match = FONT_SIZE_PATTERN.exec(font);
-  if (match === null) return 10;
-  const size = Number.parseFloat(match[1] ?? "10");
-  return Number.isFinite(size) && size > 0 ? size : 10;
-}
-
-/**
- * Pure function of `style`/`axes` configuration only (font size, tick length, label gutter,
- * per-axis visibility, and the number of registered left Y axes) — never of data. Invoked from
- * `resize`/`setDomain`, feeding `createAxisTransforms`'s shared inset option. `insetLeft` grows
- * linearly with `yAxisCount` because each left-stacked axis reserves its own tick+label gutter;
- * `insetLeft` stays a single already-summed number so every one of the N `ViewportTransform`
- * instances built from it shares byte-identical plot geometry (see `createAxisTransforms`) —
- * per-axis gutter *width* lives only here, never in `@trace-kit/core`.
- */
-export function computeAxisInsets(
-  style: FigureStyle,
-  axes: AxisLayout,
-  yAxisCount: number,
-): AxisInsets {
-  const fontSizeCss = extractFontSizeCss(style.font);
-  const insetBottom = axes.showBottomAxis
-    ? axes.tickLength + axes.labelGutter + fontSizeCss
-    : 0;
-  const perAxisGutter = axes.tickLength + axes.labelGutter + fontSizeCss;
-  const insetLeft = axes.showLeftAxis ? yAxisCount * perAxisGutter : 0;
-  return {
-    insetLeft,
-    insetRight: 0,
-    insetTop: 0,
-    insetBottom,
-  };
-}
-
-/**
- * Formats one tick value for display. Presentation-only, deliberately outside `@trace-kit/core`
- * (locale and unit-suffix formatting is a presentation concern, not a data one); the caller
- * formats once per `tickRevision`, never once per `render()`.
- */
-export function formatTickLabel(value: number, unit: string): string {
-  const rounded = Math.round(value * 1000) / 1000;
-  return unit.length > 0 ? `${rounded} ${unit}` : `${rounded}`;
-}
-
-/**
- * Selects Y tick values for one axis's transform, dispatching to `@trace-kit/core`'s
- * `selectLogTicks` for a `Y_SCALE_KIND_LOG` transform and `selectTicks` otherwise — never a
- * renderer-local reimplementation of either algorithm.
- */
-export function selectYTicks(
-  t: ViewportTransform,
-  targetCount: number,
-  out: Float64Array,
-  outputOffset: number,
-): number {
-  return t.yScaleKind === Y_SCALE_KIND_LOG
-    ? selectLogTicks(t.yDomainMin, t.yDomainMax, targetCount, out, outputOffset)
-    : selectTicks(t.yDomainMin, t.yDomainMax, targetCount, out, outputOffset);
-}
+export { computeAxisInsets, MAX_TICKS, selectYTicks, type AxisInsets } from "../layout/figure-layout.js";
+export { formatTickLabel } from "../layout/tick-label.js";
 
 /** Paints one vertical gridline per x-tick, projected through the (X-shared) transform. */
 export function drawXGridlines(
@@ -115,7 +33,7 @@ export function drawXGridlines(
 
 /**
  * Paints one horizontal gridline per y-tick for one axis's transform. For a log-kind transform
- * the tick values passed in are already `selectLogTicks`'s decade output — this function itself
+ * the tick values passed in are already the decade output of core's log tick selector — this function itself
  * has no scale-kind branch, projecting every tick the same way via `projectY`.
  */
 export function drawYGridlines(
@@ -164,6 +82,7 @@ export function drawBottomAxis(
 ): void {
   if (!axes.showBottomAxis) return;
   context.strokeStyle = style.axisColor;
+  context.lineWidth = axes.axisLineWidthCss * t.dpr;
   context.font = style.font;
   context.textAlign = "center";
   context.textBaseline = "top";
@@ -188,9 +107,9 @@ export function drawBottomAxis(
 
 /**
  * Paints one left (Y) axis's line, tick marks and labels for one axis's transform. `columnOffset`
- * (device pixels) shifts an outer-stacked axis's label column further left of the plot area —
- * `0` for the innermost (nearest the plot) axis, matching the archived single-axis position
- * exactly when only one axis is registered.
+ * (device pixels) shifts an outer-stacked axis's column further left of the plot area — `0` for
+ * the innermost (nearest the plot) axis, matching the single-axis position exactly when only one
+ * axis is registered.
  */
 export function drawLeftAxis(
   context: TraceDrawingContext,
@@ -204,6 +123,7 @@ export function drawLeftAxis(
 ): void {
   if (!axes.showLeftAxis) return;
   context.strokeStyle = style.axisColor;
+  context.lineWidth = axes.axisLineWidthCss * t.dpr;
   context.font = style.font;
 
   const axisX = t.plotLeft - columnOffset;

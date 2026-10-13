@@ -10,13 +10,9 @@
 import {
   AXIS_SIDE_LEFT,
   allocateIndexBuffer,
-  createAxisTransforms,
-  createViewportTransform,
   lttb,
   minMaxEnvelopeIndices,
-  resolveDecimationParameter,
   resolveTraceAxisIndices,
-  selectTicks,
   Y_SCALE_KIND_LINEAR,
   type DecimationAlgorithm,
   type DecimationSelection,
@@ -28,25 +24,29 @@ import {
 } from "@trace-kit/core";
 import type { FigureRenderer, FigureRendererKind } from "../figure-renderer.js";
 import { buildTracePath } from "../path/build-trace-path.js";
-import { buildIsolatedMarkers, countIsolatedSegments } from "../path/isolated-markers.js";
+import {
+  buildIsolatedMarkers,
+  countIsolatedSegments,
+  isolatedMarkerHalfSide,
+} from "../path/isolated-markers.js";
+import {
+  createFigureLayout,
+  scaleFontSize,
+  refreshFigureTicks,
+  updateFigureGeometry,
+  type FigureLayout,
+} from "../layout/figure-layout.js";
+import { buildTraceTransforms } from "../layout/trace-transforms.js";
+import { decimateTraceIndices, resolveDecimationTarget } from "../rules/decimation.js";
+import { resolveTraceStyle } from "../rules/trace-style.js";
 import { acquire2dContext, type Canvas2DSurface, type TraceDrawingContext } from "../surface.js";
 import {
   DEFAULT_AXIS_LAYOUT,
   DEFAULT_FIGURE_STYLE,
-  TRACE_PALETTE,
   type AxisLayout,
   type FigureStyle,
 } from "../style.js";
-import {
-  computeAxisInsets,
-  drawBottomAxis,
-  drawLeftAxis,
-  drawXGridlines,
-  drawYGridlines,
-  formatTickLabel,
-  selectYTicks,
-  MAX_TICKS,
-} from "./axes.js";
+import { drawBottomAxis, drawLeftAxis, drawXGridlines, drawYGridlines } from "./axes.js";
 
 /** Pre-decimate to at most twice the plot-area width — enough oversampling to keep sub-pixel
  * detail visible without rendering more points than the display can resolve. */
@@ -61,8 +61,9 @@ export interface Canvas2DRendererOptions {
   readonly surface: Canvas2DSurface;
   readonly style?: Partial<FigureStyle>;
   readonly axes?: Partial<AxisLayout>;
-  /** Initial decimation selection. `undefined` (the default) is LTTB at the viewport-derived
-   * threshold — today's behavior, unchanged. */
+  /** Initial decimation selection. `undefined` (the default) is this backend's default: LTTB at
+   * the viewport-derived threshold, `min(sampleCount, max(2, ceil(2 * plotWidth)))` vertices.
+   * Other backends define their own default; a caller that selects nothing gets the backend's. */
   readonly decimation?: DecimationSelection;
   /**
    * Explicit left-stacked Y axis registrations. `undefined` (the default) keeps today's
@@ -83,6 +84,9 @@ export class Canvas2DRenderer implements FigureRenderer {
   #surface: Canvas2DSurface | null;
   #context: TraceDrawingContext | null;
   #style: FigureStyle;
+  /** `#style` with the label font scaled to device pixels; rebuilt only when the dpr changes, so
+   * `render()` hands the axis painters a ready object and allocates nothing. */
+  #deviceStyle: FigureStyle;
   #axes: AxisLayout;
 
   #payload: SpectrumDataPayload | null = null;
@@ -103,14 +107,18 @@ export class Canvas2DRenderer implements FigureRenderer {
   readonly #yAxisRegistrations: readonly YAxisRegistration[] | null;
   readonly #yAxisCount: number;
 
-  /** `#transforms[0]` mirrors `#primaryTransform` — the default single-axis case never observes
-   * an array. Kept as a dedicated field (rather than an indexed read) so the public `transform`
-   * getter never has to unwrap a `noUncheckedIndexedAccess` optional. */
-  #transforms: ViewportTransform[] = [];
+  /** One layout record for the renderer's lifetime: insets, per-axis transforms, tick buffers,
+   * labels and column offsets, shared with the SVG exporter's layout module. */
+  readonly #layout: FigureLayout;
+  /** `#layout.transforms[0]`, held as a dedicated field so the public `transform` getter never
+   * has to unwrap a `noUncheckedIndexedAccess` optional. */
   #primaryTransform: ViewportTransform;
 
   #indices: IndexBuffer = allocateIndexBuffer(2);
   #decimatedCount = 0;
+  /** Isolated segments in the current single-payload decimation result; refreshed only when the
+   * memo recomputes, so `render()` never walks the samples to rediscover it. */
+  #isolatedCount = 0;
   #decimation: DecimationSelection;
   #memoRevision = -1;
   #memoAlgorithm: DecimationAlgorithm | null = null;
@@ -147,25 +155,6 @@ export class Canvas2DRenderer implements FigureRenderer {
   #traceMemoYMin: Float64Array = new Float64Array(0);
   #traceMemoYMax: Float64Array = new Float64Array(0);
 
-  readonly #xTicks: Float64Array = new Float64Array(MAX_TICKS);
-  #xTickCount = 0;
-  readonly #xLabels: string[] = new Array<string>(MAX_TICKS).fill("");
-
-  /** One fixed-capacity `Float64Array`/label array per registered Y axis, allocated once at
-   * construction — never reallocated per `render()` call per axis. */
-  readonly #yTicksPerAxis: Float64Array[];
-  readonly #yTickCountPerAxis: number[];
-  readonly #yLabelsPerAxis: string[][];
-
-  /** Bumped only when tick values or axis units change. */
-  #tickRevision = -1;
-  #tickXMin = NaN;
-  #tickXMax = NaN;
-  #tickXUnit = "";
-  readonly #tickYMinPerAxis: number[];
-  readonly #tickYMaxPerAxis: number[];
-  #tickYUnit = "";
-
   constructor(options: Canvas2DRendererOptions) {
     this.#surface = options.surface;
     this.#context = acquire2dContext(options.surface);
@@ -175,16 +164,10 @@ export class Canvas2DRenderer implements FigureRenderer {
     this.#yAxisRegistrations = options.yAxes ?? null;
     this.#yAxisCount = this.#yAxisRegistrations?.length ?? 1;
 
-    this.#yTicksPerAxis = Array.from({ length: this.#yAxisCount }, () => new Float64Array(MAX_TICKS));
-    this.#yTickCountPerAxis = new Array<number>(this.#yAxisCount).fill(0);
-    this.#yLabelsPerAxis = Array.from({ length: this.#yAxisCount }, () =>
-      new Array<string>(MAX_TICKS).fill(""),
-    );
-    this.#tickYMinPerAxis = new Array<number>(this.#yAxisCount).fill(NaN);
-    this.#tickYMaxPerAxis = new Array<number>(this.#yAxisCount).fill(NaN);
-
-    this.#transforms = this.#computeTransforms();
-    const first = this.#transforms[0];
+    this.#deviceStyle = this.#style;
+    this.#layout = createFigureLayout(this.#yAxisCount);
+    this.#updateGeometry();
+    const first = this.#layout.transforms[0];
     if (first === undefined) {
       throw new Error("createAxisTransforms produced zero transforms for a non-empty axis list.");
     }
@@ -242,16 +225,21 @@ export class Canvas2DRenderer implements FigureRenderer {
       this.#traceIds[i] = entry.id;
       this.#tracePayloads[i] = entry.payload;
       this.#traceIndices[i] = allocateIndexBuffer(2);
-      this.#traceStroke[i] = entry.style.color ?? (TRACE_PALETTE[i % TRACE_PALETTE.length] ?? "#3fb6ff");
-      this.#traceLineWidthCss[i] = entry.style.lineWidthCss ?? this.#style.lineWidthCss;
-      const dash = entry.style.dash;
+      const resolved = resolveTraceStyle(entry.style, i, this.#style);
+      this.#traceStroke[i] = resolved.color;
+      this.#traceLineWidthCss[i] = resolved.lineWidthCss;
       this.#traceDashDevice[i] =
-        dash === undefined || dash.length === 0 ? EMPTY_DASH : dash.map((v) => v * this.#dpr);
-      this.#traceMarkIsolated[i] = entry.style.markIsolatedSamples ?? true;
+        resolved.dashCss.length === 0 ? EMPTY_DASH : resolved.dashCss.map((v) => v * this.#dpr);
+      this.#traceMarkIsolated[i] = resolved.markIsolatedSamples;
     }
 
     this.#xDomainMin = collection.xDomainMin;
     this.#xDomainMax = collection.xDomainMax;
+    // Tick selection follows the collection's X domain immediately, while the transforms only
+    // follow it on the next `resize`/`setDomain`: ticks are keyed on the domain the caller last
+    // supplied, not on the projection built from an earlier one.
+    this.#layout.xDomainMin = collection.xDomainMin;
+    this.#layout.xDomainMax = collection.xDomainMax;
 
     this.#recomputeTraceTransforms();
     this.#ensureTraceIndexCapacities();
@@ -290,8 +278,8 @@ export class Canvas2DRenderer implements FigureRenderer {
   }
 
   #recomputeTransforms(): void {
-    this.#transforms = this.#computeTransforms();
-    const first = this.#transforms[0];
+    this.#updateGeometry();
+    const first = this.#layout.transforms[0];
     if (first !== undefined) {
       this.#primaryTransform = first;
     }
@@ -307,22 +295,26 @@ export class Canvas2DRenderer implements FigureRenderer {
     context.fillStyle = this.#style.backgroundColor;
     context.fillRect(0, 0, t.deviceWidth, t.deviceHeight);
 
-    this.#recomputeTicksIfStale();
+    const layout = this.#layout;
+    // The dash pattern is context state that outlives a frame: the previous frame's last trace
+    // would otherwise dash this frame's gridlines. Only collection renders ever set a dash.
+    if (this.#traceCollection !== null) context.setLineDash(EMPTY_DASH);
+    refreshFigureTicks(layout, this.#payload?.xUnit ?? "", this.#payload?.yUnit ?? "");
 
     // X gridlines are shared across every axis (one X domain) — painted once, against the
     // primary transform, whose plotLeft/plotWidth/xScale are byte-identical to every other
     // registered axis's transform (the `multi-axis-viewport` shared-plot-geometry invariant).
-    drawXGridlines(context, t, this.#style, this.#xTicks, this.#xTickCount);
-    for (let axisIndex = 0; axisIndex < this.#transforms.length; axisIndex += 1) {
-      const axisTransform = this.#transforms[axisIndex];
-      const yTicks = this.#yTicksPerAxis[axisIndex];
+    drawXGridlines(context, t, this.#style, layout.xTicks, layout.xTickCount);
+    for (let axisIndex = 0; axisIndex < layout.transforms.length; axisIndex += 1) {
+      const axisTransform = layout.transforms[axisIndex];
+      const yTicks = layout.yTicks[axisIndex];
       if (axisTransform === undefined || yTicks === undefined) continue;
       drawYGridlines(
         context,
         axisTransform,
         this.#style,
         yTicks,
-        this.#yTickCountPerAxis[axisIndex] ?? 0,
+        layout.yTickCounts[axisIndex] ?? 0,
       );
     }
 
@@ -346,23 +338,48 @@ export class Canvas2DRenderer implements FigureRenderer {
         context.strokeStyle = this.#style.traceColor;
         context.lineWidth = this.#style.lineWidthCss * t.dpr;
         context.stroke(path);
+
+        // A single payload carries no per-trace style, so isolated samples are always marked:
+        // a one-sample segment strokes to nothing under a butt cap, and a real measurement must
+        // never vanish from the figure.
+        if (this.#isolatedCount > 0) {
+          const markers = new Path2D();
+          buildIsolatedMarkers(
+            markers,
+            t,
+            payload.x,
+            payload.y,
+            this.#indices,
+            this.#decimatedCount,
+            payload.sampleCount,
+            isolatedMarkerHalfSide(this.#style.lineWidthCss, t.dpr),
+          );
+          context.fillStyle = this.#style.traceColor;
+          context.fill(markers);
+        }
       }
     }
 
-    drawBottomAxis(context, t, this.#style, this.#axes, this.#xTicks, this.#xTickCount, this.#xLabels);
-    for (let axisIndex = 0; axisIndex < this.#transforms.length; axisIndex += 1) {
-      const axisTransform = this.#transforms[axisIndex];
-      const yTicks = this.#yTicksPerAxis[axisIndex];
-      const yLabels = this.#yLabelsPerAxis[axisIndex];
+    // Same leak, inside the frame: the last trace's dash must not carry onto the axis strokes.
+    if (this.#traceCollection !== null) context.setLineDash(EMPTY_DASH);
+    drawBottomAxis(context, t, this.#deviceStyle, this.#axes, layout.xTicks, layout.xTickCount, layout.xLabels);
+    for (let axisIndex = 0; axisIndex < layout.transforms.length; axisIndex += 1) {
+      const axisTransform = layout.transforms[axisIndex];
+      const yTicks = layout.yTicks[axisIndex];
+      const yLabels = layout.yLabels[axisIndex];
       if (axisTransform === undefined || yTicks === undefined || yLabels === undefined) continue;
       drawLeftAxis(
         context,
         axisTransform,
-        this.#style,
+        this.#deviceStyle,
         this.#axes,
         yTicks,
-        this.#yTickCountPerAxis[axisIndex] ?? 0,
+        layout.yTickCounts[axisIndex] ?? 0,
         yLabels,
+        // Each axis owns a column of its own: `insetLeft` reserves one gutter per axis, so
+        // drawing them all at `plotLeft` would stack every line and label on top of each other
+        // and leave the reserved gutters empty.
+        layout.axisColumnOffsets[axisIndex] ?? 0,
       );
     }
   }
@@ -412,88 +429,24 @@ export class Canvas2DRenderer implements FigureRenderer {
     ];
   }
 
-  #computeTransforms(): ViewportTransform[] {
-    const insets = computeAxisInsets(this.#style, this.#axes, this.#yAxisCount);
-    // Clamp the (data-independent) configured insets against the current CSS size: a canvas
-    // constructed or resized to a size too small to hold the configured gutters must not throw —
-    // it degrades to a zero (or reduced) plot area instead. This never affects the transform once
-    // `resize()` has been called with a realistic size.
-    const maxHorizontal = Math.max(0, this.#cssWidth - 1);
-    const maxVertical = Math.max(0, this.#cssHeight - 1);
-    const insetLeft = Math.min(insets.insetLeft, maxHorizontal);
-    const insetRight = Math.min(insets.insetRight, Math.max(0, maxHorizontal - insetLeft));
-    const insetTop = Math.min(insets.insetTop, maxVertical);
-    const insetBottom = Math.min(insets.insetBottom, Math.max(0, maxVertical - insetTop));
-    const out: ViewportTransform[] = [];
-    createAxisTransforms(
-      {
-        cssWidth: this.#cssWidth,
-        cssHeight: this.#cssHeight,
-        dpr: this.#dpr,
-        insetLeft,
-        insetRight,
-        insetTop,
-        insetBottom,
-        xDomainMin: this.#xDomainMin,
-        xDomainMax: this.#xDomainMax,
-        xOrigin: this.#xOrigin,
-      },
-      this.#resolveYAxes(),
-      out,
-    );
-    return out;
-  }
-
-  #recomputeTicksIfStale(): void {
-    const xUnit = this.#payload?.xUnit ?? "";
-    const yUnit = this.#payload?.yUnit ?? "";
-    let stale =
-      this.#tickXMin !== this.#xDomainMin ||
-      this.#tickXMax !== this.#xDomainMax ||
-      this.#tickXUnit !== xUnit ||
-      this.#tickYUnit !== yUnit;
-    for (let axisIndex = 0; axisIndex < this.#transforms.length && !stale; axisIndex += 1) {
-      const t = this.#transforms[axisIndex];
-      if (t === undefined) continue;
-      if (
-        this.#tickYMinPerAxis[axisIndex] !== t.yDomainMin ||
-        this.#tickYMaxPerAxis[axisIndex] !== t.yDomainMax
-      ) {
-        stale = true;
-      }
+  #updateGeometry(): void {
+    if (this.#deviceStyle.font !== scaleFontSize(this.#style.font, this.#dpr)) {
+      this.#deviceStyle = Object.freeze({
+        ...this.#style,
+        font: scaleFontSize(this.#style.font, this.#dpr),
+      });
     }
-    if (!stale) return;
-
-    this.#xTickCount = selectTicks(
-      this.#xDomainMin,
-      this.#xDomainMax,
-      this.#axes.targetTickCount,
-      this.#xTicks,
-      0,
-    );
-    for (let i = 0; i < this.#xTickCount; i += 1) {
-      this.#xLabels[i] = formatTickLabel(this.#xTicks[i] ?? 0, xUnit);
-    }
-
-    for (let axisIndex = 0; axisIndex < this.#transforms.length; axisIndex += 1) {
-      const t = this.#transforms[axisIndex];
-      const yTicks = this.#yTicksPerAxis[axisIndex];
-      const yLabels = this.#yLabelsPerAxis[axisIndex];
-      if (t === undefined || yTicks === undefined || yLabels === undefined) continue;
-      const count = selectYTicks(t, this.#axes.targetTickCount, yTicks, 0);
-      this.#yTickCountPerAxis[axisIndex] = count;
-      for (let i = 0; i < count; i += 1) {
-        yLabels[i] = formatTickLabel(yTicks[i] ?? 0, yUnit);
-      }
-      this.#tickYMinPerAxis[axisIndex] = t.yDomainMin;
-      this.#tickYMaxPerAxis[axisIndex] = t.yDomainMax;
-    }
-
-    this.#tickXMin = this.#xDomainMin;
-    this.#tickXMax = this.#xDomainMax;
-    this.#tickXUnit = xUnit;
-    this.#tickYUnit = yUnit;
-    this.#tickRevision += 1;
+    updateFigureGeometry(this.#layout, {
+      cssWidth: this.#cssWidth,
+      cssHeight: this.#cssHeight,
+      dpr: this.#dpr,
+      style: this.#style,
+      axes: this.#axes,
+      xDomainMin: this.#xDomainMin,
+      xDomainMax: this.#xDomainMax,
+      xOrigin: this.#xOrigin,
+      yAxes: this.#resolveYAxes(),
+    });
   }
 
   #ensureIndexCapacity(required = 0): void {
@@ -509,7 +462,7 @@ export class Canvas2DRenderer implements FigureRenderer {
 
   #recomputeDecimationIfStale(payload: SpectrumDataPayload, t: ViewportTransform): void {
     const algorithm = this.#decimation.algorithm;
-    const parameter = resolveDecimationParameter(this.#decimation, t.plotWidth, payload.sampleCount);
+    const parameter = resolveDecimationTarget(this.#decimation, t.plotWidth, payload.sampleCount);
     // `min-max` emits two vertices per bucket; the vertex count actually drawn (and therefore
     // the bypass boundary and the scratch capacity) is `parameter` for `lttb`, `parameter * 2`
     // for `min-max`.
@@ -549,6 +502,14 @@ export class Canvas2DRenderer implements FigureRenderer {
       );
     }
 
+    this.#isolatedCount = countIsolatedSegments(
+      payload.x,
+      payload.y,
+      this.#indices,
+      this.#decimatedCount,
+      payload.sampleCount,
+    );
+
     this.#memoRevision = payload.revision;
     this.#memoAlgorithm = algorithm;
     this.#memoParameter = parameter;
@@ -558,45 +519,24 @@ export class Canvas2DRenderer implements FigureRenderer {
     this.#memoYMax = t.yDomainMax;
   }
 
-  /** Rebuilds one `ViewportTransform` per trace: same Y axis domain/scale as
-   * `#computeTransforms`' shared-plot-geometry insets, but each trace's own `xOrigin` — payloads
-   * sharing one X domain may still have been sampled from different absolute origins (two sweep
-   * runs), and sharing one axis transform across them would misplace every trace but the first. */
+  /** Rebuilds one `ViewportTransform` per trace through the shared builder, so each trace keeps
+   * its own `xOrigin` while sharing the axes' plot geometry. */
   #recomputeTraceTransforms(): void {
-    const axes = this.#resolveYAxes();
-    const insets = computeAxisInsets(this.#style, this.#axes, this.#yAxisCount);
-    const maxHorizontal = Math.max(0, this.#cssWidth - 1);
-    const maxVertical = Math.max(0, this.#cssHeight - 1);
-    const insetLeft = Math.min(insets.insetLeft, maxHorizontal);
-    const insetRight = Math.min(insets.insetRight, Math.max(0, maxHorizontal - insetLeft));
-    const insetTop = Math.min(insets.insetTop, maxVertical);
-    const insetBottom = Math.min(insets.insetBottom, Math.max(0, maxVertical - insetTop));
-
-    const count = this.#traceCount;
-    const transforms: ViewportTransform[] = [];
-    for (let i = 0; i < count; i += 1) {
-      const payload = this.#tracePayloads[i];
-      if (payload === undefined) continue;
-      const axisIndex = this.#traceAxisIndex[i] ?? -1;
-      const axis = axisIndex >= 0 ? axes[axisIndex] : undefined;
-      const transform: ViewportTransform = createViewportTransform({
+    buildTraceTransforms(
+      this.#resolveYAxes(),
+      this.#traceAxisIndex,
+      this.#tracePayloads,
+      this.#traceCount,
+      {
         cssWidth: this.#cssWidth,
         cssHeight: this.#cssHeight,
         dpr: this.#dpr,
-        insetLeft,
-        insetRight,
-        insetTop,
-        insetBottom,
+        insets: this.#layout.insets,
         xDomainMin: this.#xDomainMin,
         xDomainMax: this.#xDomainMax,
-        xOrigin: payload.xOrigin,
-        yDomainMin: axis?.domainMin ?? -1,
-        yDomainMax: axis?.domainMax ?? 1,
-        yScaleKind: axis?.scaleKind ?? Y_SCALE_KIND_LINEAR,
-      });
-      transforms[i] = transform;
-    }
-    this.#traceTransforms = transforms;
+      },
+      this.#traceTransforms,
+    );
   }
 
   #ensureTraceIndexCapacity(i: number, required: number): void {
@@ -615,14 +555,14 @@ export class Canvas2DRenderer implements FigureRenderer {
     }
   }
 
-  /** Per-trace twin of `#recomputeDecimationIfStale`, plus the D3 infeasible-LTTB fallback: when
+  /** Per-trace twin of `#recomputeDecimationIfStale`, plus the infeasible-LTTB fallback: when
    * `lttb` cannot represent this trace's gaps within `threshold` (returns `0`), immediately
    * falls back to `minMaxEnvelopeIndices` over the same trace and records that result under the
    * same memo key, so an unchanged frame never re-runs either decimator. Refreshes the isolated-
    * sample count only when this trace's memo actually recomputes. */
   #recomputeTraceDecimationIfStale(i: number, payload: SpectrumDataPayload, t: ViewportTransform): void {
     const algorithm = this.#decimation.algorithm;
-    const parameter = resolveDecimationParameter(this.#decimation, t.plotWidth, payload.sampleCount);
+    const parameter = resolveDecimationTarget(this.#decimation, t.plotWidth, payload.sampleCount);
     const emittedVertexCount = algorithm === "lttb" ? parameter : parameter * 2;
     const stale =
       this.#traceMemoRevision[i] !== payload.revision ||
@@ -637,32 +577,13 @@ export class Canvas2DRenderer implements FigureRenderer {
     let decimatedCount: number;
     if (payload.sampleCount <= emittedVertexCount) {
       decimatedCount = 0;
-    } else if (algorithm === "lttb") {
-      this.#ensureTraceIndexCapacity(i, emittedVertexCount);
-      const indices = this.#traceIndices[i];
-      decimatedCount =
-        indices === undefined
-          ? 0
-          : lttb(payload.x, payload.y, 0, payload.sampleCount, indices, 0, parameter);
-      if (decimatedCount === 0 && indices !== undefined) {
-        // Infeasible: the trace is fragmented below what `threshold` can represent without
-        // bridging a gap. Min-max's fixed `2 * bucketCount` output is always representable, so
-        // the fallback always succeeds; it is recorded under this same `lttb` memo slot.
-        const bucketCount = Math.max(1, (parameter / 2) | 0);
-        this.#ensureTraceIndexCapacity(i, bucketCount * 2);
-        const fallbackIndices = this.#traceIndices[i];
-        decimatedCount =
-          fallbackIndices === undefined
-            ? 0
-            : minMaxEnvelopeIndices(payload.y, 0, payload.sampleCount, fallbackIndices, 0, bucketCount);
-      }
     } else {
       this.#ensureTraceIndexCapacity(i, emittedVertexCount);
       const indices = this.#traceIndices[i];
       decimatedCount =
         indices === undefined
           ? 0
-          : minMaxEnvelopeIndices(payload.y, 0, payload.sampleCount, indices, 0, parameter);
+          : decimateTraceIndices(algorithm, parameter, payload.x, payload.y, payload.sampleCount, indices);
     }
 
     this.#traceDecimatedCount[i] = decimatedCount;
@@ -681,7 +602,7 @@ export class Canvas2DRenderer implements FigureRenderer {
     this.#traceMemoYMax[i] = t.yDomainMax;
   }
 
-  /** The per-trace `render()` loop (D7): one `Path2D` per trace, its pre-resolved style, and —
+  /** The per-trace `render()` loop: one `Path2D` per trace, its pre-resolved style, and —
    * only for a trace whose memo just proved it has an isolated sample and whose style opts in —
    * one further `Path2D` filled for the markers. `setTransform` is not called here; it runs once
    * per frame in the caller, outside this loop. */
@@ -700,6 +621,7 @@ export class Canvas2DRenderer implements FigureRenderer {
       buildTracePath(path, t, payload.x, payload.y, indices, decimatedCount, payload.sampleCount);
       const lineWidthCss = this.#traceLineWidthCss[i] ?? this.#style.lineWidthCss;
       const lineWidthDevice = lineWidthCss * t.dpr;
+      const markerHalfSide = isolatedMarkerHalfSide(lineWidthCss, t.dpr);
       context.strokeStyle = this.#traceStroke[i] ?? this.#style.traceColor;
       context.lineWidth = lineWidthDevice;
       context.setLineDash(this.#traceDashDevice[i] ?? EMPTY_DASH);
@@ -716,7 +638,7 @@ export class Canvas2DRenderer implements FigureRenderer {
           indices,
           decimatedCount,
           payload.sampleCount,
-          lineWidthDevice,
+          markerHalfSide,
         );
         context.fillStyle = this.#traceStroke[i] ?? this.#style.traceColor;
         context.fill(markers);

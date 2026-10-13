@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Catalog + tsconfig-strictness discipline guard (design.md §D7).
+// Catalog + tsconfig-strictness discipline guard.
 //
 // The governed dependency set is DERIVED from `pnpm-workspace.yaml`'s `catalog:` keys, never
 // hardcoded — the day a new tool is added to the catalog it becomes governed everywhere with

@@ -29,8 +29,8 @@ vi.mock("@trace-kit/core", async (importOriginal) => {
 
 // Counts constructions rather than allocating a real `Path2D` (this project's `renderers`
 // vitest project runs in the `node` environment, which has no `Path2D` global). Standing in
-// for `Canvas2DRenderer.render()`'s per-frame `new Path2D()` call until phase 7 lands the real
-// renderer (task 6.8 is a no-op checkpoint against that phase, re-run once it exists).
+// for `Canvas2DRenderer.render()`'s per-frame `new Path2D()` call until the real
+// renderer exists; this check is a no-op until then.
 class CountingPath implements PolylineSink {
   static constructions = 0;
   constructor() {
@@ -132,7 +132,7 @@ describe("Path2D-per-frame work count", () => {
       5,
     );
     // Once per point, not once per frame — the shape the ESLint hot-path check independently
-    // rejects when expressed as an in-loop `new Path2D()`/object literal (task 6.5/6.6).
+    // rejects when expressed as an in-loop `new Path2D()`/object literal.
     expect(PerPointPathVariant.constructions).toBe(n);
     expect(PerPointPathVariant.constructions).not.toBe(1);
   });

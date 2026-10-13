@@ -3,7 +3,7 @@ import path from "node:path";
 import { defineConfig } from "vitest/config";
 import { playwright } from "@vitest/browser-playwright";
 
-// Root Vitest configuration using `test.projects` from the outset (design.md §D5),
+// Root Vitest configuration using `test.projects` from the outset,
 // rather than a flat config. A single project today (`core`, pinned to the `node`
 // environment with no DOM globals — CLAUDE.md rule 5). `packages/renderers` and the
 // framework adapter packages will need a `jsdom`/browser project later; under
@@ -123,7 +123,7 @@ export default defineConfig({
                   allowedMismatchedPixelRatio: 0.001,
                 },
                 // Flat, no platform/browser token — the corpus is generated and compared on
-                // `ubuntu-latest` only (P5), so a platform-keyed filename would only ever have
+                // `ubuntu-latest` only, so a platform-keyed filename would only ever have
                 // one value and adds nothing; adding a second platform later is a one-line
                 // change to these two functions, not a corpus rename.
                 resolveScreenshotPath: ({ testFileDirectory, arg, ext }) =>
@@ -139,6 +139,46 @@ export default defineConfig({
                   ),
               },
             },
+          },
+        },
+      },
+      {
+        extends: true,
+        resolve: {
+          alias: {
+            // Same alias as the playground project: the browser bundle must not pull the Node
+            // reporting half of the harness.
+            "@trace-kit/bench-harness": path.join(
+              rootDir,
+              "packages/core/bench/runner-core.ts",
+            ),
+          },
+        },
+        test: {
+          name: "engine-bench",
+          root: path.join(rootDir, "packages/renderers"),
+          include: ["bench/**/*.bench-browser.ts"],
+          // Measurements, not assertions: a GPU frame is far slower than the default 5 s
+          // budget for 1,000,000-sample sweeps plus warm-up.
+          testTimeout: 600_000,
+          // Only reached through `pnpm --filter @trace-kit/renderers run bench:engines`; no
+          // package `test` script lists this project, so `pnpm run test` never executes it.
+          // `ENGINE_BENCH_GPU=1` is a local-only switch for measuring on a GPU-backed Chromium:
+          // headed, ANGLE on Metal, without the software-rasterizer fallback. The default stays
+          // headless on whatever Playwright's bundled Chromium picks.
+          browser: {
+            enabled: true,
+            headless: process.env["ENGINE_BENCH_GPU"] !== "1",
+            provider:
+              process.env["ENGINE_BENCH_GPU"] === "1"
+                ? playwright({
+                    launchOptions: {
+                      args: ["--use-gl=angle", "--use-angle=metal", "--ignore-gpu-blocklist"],
+                      ignoreDefaultArgs: ["--enable-unsafe-swiftshader", "--disable-gpu"],
+                    },
+                  })
+                : playwright(),
+            instances: [{ browser: "chromium" }],
           },
         },
       },

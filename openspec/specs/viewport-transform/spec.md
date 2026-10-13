@@ -1,11 +1,9 @@
 # Capability: viewport-transform
 
-> Change: `renderers-canvas2d` (ADDED). Modified by: `core-scale-transforms` (roadmap `order: 5.6`).
->
-> Source: `design.md` §D2 (`packages/core/src/viewport/transform.ts`) and §D3
-> (`packages/core/src/viewport/ticks.ts`). This is the single source of projection consumed by
-> every renderer and, later, by the SVG exporter (change 6). It lives in `@trace-kit/core` and
-> MUST satisfy CLAUDE.md rule 5 (zero DOM reference) with no environment guard anywhere.
+> `ViewportTransform` is the single projection consumed by every renderer and by the SVG exporter. It
+> lives in `@trace-kit/core` (`packages/core/src/viewport/transform.ts`; tick selection in
+> `packages/core/src/viewport/ticks.ts`) and MUST satisfy CLAUDE.md rule 5 (zero DOM reference) with no
+> environment guard anywhere.
 
 ## ADDED Requirements
 
@@ -254,18 +252,33 @@ function, and MUST NOT write beyond `out.length`.
 - **THEN**: indices `[0, 10)` are unchanged and the new ticks start at index `10`
 
 ### Requirement: A GPU Consumer of X-Domain Values MUST Normalize in Float64 Before Any Float32 Cast
-A consumer that uploads X-domain values to a WebGL2 vertex attribute, uniform, or buffer MUST
-compute the normalized quantity `(xOrigin + xOffset - xDomainMin) / (xDomainMax - xDomainMin)`
-entirely in IEEE-754 binary64 on the CPU, and MUST cast only that normalized result — whose
-magnitude is bounded by the visible domain rather than by the absolute wavelength — to float32.
-It MUST NOT cast `xOrigin`, `xDomainMin`, `xDomainMax`, or the sum `xOrigin + xOffset` to
-float32 individually, and MUST NOT perform the subtraction `x - xDomainMin` on float32 operands
-in shader code. `createViewportTransform` MUST store `xOrigin`, `xDomainMin` and `xDomainMax`
-without any float32 rounding, so that `Math.fround(t.xOrigin) !== t.xOrigin` holds for an origin
-such as `1550.123456`. Whether a specific WebGL2 consumer's GLSL and buffer-upload code actually
-obeys this contract is not verifiable from `@trace-kit/core`, which has no GPU access; that
-conformance is an acceptance criterion of the WebGL2 renderer change that consumes this contract,
-not of this change.
+A consumer that uploads X-domain values to a WebGL2 vertex attribute, uniform, or buffer MUST do
+exactly one of the following, and nothing else:
+
+1. **CPU normalization**: compute the normalized quantity
+   `(xOffset - xDomainMin) / (xDomainMax - xDomainMin)` (the domain in the offset space
+   `projectX` uses) entirely in IEEE-754 binary64 on
+   the CPU and cast only that normalized result, whose magnitude is bounded by the visible domain,
+   to float32; or
+2. **Hi/lo origin**: leave the per-sample data as the payload's float32 offsets from `xOrigin`
+   (uploaded unmodified) and pass the domain origin to the shader as a pair of float32 uniforms
+   `(hi, lo)` derived in binary64 as `hi = Math.fround(d)` and `lo = Math.fround(d - hi)`, where
+   `d = t.xDomainMin` is the binary64 domain minimum of the consumer's own transform, in the
+   offset space `projectX` uses (`projectX` does not read `xOrigin`). The shader MAY then subtract on float32
+   operands only in the form `((offset - hi) * one) - lo`, in that order, where `one` is a float32
+   uniform always set to `1` so the compiler cannot reassociate the two subtractions, before scaling by a float32
+   uniform equal to the binary64 quotient of the plot width and the X span.
+
+In both cases the consumer MUST NOT cast `xOrigin`, `xDomainMin`, `xDomainMax` or the sum
+`xOrigin + xOffset` to float32 individually, MUST NOT use a single float32 origin uniform in place
+of the `(hi, lo)` pair, and MUST NOT perform any other subtraction of float32 X operands in shader
+code (in particular `x - xDomainMin` with a single-float `xDomainMin`).
+`createViewportTransform` MUST store `xOrigin`, `xDomainMin` and `xDomainMax` without any float32
+rounding, so that `Math.fround(t.xOrigin) !== t.xOrigin` holds for an origin such as `1550.123456`.
+Conformance of a specific consumer's GLSL and upload code is not verifiable from
+`@trace-kit/core`, which has no GPU access; it is an acceptance criterion of the WebGL2 renderer
+change that consumes this contract, verified there by `Math.fround` emulation tests against a
+float64 reference (`webgl2-golden-parity`).
 
 #### Scenario: xOrigin is stored without float32 rounding
 - **GIVEN**: a `ViewportTransform` constructed with `xOrigin: 1550.123456`
@@ -297,3 +310,29 @@ not of this change.
   throughout, one float32 cast at the end, modeling the prescribed CPU-side normalization)
 - **THEN**: the absolute error against the exact f64 computation, mapped back to nanometres, stays
   below 1 picometre for both spans
+
+#### Scenario: The hi/lo pair reconstructs the float64 origin to float32-pair precision
+- **GIVEN**: a transform whose offset-space `xDomainMin` is `1000.00002`, so `d = 1000.00002` in binary64
+- **WHEN**: `hi = Math.fround(d)` and `lo = Math.fround(d - hi)` are computed
+- **THEN**: `Math.abs((hi + lo) - d) < 1e-9` while `Math.abs(hi - d) > 1e-5`, demonstrating `lo`
+  carries information `hi` alone loses
+
+#### Scenario: Deep zoom with hi/lo stays under a hundredth of a device pixel
+- **GIVEN**: float32 offsets near `1000`, a visible offset-space window of `0.01`
+  (`xDomainMin = 1000.00002`, `xDomainMax = 1000.01002`), `plotWidth = 1000` device pixels
+- **WHEN**: the shader expression `((offset - hi) * one - lo) * scale` (with `one = 1`) is emulated with `Math.fround`
+  after every operation and compared with the binary64 evaluation
+  `(offset - d) * (plotWidth / 0.01)` on the same float32 offsets
+- **THEN**: the maximum absolute difference is below `0.01` device pixels
+
+#### Scenario: A single float32 origin at deep zoom misplaces samples by more than a pixel
+- **GIVEN**: the same inputs
+- **WHEN**: the origin is passed as one value `Math.fround(d)` with no `lo`
+- **THEN**: the maximum absolute difference against the binary64 evaluation exceeds `1` device
+  pixel
+
+#### Scenario: Subtracting a single-float domain minimum is rejected
+- **GIVEN**: the WebGL2 vertex shader source
+- **WHEN**: it is searched for a subtraction whose right operand is a single-float uniform holding
+  `xDomainMin` or `xOrigin` rather than the `hi`/`lo` pair
+- **THEN**: no such subtraction exists

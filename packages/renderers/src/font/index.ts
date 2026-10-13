@@ -3,6 +3,14 @@ import { TRACEKIT_INTER_FAMILY } from "./family.js";
 
 export { TRACEKIT_INTER_FAMILY } from "./family.js";
 
+/**
+ * The embedded face as a ready-made option for `exportToSvg`'s `embedFont`. Typed structurally
+ * rather than against the exporter's own type so this module and the exporter never import each
+ * other: the exporter stays free of the ~8 KB data URL unless a caller opts in by passing this.
+ */
+export const TRACEKIT_INTER_EMBEDDED_FONT: { readonly dataUrl: string; readonly format: "woff2" } =
+  Object.freeze({ dataUrl: TRACEKIT_INTER_WOFF2_DATA_URL, format: "woff2" });
+
 let registrationPromise: Promise<boolean> | undefined;
 
 /**

@@ -37,8 +37,8 @@
 # Evidence backing the acceptance criteria: openspec/changes/00-roadmap-decomposition/research.md
 
 schema: trace-kit.sdd-roadmap/v1
-revision: 6
-total_changes: 26  # 16 numbered + 5.5 (rev 5) + 9 inserted at rev 6; the pre-rev-6 value of 16 never counted 5.5
+revision: 7
+total_changes: 28  # 16 numbered + 5.5 (rev 5) + 9 inserted at rev 6 + 2 inserted at rev 7; the pre-rev-6 value of 16 never counted 5.5
 
 changes:
   - order: 1
@@ -225,6 +225,10 @@ changes:
       - core-scale-transforms
       - core-gap-and-multi-trace-model
     capabilities: not_yet_specified
+    # Scope widened at design: also fixes the Canvas2D cross-backend divergences the exporter
+    # exposed (overlapping Y-axis columns, axis lineWidth inherited from the last trace,
+    # single-payload traceColor and isolated markers). Regenerates exactly three pixel goldens
+    # via the CI-only path: dual-axis, overlay-two-axis, gapped-trace.
 
 
   # Inserted at revision 6.
@@ -254,6 +258,45 @@ changes:
       - core-gap-and-multi-trace-model
     capabilities: not_yet_specified
 
+  # Inserted at revision 7.
+  #
+  # Why: `renderers-webgl2` mirrors `projectX`, which reads the X domain as OFFSETS from each
+  # trace's `xOrigin`, while `resolveSampleWindow` (raw-data-viewport-export) reads it as ABSOLUTE
+  # `xOrigin + x[i]`. The core disagrees with itself. The visible symptom is the `overlay-two-axis`
+  # fixture, whose `xOrigin: 1000` trace yields an empty CSV and a `(0,)` .npy for the default
+  # window. Which space the domain lives in is a product decision to take at this change, and it
+  # touches every engine, the exporters and the playground download control.
+  #
+  # It follows `renderers-webgl2` on purpose: WebGL2 is the third consumer of the projection, so
+  # the reconciliation lands once, with all three engines and their goldens visible together.
+  - order: 7.5
+    name: x-domain-space-reconciliation
+    prerequisites:
+      - renderers-webgl2
+      - raw-data-viewport-export
+    capabilities: not_yet_specified
+    # Intended capability surface:
+    #   viewport-transform         MODIFIED — one declared X-domain space shared by every consumer
+    #   viewport-window-resolution MODIFIED — window bounds in that same space
+    #   playground-svg-export-view MODIFIED — download window derived in that space
+
+  # Inserted at revision 7.
+  #
+  # Why: `renderers-webgl2` records four known divergences that were left alone on purpose so
+  # Canvas2D and SVG goldens did not move inside that change. Two of them are Canvas2D defects
+  # against the shared contract: it does not clip traces to the plot rectangle (SVG and WebGL2
+  # do), and it skips ±Infinity samples where WebGL2 reaches the plot edge. A third is the
+  # single-payload LTTB path, which has no fallback when LTTB cannot decimate. Dashed traces
+  # drawn solid on WebGL2 stay a documented divergence, not a defect to close here.
+  - order: 7.6
+    name: canvas2d-parity-fixes
+    prerequisites:
+      - renderers-webgl2
+    capabilities: not_yet_specified
+    # Intended capability surface:
+    #   canvas2d-trace-rendering MODIFIED — clip to the plot rectangle; ±Infinity reaches the edge;
+    #                                       single-payload decimation fallback matches the collection path
+
   - order: 8
     name: worker-streaming-transport
     prerequisites: 
@@ -263,10 +306,20 @@ changes:
 
   - order: 9
     name: engine-controller
-    prerequisites: 
+    prerequisites:
       - renderers-webgl2
       - worker-streaming-transport
     capabilities: not_yet_specified
+    # Hand-off from renderers-webgl2 (archived as 2026-10-13-renderers-webgl2).
+    #   Engine swap: a canvas that has produced a '2d' context can never yield 'webgl2', so the new
+    #   engine needs fresh canvases. Build the new renderer, re-apply data, domain, size and
+    #   decimation, render, then dispose the old renderer and remove its canvases.
+    #   setDecimation(undefined) is not engine-neutral: full payload on WebGL2, LTTB on Canvas2D.
+    #   Threshold: benchmark.md in that archive (Intel Iris Plus, local, non-normative) measured
+    #   WebGL2 ahead at 30,000 samples (median 7.0 ms vs 15.6 ms on Canvas2D) and Canvas2D ahead at
+    #   80,000 (median 13.1 ms vs 15.8 ms on WebGL2; p95 18.1 ms vs 35.2 ms). The crossover lies
+    #   between 30,000 and 80,000 samples, so the 80,000-point default must be re-measured before it
+    #   becomes normative.
 
   # Inserted at revision 6.
   #

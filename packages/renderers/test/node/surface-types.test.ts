@@ -40,7 +40,7 @@ function typeLevelFixture(): void {
   void ctxShape;
   void acquire2dContext;
 
-  // task 7.16: `Canvas2DRenderer`'s constructor accepts an `OffscreenCanvas`-typed surface
+  // `Canvas2DRenderer`'s constructor accepts an `OffscreenCanvas`-typed surface
   // without a cast — this never runs, it only needs to type-check under `tsc --noEmit`.
   function fixtureWithOffscreenSurface(): void {
     void new Canvas2DRenderer({ surface: offscreenLike });

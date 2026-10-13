@@ -70,3 +70,103 @@ describe("lint-hot-path meta-test", () => {
     LINT_TIMEOUT_MS,
   );
 });
+
+// The export serializers and the window resolver sit under the same loop-allocation selectors as
+// the decimation kernels. Each case lints an inline body at a virtual path under the glob being
+// proven, so the scope is shown to be live without placing a violating file in the source tree.
+const LOOP_ALLOCATION_BODY = [
+  "export function proof(values: Float32Array, count: number): number {",
+  "  let total = 0;",
+  "  for (let i = 0; i < count; i += 1) {",
+  "    const record = { index: i };",
+  "    const list = [i];",
+  "    const text = `row ${i}`;",
+  "    const buffer = new Float32Array(1);",
+  "    const fn = () => i;",
+  "    total += record.index + list.length + text.length + buffer.length + fn() + (values[i] ?? 0);",
+  "  }",
+  "  return total;",
+  "}",
+  "",
+].join("\n");
+
+const EXPECTED_LOOP_MESSAGES = [
+  { line: 4, fragment: "Object literals" },
+  { line: 5, fragment: "Array literals" },
+  { line: 6, fragment: "Template literals" },
+  { line: 7, fragment: "`new` inside a loop" },
+  { line: 8, fragment: "per-call closure" },
+];
+
+async function lintInline(source: string, relativePath: string) {
+  const eslint = new ESLint({
+    cwd: repoRoot,
+    overrideConfigFile: path.join(repoRoot, "eslint.config.js"),
+    ignore: false,
+  });
+  const results = await eslint.lintText(source, {
+    filePath: path.join(repoRoot, relativePath),
+  });
+  return results.flatMap((result) => result.messages);
+}
+
+describe("lint-hot-path glob covers the export and window modules", () => {
+  for (const relativePath of [
+    "packages/core/src/export/__hot-path-fixture-proof__.ts",
+    "packages/core/src/viewport/window.ts",
+  ]) {
+    it(
+      `trips every loop-allocation selector at ${relativePath}`,
+      async () => {
+        const messages = await lintInline(LOOP_ALLOCATION_BODY, relativePath);
+        for (const { line, fragment } of EXPECTED_LOOP_MESSAGES) {
+          const hit = messages.find(
+            (message) =>
+              message.ruleId === "no-restricted-syntax" &&
+              message.line === line &&
+              message.message.includes(fragment),
+          );
+          expect(hit, `${relativePath}:${line} ${fragment}`).toBeDefined();
+        }
+      },
+      LINT_TIMEOUT_MS,
+    );
+  }
+
+  const GENERATOR_BODY = [
+    "export function* proof(count: number): Generator<number, void, undefined> {",
+    "  for (let i = 0; i < count; i += 1) {",
+    "    yield i;",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+
+  // The serializers are generators by contract, so the blanket generator ban of the decimation
+  // kernels must not reach them; the resolver is a plain function and keeps the ban.
+  it(
+    "allows generators under src/export but not in the window resolver",
+    async () => {
+      const exportMessages = await lintInline(
+        GENERATOR_BODY,
+        "packages/core/src/export/__hot-path-fixture-proof__.ts",
+      );
+      expect(
+        exportMessages.filter((message) => message.ruleId === "no-restricted-syntax"),
+      ).toEqual([]);
+
+      const windowMessages = await lintInline(
+        GENERATOR_BODY,
+        "packages/core/src/viewport/window.ts",
+      );
+      expect(
+        windowMessages.some(
+          (message) =>
+            message.ruleId === "no-restricted-syntax" &&
+            message.message.includes("Generator"),
+        ),
+      ).toBe(true);
+    },
+    LINT_TIMEOUT_MS,
+  );
+});

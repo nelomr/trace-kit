@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Dependency freshness check (P7/D9): reports every catalogued dependency that is behind the
+// Dependency freshness check: reports every catalogued dependency that is behind the
 // newest stable release published at least `FRESHNESS_WINDOW_DAYS` ago.
 //
-// This is a MANUAL procedure, deliberately not wired into CI (D9 — the maintainer chose manual
+// This is a MANUAL procedure, deliberately not wired into CI (the maintainer chose manual
 // enforcement over an automated gate). Run it by hand before performing a dependency update;
 // nothing in this repository calls it automatically.
 //

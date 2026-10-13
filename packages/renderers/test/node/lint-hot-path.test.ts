@@ -53,3 +53,112 @@ describe("renderers lint-hot-path meta-test", () => {
     LINT_TIMEOUT_MS,
   );
 });
+
+// The WebGL2 frame path sits under the same allocation-free selectors as `src/path/**`, scoped
+// to the four per-frame files only: the class and the cold modules construct GL objects, typed
+// arrays and strings by design, so a `src/webgl2/**` glob would reject legitimate setup code.
+const LOOP_ALLOCATION_BODY = [
+  "export function proof(values: Float32Array, count: number): number {",
+  "  let total = 0;",
+  "  for (let i = 0; i < count; i += 1) {",
+  "    const record = { index: i };",
+  "    const list = [i];",
+  "    const copy = [...list];",
+  "    const text = `row ${i}`;",
+  "    const buffer = new Float32Array(1);",
+  "    const fn = () => i;",
+  "    total += record.index + list.length + copy.length + text.length + buffer.length + fn() + (values[i] ?? 0);",
+  "  }",
+  "  return total;",
+  "}",
+  "",
+].join("\n");
+
+const EXPECTED_LOOP_MESSAGES = [
+  { line: 4, fragment: "Object literals" },
+  { line: 5, fragment: "Array literals" },
+  { line: 6, fragment: "Spread inside a loop" },
+  { line: 7, fragment: "Template literals" },
+  { line: 8, fragment: "`new` inside a loop" },
+  { line: 9, fragment: "per-call closure" },
+];
+
+const HOT_WEBGL2_FILES = ["frame.ts", "upload.ts", "precision.ts", "float-bits.ts"];
+const COLD_WEBGL2_FILES = [
+  "shaders.ts",
+  "program.ts",
+  "color.ts",
+  "hidden-canvas.ts",
+  "trace-slot.ts",
+  "webgl2-figure-renderer.ts",
+];
+
+interface RestrictedSyntaxEntry {
+  readonly selector?: string;
+}
+
+async function loopSelectorsFor(relativePath: string): Promise<string[]> {
+  const eslint = new ESLint({
+    cwd: repoRoot,
+    overrideConfigFile: path.join(repoRoot, "eslint.config.js"),
+    ignore: false,
+  });
+  const config = (await eslint.calculateConfigForFile(path.join(repoRoot, relativePath))) as {
+    rules?: Record<string, unknown>;
+  };
+  const rule = config.rules?.["no-restricted-syntax"];
+  if (!Array.isArray(rule)) return [];
+  return (rule.slice(1) as RestrictedSyntaxEntry[])
+    .map((entry) => entry.selector ?? "")
+    .filter((selector) => selector.includes("ForStatement"));
+}
+
+describe("renderers lint-hot-path glob covers the WebGL2 frame path", () => {
+  it(
+    "trips every loop-allocation selector at the virtual webgl2 proof path",
+    async () => {
+      const eslint = new ESLint({
+        cwd: repoRoot,
+        overrideConfigFile: path.join(repoRoot, "eslint.config.js"),
+        ignore: false,
+      });
+      const results = await eslint.lintText(LOOP_ALLOCATION_BODY, {
+        filePath: path.join(repoRoot, "packages/renderers/src/webgl2/__hot-path-fixture-proof__.ts"),
+      });
+      const messages = results.flatMap((result) => result.messages);
+      for (const expected of EXPECTED_LOOP_MESSAGES) {
+        // One line can trip several selectors (`[...list]` is an array literal and a spread).
+        const found = messages.some(
+          (message) =>
+            message.ruleId === "no-restricted-syntax" &&
+            message.line === expected.line &&
+            message.message.includes(expected.fragment),
+        );
+        expect(found, `line ${expected.line}: ${expected.fragment}`).toBe(true);
+      }
+    },
+    LINT_TIMEOUT_MS,
+  );
+
+  for (const file of HOT_WEBGL2_FILES) {
+    it(
+      `applies the allocation-free selectors to src/webgl2/${file}`,
+      async () => {
+        const selectors = await loopSelectorsFor(`packages/renderers/src/webgl2/${file}`);
+        expect(selectors.length).toBeGreaterThanOrEqual(6);
+      },
+      LINT_TIMEOUT_MS,
+    );
+  }
+
+  for (const file of COLD_WEBGL2_FILES) {
+    it(
+      `leaves the cold file src/webgl2/${file} outside the allocation-free selectors`,
+      async () => {
+        const selectors = await loopSelectorsFor(`packages/renderers/src/webgl2/${file}`);
+        expect(selectors).toEqual([]);
+      },
+      LINT_TIMEOUT_MS,
+    );
+  }
+});

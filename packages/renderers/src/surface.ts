@@ -27,7 +27,7 @@ export interface TraceDrawingContext {
    * allocated inside `render()`. */
   setLineDash(segments: number[]): void;
   /** Fills a `Path2D` with the context's current `fillStyle` — used for isolated-sample
-   * markers, a separate `Path2D` from the stroked trace line (D10). */
+   * markers, a separate `Path2D` from the stroked trace line. */
   fill(path: Path2D): void;
 }
 

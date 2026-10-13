@@ -1,0 +1,5 @@
+# SVG goldens are compared byte for byte; checkout must never rewrite their line endings.
+packages/renderers/test/svg-goldens/*.svg text eol=lf
+
+# NumPy .npy goldens are compared byte for byte and must never go through text conversion.
+*.npy binary

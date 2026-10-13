@@ -2,7 +2,10 @@ name: Update Visual Goldens
 
 # The only path that regenerates `packages/renderers/test/visual/__screenshots__/**` — no
 # `package.json` script and no file under `scripts/` does this. Runs exclusively on
-# `ubuntu-latest`, since the committed corpus is generated and compared on Linux only (P5).
+# `ubuntu-latest`, since the committed corpus is generated and compared on Linux only.
+# The corpus holds two disjoint sets in the one directory: the Canvas2D references named after the
+# fixture id, and the WebGL2 references named `webgl2-<fixture id>.png` (screenshots of the three
+# stacked canvases). One `test:visual --update` regenerates both; nothing here distinguishes them.
 on:
   workflow_dispatch:
     inputs:

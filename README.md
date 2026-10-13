@@ -25,25 +25,28 @@
 >   viewport transform layer — linear and logarithmic (base-10) Y-axis projection, multi-axis
 >   viewport support (N independent left-stacked Y axes sharing one X domain), and tick
 >   selection for both scales.
-> - `packages/renderers` — a **Canvas2D renderer only** (`Canvas2DRenderer`, Path2D batching,
->   multi-axis-aware gutters, decade gridlines for log axes) plus the headless `FigureRenderer`
->   contract. **No WebGL2 renderer exists yet.**
-> - `apps/playground` — a running Vite app with a home route and a `core-math` route
->   visualizing the decimation algorithms.
+> - `packages/renderers` — a Canvas2D renderer (`Canvas2DRenderer`, Path2D batching,
+>   multi-axis-aware gutters, decade gridlines for log axes), a **WebGL2 renderer**
+>   (`WebGL2FigureRenderer`, the `@trace-kit/renderers/webgl2` subpath, full-resolution instanced
+>   lines on three stacked canvases) and the headless `FigureRenderer` contract. **Automatic engine
+>   switching between the two does not exist yet.**
+> - `apps/playground` — a running Vite app with a home route, a `core-math` route
+>   visualizing the decimation algorithms and an `/engine-parity` route drawing one fixture on
+>   Canvas2D and WebGL2 side by side.
 > - The pnpm + Turborepo workspace, hundreds of passing Vitest unit/integration tests, a
 >   Chromium-based visual regression suite (Linux-CI-only by design), Node-side zero-GC
 >   allocation gates, and a CI quality gate (typecheck, lint, unit tests, visual regression,
 >   dependency-deprecation checks) that runs and passes on `main`.
 >
-> **What does not exist yet:** `packages/vue`, `packages/react`, `apps/docs`, and any WebGL2
-> renderer. Every package is still unpublished (`0.0.0`, private). The Vue/React Quickstart
+> **What does not exist yet:** `packages/vue`, `packages/react`, `apps/docs`, and automatic
+> engine switching. Every package is still unpublished (`0.0.0`, private). The Vue/React Quickstart
 > examples below describe an API that does not exist yet; the install commands will not work.
 >
 > Development follows Spec-Driven Development; progress is tracked in
 > [`openspec/roadmap.yaml`](openspec/roadmap.yaml). As of this writing, roadmap steps 1 through
-> **5.7** (`core-gap-and-multi-trace-model` — gap/NaN semantics in decimation and multi-trace
-> payload support) are archived and complete. The next planned step is **6**
-> (`svg-vector-export`), not yet started.
+> **7** (`renderers-webgl2` — WebGL2 figure renderer on stacked canvases) are archived and
+> complete. The next planned steps are **7.5** (`x-domain-space-reconciliation`), **7.6**
+> (`canvas2d-parity-fixes`), then **8** (`worker-streaming-transport`), not yet started.
 
 ---
 
@@ -56,13 +59,14 @@ Built upon a decoupled architecture, **TraceKit** isolates computational decimat
 ### Key Performance Pillars
 
 * **Zero-Copy Ingestion with Explicit Ownership:** Dedicated Web Workers execute decimation over transferred `ArrayBuffer`s, eliminating serialization cost. Because a transfer *detaches* the buffer in the sender, transport is a pooled round trip with a single owner at any instant and back-pressure that drops rather than allocates — the main thread always retains an authoritative copy, which is what makes WebGL context restoration possible at all.
-* **Hybrid Dual-Engine Strategy `[PARTIAL]`:** The design targets hysteresis-stabilized switching between a **Canvas 2D batch renderer** and a high-density **WebGL2 pipeline** using dual Vertex Buffer Objects to avoid CPU interleaving, with a switch threshold evaluated on the *decimated* point count and a minimum dwell time so a live stream cannot oscillate between engines. **Only the Canvas2D renderer exists today; WebGL2 is not implemented yet**, so there is currently one engine, not a hybrid.
+* **Hybrid Dual-Engine Strategy `[PARTIAL]`:** The design targets hysteresis-stabilized switching between a **Canvas 2D batch renderer** and a high-density **WebGL2 pipeline** using dual Vertex Buffer Objects to avoid CPU interleaving, with a switch threshold evaluated on the *decimated* point count and a minimum dwell time so a live stream cannot oscillate between engines. **Both renderers exist today, but the automatic switch does not**: the caller picks the engine, so there is no hybrid yet.
 * **Physics-Preserving Decimation:** Combines standard **LTTB** (perceptual trace fidelity) with **Min-Max Envelope** algorithms to prevent the suppression of sub-picometer resonance dips, insertion losses, and high-frequency noise floors. Implemented and benchmarked in `@trace-kit/core`.
 * **Logarithmic & Multi-Axis Viewport:** `@trace-kit/core`'s projection layer supports base-10 logarithmic Y-axis transforms (with decade/mantissa tick selection) alongside the linear transform, and multi-axis viewports with N independent, left-stacked Y axes sharing one X domain — direct groundwork for dBm-scale instrumentation and multi-trace comparison.
 * **Visual Regression Harness:** A Chromium-based visual regression suite (`packages/renderers/test/visual/`) compares rendered Canvas2D output against committed golden screenshots. Goldens are generated and compared exclusively on `ubuntu-latest` in CI (a platform guard prevents local runs from being treated as authoritative), and can only be regenerated through a separate, human-triggered workflow — an ordinary test run can never silently overwrite a golden.
 * **Semiconductor Wafer Map Engine:** Instanced rendering pipeline (`gl.drawArraysInstanced`) for multi-die inspection targeting 60,000 active dies, with analytical hit-testing that is $O(1)$ for a uniform reticle and degrades to $O(\log n)$ via cumulative pitch tables when street widths are non-uniform. Circular wafers and partial edge dies stay $O(1)$ through a dense occupancy grid.
 * **Cross-Chart Synchronized Telemetry:** Decoupled `BroadcastChannel` / `EventTarget` bus syncing multiple telemetry channels (e.g., optical power, temperature, bias currents) across isolated canvases with GPU-accelerated CSS crosshair transforms.
 * **Lossless Vector Reporting:** Standalone mathematical generator exporting sub-sampled views to clean, publication-grade SVG paths without canvas rasterization artifacts.
+* **Raw-Data Viewport Export:** `@trace-kit/core` resolves an X window to a source index span on the authoritative samples (`resolveSampleWindow`, allocation-free, binary search) and streams it at full resolution, never decimated: a lazy tidy CSV generator (`exportCsv`, absolute f64 X, `NaN` gaps, RFC 4180 ids) and a NumPy `.npy` v1.0 writer (`exportNpy`, little-endian, one reused scratch buffer). Implemented, with a download control in the playground `/svg-export` view.
 
 ---
 
@@ -74,9 +78,10 @@ TraceKit is structured as an enterprise-grade monorepo powered by `pnpm` workspa
 trace-kit/
 ├── packages/
 │   ├── core/           # [IMPLEMENTED] Isomorphic TS. Decimation (LTTB, Min-Max), transport
-│   │                   #   contract, viewport transform (linear + logarithmic, multi-axis)
-│   ├── renderers/      # [IMPLEMENTED, Canvas2D only] Path2D batching, multi-axis gutters.
-│   │                   #   No WebGL2 yet.
+│   │                   #   contract, viewport transform (linear + logarithmic, multi-axis),
+│   │                   #   window resolution, CSV / .npy raw-data export
+│   ├── renderers/      # [IMPLEMENTED] Canvas2D (Path2D batching, multi-axis gutters) and
+│   │                   #   WebGL2 (`./webgl2`). No automatic engine switch yet.
 │   ├── vue/            # [PLANNED] Vue 3: shallowRef/markRaw, useSpectrumEngine composable
 │   └── react/          # [PLANNED] React: canvas hooks, Next.js SSR-safe
 ├── apps/
@@ -90,8 +95,9 @@ trace-kit/
 
 ### Decoupled Graphics Pipeline
 
-> The diagram below shows the intended full pipeline. Today only the `Canvas2DRenderer` branch
-> is implemented; `WebGL2Renderer`, `@trace-kit/vue`, and `@trace-kit/react` are `[PLANNED]`.
+> The diagram below shows the intended full pipeline. Today both renderer branches
+> exist (`Canvas2DRenderer`, `WebGL2FigureRenderer`) but the automatic switch is `[PLANNED]`, as
+> are `@trace-kit/vue` and `@trace-kit/react`.
 
 ```text
 [ Data Source / Stream ]
@@ -222,7 +228,7 @@ export const OpticalBenchMonitor: React.FC = () => {
 The decimation and viewport math in `@trace-kit/core` and the `Canvas2DRenderer` in
 `@trace-kit/renderers` are real and implemented today; this example is closer to the actual API
 surface than the Vue/React examples above, though names and signatures may still change before a
-publish. `WebGL2Renderer` does not exist yet — Canvas2D is the only renderer available:
+publish. The WebGL2 renderer is shown in its own section below:
 
 ```ts
 import { minMaxEnvelope } from '@trace-kit/core';
@@ -231,7 +237,7 @@ import { Canvas2DRenderer } from '@trace-kit/renderers';
 // Server-side decimation (100% isomorphic, Node.js compatible)
 const { reducedX, reducedY } = minMaxEnvelope(rawX, rawY, { targetPoints: 2000 });
 
-// Client-side direct renderer mounting (Canvas2D only — WebGL2 is [PLANNED])
+// Client-side direct renderer mounting (Canvas2D)
 const canvas = document.getElementById('plot') as HTMLCanvasElement;
 const renderer = new Canvas2DRenderer();
 renderer.initialize(canvas);
@@ -245,6 +251,32 @@ renderer.setTransform({
 });
 renderer.render();
 ```
+
+#### WebGL2 renderer (`@trace-kit/renderers/webgl2`)
+
+`WebGL2FigureRenderer` draws every sample on the GPU. It is constructed from **three canvases you
+create and stack** in one CSS box (underlay below, plot, overlay above); it creates no DOM itself:
+
+```ts
+import { WebGL2FigureRenderer } from '@trace-kit/renderers/webgl2';
+
+// Same CSS box, position: absolute, in this order: underlay, plot, overlay.
+const renderer = new WebGL2FigureRenderer({ surfaces: { underlay, plot, overlay } });
+renderer.setData(payload);
+renderer.resize(800, 400, window.devicePixelRatio);
+renderer.render();
+```
+
+* **Default decimation differs per engine.** With nothing selected, Canvas2D decimates with LTTB to
+  about `2 × plot width` vertices and WebGL2 draws the full payload; `setDecimation(undefined)`
+  restores each backend's own default. An explicit selection runs the same core decimators on both.
+* **A plot canvas is single-use:** a canvas that produced a `2d` context can never yield `webgl2`,
+  and a disposed one has lost its context. Create fresh canvases to switch engine or remount.
+* **Recorded divergences from Canvas2D:** a trace `dash` style is ignored (the line is solid), traces
+  are scissored to the plot rectangle (Canvas2D does not clip), and a `±Infinity` Y sample reaches
+  the plot edge through a guard band where Canvas2D bridges the sample.
+* The playground `/engine-parity` route draws any shared fixture on both engines side by side, with
+  each engine's vertex count.
 
 ---
 

@@ -57,8 +57,10 @@ export interface FigureRenderer {
   clear(): void;
 
   /**
-   * Replaces the decimation selection. `undefined` restores the default (LTTB at the
-   * viewport-derived threshold). Invalidates the decimated result. Does not draw.
+   * Replaces the decimation selection. `undefined` restores the backend's default, which differs
+   * per backend: Canvas2D decimates with LTTB down to a vertex budget derived from the plot width, WebGL2
+   * draws every sample. An explicit selection runs the same core decimators on every backend. Invalidates the
+   * decimated result. Does not draw.
    */
   setDecimation(selection: DecimationSelection | undefined): void;
 

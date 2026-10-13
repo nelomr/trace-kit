@@ -1,16 +1,16 @@
 // @ts-check
 import tseslint from "typescript-eslint";
 
-// Flat config per design.md §D1. Type-aware linting through `parserOptions.projectService`,
+// Flat config. Type-aware linting through `parserOptions.projectService`,
 // resolved against `packages/core/tsconfig.test.json` so `test/**` and `bench/**` are inside a
-// discoverable TypeScript project (design.md §D1.c) — without it, `projectService` errors with
+// discoverable TypeScript project — without it, `projectService` errors with
 // "file not found in any of the projects" before any rule runs.
 //
 // `no-explicit-any` is configured with no relaxations (`fixToUnknown: false`,
 // `ignoreRestArgs: false` — `ignoreRestArgs: true` would silently permit
 // `(...args: any[])`, exactly the shape a hot-path callback would use).
 //
-// `no-restricted-syntax` carries all four selectors from design.md §D1.b (not just the
+// `no-restricted-syntax` carries all four selectors (not just the
 // single `TSAsExpression > TSNeverKeyword` the original checklist proposed): each of
 // `<never>x`, `x satisfies never`, and — most importantly — the `x as unknown as Foo` double
 // assertion (the commonest real suppression idiom) is banned alongside plain `x as never`.
@@ -18,7 +18,7 @@ import tseslint from "typescript-eslint";
 // `**/test/fixtures/**` and `**/dist/**` are ignored by this main run: the fixtures under
 // `test/fixtures/` are permanent regression assets that must trigger these exact rules, and
 // are asserted against directly by `packages/core/test/lint-rules.test.ts` via ESLint's Node
-// API with the ignore lifted (design.md §D1.d).
+// API with the ignore lifted.
 export default tseslint.config(
   {
     ignores: [
@@ -35,6 +35,7 @@ export default tseslint.config(
       "packages/core/test/**",
       "packages/core/bench/**",
       "packages/renderers/test/**",
+      "packages/renderers/bench/**",
     ],
     extends: [
       ...tseslint.configs.recommendedTypeChecked,
@@ -58,6 +59,11 @@ export default tseslint.config(
             // the path itself falls under `src/**`, so it still needs this fallback entry.
             "packages/core/src/decimation/__hot-path-fixture-proof__.ts",
             "packages/renderers/src/path/__hot-path-fixture-proof__.ts",
+            "packages/renderers/src/webgl2/__hot-path-fixture-proof__.ts",
+            // Same reason for the export scope: the lint meta-test lints an inline body under
+            // this virtual path (the window resolver's glob targets a real file, so it needs no
+            // entry) to prove the scoped glob is live.
+            "packages/core/src/export/__hot-path-fixture-proof__.ts",
           ],
           defaultProject: "packages/core/tsconfig.test.json",
           maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 8,
@@ -113,6 +119,7 @@ export default tseslint.config(
       "packages/core/test/**/*.ts",
       "packages/core/bench/**/*.ts",
       "packages/renderers/test/**/*.ts",
+      "packages/renderers/bench/**/*.ts",
     ],
     extends: [
       ...tseslint.configs.recommendedTypeChecked,
@@ -157,14 +164,17 @@ export default tseslint.config(
     },
   },
   {
-    // Allocation-free hot-path enforcement (design.md §D5). Scoped to `src/decimation/**`
+    // Allocation-free hot-path enforcement. Scoped to `src/decimation/**`
     // only — this is the source-level instrument in the three-instrument enforcement graph
     // (source / runtime / codegen). The loop-scoped selectors are nested under
     // `:matches(ForStatement, WhileStatement, DoWhileStatement)` because boundary validation
     // must still be able to construct and throw a `RangeError` *before* the loop; the ban is
     // on the loop body, not the file. The remaining selectors are unscoped across the whole
     // glob because they are never acceptable in a hot-path module.
-    files: ["packages/core/src/decimation/**/*.ts"],
+    files: [
+      "packages/core/src/decimation/**/*.ts",
+      "packages/core/src/viewport/window.ts",
+    ],
     rules: {
       "no-restricted-syntax": [
         "error",
@@ -257,12 +267,108 @@ export default tseslint.config(
     },
   },
   {
-    // Allocation-free hot-path enforcement for the renderers package's trace-path module only
-    // (design.md §D6) — the same selector list as `packages/core/src/decimation/**` (task
-    // 4.6), reused verbatim rather than re-derived, since the allocation-free contract is
-    // identical. `packages/renderers/src/canvas2d/**` is intentionally exempt: it constructs
-    // exactly one `Path2D`/frame, which is not a hot-path allocation under this design.
-    files: ["packages/renderers/src/path/**/*.ts"],
+    // The export serializers (`exportCsv`, `exportNpy`) are generators by contract and build
+    // their output inside loops, so they get the loop-scoped allocation selectors and the
+    // bans that stay meaningful for them (`await`, `async`, rest parameters, `arguments`,
+    // `for...of`), but not the blanket generator ban the decimation kernels carry.
+    files: ["packages/core/src/export/**/*.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) ObjectExpression",
+          message:
+            "Object literals inside a loop allocate on every iteration. Use scalar locals instead.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) ArrayExpression",
+          message:
+            "Array literals inside a loop allocate on every iteration. Write into a preallocated buffer instead.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) TemplateLiteral",
+          message:
+            "Template literals inside a loop allocate a string on every iteration. Move message construction outside the loop.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) NewExpression",
+          message:
+            "`new` inside a loop allocates on every iteration. Construct once outside the loop.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) ArrowFunctionExpression",
+          message:
+            "A per-call closure inside a loop allocates on every iteration. Hoist the function outside the loop.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) FunctionExpression",
+          message:
+            "A per-call closure inside a loop allocates on every iteration. Hoist the function outside the loop.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) SpreadElement",
+          message:
+            "Spread inside a loop allocates on every iteration. Use an explicit index-based copy instead.",
+        },
+        {
+          selector:
+            ":matches(ForStatement, WhileStatement, DoWhileStatement) MemberExpression[property.name=/^(map|filter|slice|subarray|reduce|reduceRight|forEach|flatMap|concat|entries|keys|values|toSorted|toReversed|with)$/]",
+          message:
+            "This typed-array/array method allocates a new view or object. Use an explicit index-based loop writing into a preallocated buffer instead.",
+        },
+        {
+          selector: "ForOfStatement",
+          message:
+            "`for...of` over a typed array allocates an iterator object. Use an indexed `for` loop instead.",
+        },
+        {
+          selector: "RestElement",
+          message:
+            "Rest parameters allocate an array on every call. Use explicit positional parameters instead.",
+        },
+        {
+          selector: "Identifier[name=\"arguments\"]",
+          message:
+            "`arguments` allocates an array-like object. Use explicit positional parameters instead.",
+        },
+        {
+          selector: "AwaitExpression",
+          message: "`async`/`await` is not permitted in an export module.",
+        },
+        {
+          selector: "FunctionDeclaration[async=true]",
+          message: "`async` functions are not permitted in an export module.",
+        },
+      ],
+    },
+  },
+  {
+    // Allocation-free hot-path enforcement for the renderers package's per-frame code: the
+    // trace-path module and the four WebGL2 files that run on every `render()` — the same
+    // selector list as `packages/core/src/decimation/**`, reused verbatim rather than
+    // re-derived, since the allocation-free contract is identical.
+    // `packages/renderers/src/canvas2d/**` is intentionally exempt: it constructs exactly one
+    // `Path2D`/frame, which is not a hot-path allocation under this design. The remaining
+    // `src/webgl2/` files (`shaders`, `program`, `color`, `hidden-canvas`, `trace-slot` and the
+    // renderer class) are cold by construction — they compile programs, create GL objects,
+    // parse colors and grow scratch buffers — so they are exempt, and a `src/webgl2/**` glob
+    // would reject that legitimate setup code. The virtual `__hot-path-fixture-proof__.ts` path
+    // exists only so the meta-test can prove this block is live.
+    files: [
+      "packages/renderers/src/path/**/*.ts",
+      "packages/renderers/src/webgl2/frame.ts",
+      "packages/renderers/src/webgl2/upload.ts",
+      "packages/renderers/src/webgl2/precision.ts",
+      "packages/renderers/src/webgl2/float-bits.ts",
+      "packages/renderers/src/webgl2/__hot-path-fixture-proof__.ts",
+    ],
     rules: {
       "no-restricted-syntax": [
         "error",

@@ -19,3 +19,9 @@ export {
   type YAxisRegistration,
   type SharedViewportOptions,
 } from "./axes.js";
+export {
+  createSampleSpan,
+  resolveSampleWindow,
+  type SampleSpan,
+  type SampleWindowOptions,
+} from "./window.js";

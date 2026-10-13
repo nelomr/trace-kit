@@ -50,8 +50,8 @@ jobs:
         # that actually declares it.
         #
         # Placed here, before any `turbo run`/`pnpm run test` invocation — not after, as this
-        # workflow's own first pass had it. `turbo.json`'s `test` task `dependsOn: ["test:visual"]`
-        # (D5), so plain `pnpm run test` below pulls `test:visual` in transitively; discovered
+        # workflow's own first pass had it. `turbo.json`'s `test` task `dependsOn: ["test:visual"]`,
+        # so plain `pnpm run test` below pulls `test:visual` in transitively; discovered
         # for real when a rerun of this exact job failed with "Executable doesn't exist at
         # .../chromium_headless_shell.../chrome-headless-shell" during the "Unit tests" step,
         # because Chromium had not been installed yet at that point in the file.
@@ -99,7 +99,7 @@ jobs:
             if (r.numPassedTests + r.numFailedTests === 0) {
               console.error(
                 "Every visual case reported pending/skipped on ubuntu-latest — the CI-only golden " +
-                "gate (P5) failed to detect that this IS the CI environment. numPendingTests=" +
+                "platform gate failed to detect that this IS the CI environment. numPendingTests=" +
                 r.numPendingTests,
               );
               process.exit(1);
@@ -118,13 +118,13 @@ jobs:
           path: packages/renderers/test/visual/__screenshots__/__diffs__/
           if-no-files-found: ignore
 
-      - name: Dependency freshness (documentation only, not a blocking gate — D9)
+      - name: Dependency freshness (documentation only, not a blocking gate)
         run: |
-          echo "Freshness is enforced manually (D9), not by CI. Before updating a dependency, run:"
+          echo "Freshness is enforced manually, not by CI. Before updating a dependency, run:"
           echo "  pnpm run check:freshness"
           echo "See scripts/check-dependency-freshness.mjs for the procedure."
 
-      - name: No unexpected deprecation warnings (P9)
+      - name: No unexpected deprecation warnings
         run: |
           set -o pipefail
           ALLOWLIST="DEP0169"  # pnpm 9.15.4's own url.parse() usage — not repository code.

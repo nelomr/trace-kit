@@ -93,11 +93,13 @@ set or, when bypassed, the direct sample range.
   exactly
 
 ### Requirement: The Decimation Threshold Is Derived From Plot-Area Device Width
-`Canvas2DRenderer` MUST derive its decimation threshold as
-`min(sampleCount, max(2, ceil(transform.plotWidth * 2)))` — twice the plot area's device-pixel
-width — and MUST recompute it whenever `transform.plotWidth` changes. When `sampleCount` is less
-than or equal to that threshold, the renderer MUST bypass decimation and walk the direct sample
-range `[0, sampleCount)` rather than invoking `lttb`.
+The threshold MUST be computed by a shared rule `deriveDecimationTarget(sampleCount, plotWidth)`
+equal to `min(sampleCount, max(2, ceil(plotWidth * 2)))`, living in a module importable by both
+`Canvas2DRenderer` and `exportToSvg`. `Canvas2DRenderer` MUST call it with
+`transform.plotWidth` (device pixels) and recompute it whenever `transform.plotWidth` changes;
+`exportToSvg` calls it with the plot width in CSS px (the rule at `dpr = 1`). When `sampleCount`
+is less than or equal to the result, the renderer MUST bypass decimation and walk the direct
+sample range `[0, sampleCount)` rather than invoking `lttb`.
 
 #### Scenario: The decimated count is bounded by twice the plot width regardless of sample count
 - **GIVEN**: a fixed plot width producing a threshold `T`, and sample counts of `100,000` and
@@ -114,8 +116,18 @@ range `[0, sampleCount)` rather than invoking `lttb`.
 #### Scenario: A sample count above threshold invokes lttb with that threshold
 - **GIVEN**: a plot width whose threshold is `T`, and `sampleCount > T`
 - **WHEN**: `render()` runs for the first time at this revision and transform
-- **THEN**: `lttb` is invoked exactly once with `threshold === T`, and returns indices consumed
-  by `buildTracePath`
+- **THEN**: `lttb` is invoked exactly once with `threshold === T`
+
+#### Scenario: Canvas2D and SVG derive the target through the same function
+- **GIVEN**: sources of `canvas2d/` and `svg/`
+- **WHEN**: they are inspected
+- **THEN**: both call `deriveDecimationTarget` and neither contains an inline
+  `ceil(plotWidth * 2)` expression
+
+#### Scenario: The shared rule is pinned by table
+- **GIVEN**: `(sampleCount, plotWidth)` of `(1000000, 700)`, `(100, 700)`, `(5, 0)`, `(1, 0)`
+- **WHEN**: `deriveDecimationTarget` is called
+- **THEN**: it returns `1400`, `100`, `2` and `1` respectively
 
 ### Requirement: Decimation Is Memoized by Revision, Threshold, and Domain
 `Canvas2DRenderer` MUST NOT re-invoke `lttb` on a `render()` call when `payload.revision`, the
@@ -243,34 +255,37 @@ behavior.
   archived single-trace count
 
 ### Requirement: The Renderer Resolves Per-Trace Style and Per-Trace `ViewportTransform` From the Collection
-`Canvas2DRenderer` MUST, for each trace entry in the collection, resolve that entry's style
-(color, line width, dash) and its `ViewportTransform` (via the precomputed `yAxisId`-to-index
-`Int32Array` owned by `trace-collection-payload`) before issuing that trace's drawing calls. A
-trace entry lacking an explicit style MUST receive a default from a fixed palette owned by the
-renderer, never by core (per `trace-collection-payload`'s "Core exposes no default color
-palette" requirement). `ctx.lineWidth` for each trace MUST be derived from that trace's own style
-and the injected `dpr`, exactly as the archived "Device-Pixel Sizing" requirement derives it for
-the single-trace case.
+Per-trace style resolution (color, line width, dash, `markIsolatedSamples`) MUST be implemented
+by a shared `resolveTraceStyle` rule, with the fixed default palette owned by `@trace-kit/renderers`
+(never by core, per `trace-collection-payload`), importable by both backends. For each trace entry
+`Canvas2DRenderer` MUST resolve that entry's style via the shared rule and its `ViewportTransform`
+(via the precomputed `yAxisId`-to-index `Int32Array` owned by `trace-collection-payload`) before
+issuing that trace's drawing calls. A trace lacking an explicit style MUST receive the
+palette entry for its index. `ctx.lineWidth` MUST be derived from that trace's own resolved style
+and the injected `dpr`, as the archived "Device-Pixel Sizing" requirement derives it. Resolution
+MUST be allocation-free per frame in Canvas2D (resolved at `setTraces`).
 
 #### Scenario: Two traces on two axes are drawn with their own resolved transform
-- **GIVEN**: a `TraceCollection` with two entries bound to two distinct `yAxisId`s, backed by two
-  distinct `ViewportTransform`s with different Y domains
+- **GIVEN**: a `TraceCollection` with two entries bound to two distinct `yAxisId`s with different
+  Y domains
 - **WHEN**: `render()` draws both traces
-- **THEN**: each trace's projected Y coordinates are computed using its own bound transform, not
-  the other trace's transform
+- **THEN**: each trace's projected Y coordinates use its own bound transform
 
 #### Scenario: A trace without explicit style receives the renderer's default palette color
 - **GIVEN**: a trace entry constructed with no style override
 - **WHEN**: `render()` draws that trace
-- **THEN**: the stroke style applied comes from the renderer's fixed default palette, and no
-  color is read from `@trace-kit/core`
+- **THEN**: the stroke style comes from the fixed default palette, and no color is read from
+  `@trace-kit/core`
 
 #### Scenario: lineWidth is derived per-trace from that trace's style and the injected dpr
-- **GIVEN**: two trace entries with `style.lineWidthCss` of `1` and `3` respectively, and the
-  renderer resized with `dpr: 2`
-- **WHEN**: `render()` draws both traces
-- **THEN**: the fake context records `ctx.lineWidth === 2` before the first trace's `stroke` call
-  and `ctx.lineWidth === 6` before the second trace's `stroke` call
+- **GIVEN**: two traces with `style.lineWidthCss` of `1` and `3`, and `dpr: 2`
+- **WHEN**: `render()` draws both
+- **THEN**: `ctx.lineWidth === 2` before the first `stroke` and `6` before the second
+
+#### Scenario: Both backends resolve identical style for identical input
+- **GIVEN**: one `TraceCollection` with a mix of styled and unstyled traces
+- **WHEN**: it is resolved for Canvas2D and for `exportToSvg`
+- **THEN**: the resolved color, line width, dash and marker flag per trace are equal
 
 ### Requirement: Decimation Memoization Is Keyed Per Trace
 The archived "Decimation Is Memoized by Revision, Threshold, and Domain" requirement is extended:
@@ -307,63 +322,66 @@ key so unchanged frames invoke neither decimator again.
   line segment spans a source `NaN`
 
 ### Requirement: Isolated Samples Are Painted as Filled Square Markers by Default
-An *isolated segment* is a finite segment (per `gap-sentinel-semantics`) that references exactly
-one distinct source index: on the direct path a segment of length 1, on the decimated path a
-segment whose non-`-1` indices are all equal (including an `lttb` singleton and a
-`minMaxEnvelopeIndices` bucket `[i, i]` bounded by breaks). For every isolated segment of a trace
-whose resolved `markIsolatedSamples` is `true` (the default when the style omits it), the renderer
-MUST paint an axis-aligned filled square centered on `(projectX(t, x[i]), projectY(t, y[i]))` with
-side `s = 2 * lineWidthCss * dpr`, issued as `rect(px - s / 2, py - s / 2, s, s)` on a marker
-`Path2D` distinct from the trace's line `Path2D`, filled with exactly one `fill(markerPath)` call
-per trace after that trace's `stroke(linePath)`, with `fillStyle` set to the trace's resolved
-stroke color. The marker MUST NOT be stroked, so `lineCap`, `lineJoin` and the dash pattern never
-affect it. The renderer MUST NOT construct a marker `Path2D` nor issue `fillStyle`/`fill` for a
-trace with zero isolated segments or with `markIsolatedSamples === false`. The isolated-segment
-count per trace MUST be held in a typed column allocated in `setTraces` and recomputed only when
-that trace's decimation memo is recomputed. The marker walk and count MUST NOT allocate, and
-`buildTracePath`'s signature and call sequence MUST remain as specified above.
-`TraceDrawingContext` MUST expose `fill(path: Path2D): void`.
+The marker rule is unchanged for Canvas2D and is now a shared rule: the isolated-segment
+definition and the side `s = 2 * lineWidthCss * dpr` MUST be implemented once in a module
+importable by both backends. An *isolated segment* is a finite segment (per
+`gap-sentinel-semantics`) that references exactly one distinct source index: on the direct path a
+segment of length 1, on the decimated path a segment whose non-`-1` indices are all equal. For
+every isolated segment of a trace whose resolved `markIsolatedSamples` is `true` (default when the
+style omits it), `Canvas2DRenderer` MUST paint an axis-aligned filled square centered on
+`(projectX(t, x[i]), projectY(t, y[i]))` with side `s`, issued as `rect(px - s / 2, py - s / 2, s,
+s)` on a marker `Path2D` distinct from the trace's line `Path2D`, filled with exactly one
+`fill(markerPath)` call per trace after that trace's `stroke(linePath)`, with `fillStyle` set to
+the trace's resolved stroke color. The marker MUST NOT be stroked. The renderer MUST NOT construct
+a marker `Path2D` nor issue `fillStyle`/`fill` for a trace with zero isolated segments or
+`markIsolatedSamples === false`. The isolated-segment count MUST be held in a typed column
+allocated in `setTraces` and recomputed only when that trace's decimation memo is recomputed. The
+marker walk and count MUST NOT allocate, and `buildTracePath`'s signature and call sequence MUST
+remain as specified. `TraceDrawingContext` MUST expose `fill(path: Path2D): void`. `exportToSvg`
+uses the same isolated-segment definition and `s` with `dpr = 1`.
 
 #### Scenario: An isolated sample on the direct path produces one marker
-- **GIVEN**: a trace below the decimation threshold with `y = [1, NaN, 5, NaN, 2, 3]`, default
-  style, `lineWidthCss = 1`, `dpr = 2`, and a fake `TraceDrawingContext` recording calls
+- **GIVEN**: a trace below the decimation threshold with `y = [NaN, 2, 3, NaN, 5, NaN, 2, 3]`, default
+  style, `lineWidthCss = 1`, `dpr = 2`, and a fake `TraceDrawingContext`
 - **WHEN**: `render()` is called
-- **THEN**: the marker sink records exactly one `rect` call with arguments
-  `(px - 2, py - 2, 4, 4)` where `(px, py)` is the projection of sample `2`, and the context
-  records `stroke`, then `fillStyle` equal to the trace color, then exactly one `fill` for that
-  trace
+- **THEN**: the marker sink records exactly one `rect` with arguments `(px - 2, py - 2, 4, 4)`
+  for sample `4` (the only isolated sample; indices `1`-`2` and `6`-`7` are two-sample
+  segments and produce no marker), and the context records `stroke`, then `fillStyle` equal to the trace color,
+  then exactly one `fill` for that trace
 
 #### Scenario: An isolated sample on the decimated path produces one marker
-- **GIVEN**: a trace above the decimation threshold whose decimated index stream contains one
-  segment referencing a single source index (an `lttb` singleton, or a `minMaxEnvelopeIndices`
-  bucket `[i, i]` between two `[-1, -1]` buckets)
+- **GIVEN**: a trace above the threshold whose decimated stream contains one segment referencing a
+  single source index
 - **WHEN**: `render()` is called
-- **THEN**: exactly one marker `rect` is recorded for that segment, centered on the projection of
-  sample `i`, and exactly one `fill` call is recorded for that trace
+- **THEN**: exactly one marker `rect` is recorded for that segment and exactly one `fill` for the
+  trace
 
 #### Scenario: A segment of two distinct samples produces no marker
-- **GIVEN**: a decimated stream `[-1, -1, 5, 3, -1, -1]` (one bucket with distinct min/max indices)
+- **GIVEN**: a decimated stream `[-1, -1, 5, 3, -1, -1]`
 - **WHEN**: the marker walk runs
-- **THEN**: zero markers are recorded; the segment is drawn as a line only
+- **THEN**: zero markers are recorded
 
 #### Scenario: Gap-free input produces no marker and an unchanged call sequence
-- **GIVEN**: a gap-free trace with more than one sample, on both the direct and the decimated path
+- **GIVEN**: a gap-free trace with more than one sample, direct and decimated
 - **WHEN**: `render()` is called
-- **THEN**: no marker `Path2D` is constructed, no `fillStyle` assignment or `fill` call is recorded
-  for the trace, and the recorded call sequence equals the pre-change sequence
+- **THEN**: no marker `Path2D` is constructed and no `fillStyle`/`fill` is recorded for the trace
 
 #### Scenario: The per-trace flag disables markers
-- **GIVEN**: the gapped trace of the direct-path scenario with `style.markIsolatedSamples = false`
+- **GIVEN**: the gapped trace with `style.markIsolatedSamples = false`
 - **WHEN**: `render()` is called
-- **THEN**: no marker `Path2D` is constructed and no `fill` call is recorded for that trace; its
-  line segments are drawn unchanged
+- **THEN**: no marker `Path2D` is constructed and no `fill` call is recorded for that trace
 
 #### Scenario: Marker rendering is zero-allocation and memoized
-- **GIVEN**: a two-trace collection where one trace contains isolated segments, under
-  `--expose-gc`, after warm-up, at a fixed revision, threshold and domain
+- **GIVEN**: a two-trace collection with isolated segments under `--expose-gc`, after warm-up, at
+  a fixed revision, threshold and domain
 - **WHEN**: `render()` is called 60 times
-- **THEN**: the isolated-segment count is computed once per trace in total, and no GC event is
-  reported beyond the per-trace `Path2D` constructions already required by this spec
+- **THEN**: the isolated-segment count is computed once per trace in total, with no GC event
+  beyond the per-trace `Path2D` constructions already required
+
+#### Scenario: Both backends share the isolated-segment definition
+- **GIVEN**: sources of `canvas2d/` and `svg/`
+- **WHEN**: they are inspected
+- **THEN**: both import the isolated-segment rule and neither re-implements it
 
 ### Requirement: All Other Archived Requirements Hold Unchanged for Gap-Free, Single-Trace Input
 The archived requirements not listed above — identity CTM usage, `buildTracePath`'s
@@ -385,3 +403,40 @@ a single payload.
   100,000 samples decimated to roughly 2x a 1920px plot width, under `--expose-gc`, after warm-up
 - **WHEN**: a `PerformanceObserver({ entryTypes: ["gc"] })` measures the full `render()` call
 - **THEN**: zero GC events are reported across both traces' point loops combined
+
+## ADDED Requirements
+
+### Requirement: The Shared Rules Module Is Backend-Neutral and Isomorphic
+The shared rules (`deriveDecimationTarget`, `resolveTraceStyle`, default palette, isolated-segment
+definition and marker side) MUST live outside `canvas2d/` and `svg/`, MUST import only from
+`@trace-kit/core` and sibling neutral modules, and MUST reference no browser global, so they run
+in Node.
+
+#### Scenario: Shared rules run in Node
+- **GIVEN**: a Node unit test without a DOM
+- **WHEN**: each shared rule is invoked
+- **THEN**: it returns without a `ReferenceError`
+
+#### Scenario: No backend imports
+- **GIVEN**: the shared rules module sources
+- **WHEN**: their imports are inspected
+- **THEN**: none targets `canvas2d/` or `svg/`
+
+### Requirement: A Single-Payload Trace Paints Isolated-Sample Markers
+A trace set through `setData` MUST paint isolated-sample markers with the same isolated-segment
+rule and side (`2 * lineWidthCss * dpr`) as a collection trace, filled with `style.traceColor`,
+issued as one marker `Path2D` and one `fill` after the trace's `stroke`, only when its isolated
+count is `> 0`. The isolated count MUST be memoized with the decimation result (no per-frame walk).
+Markers are always on for a single payload (it carries no `TraceStyle`). A gap-free single payload
+MUST keep its pre-change call sequence.
+
+#### Scenario: A gapped single payload paints its isolated sample
+- **GIVEN**: `setData` with `y = [NaN, 2, 3, NaN, 5, NaN, 2, 3]` below threshold, `lineWidthCss 1`, `dpr 2`
+- **WHEN**: `render()` runs
+- **THEN**: one marker `rect(px - 2, py - 2, 4, 4)` and one `fill` with `fillStyle === traceColor`
+  follow the line `stroke`
+
+#### Scenario: Gap-free single payload is unchanged
+- **GIVEN**: a gap-free single payload
+- **WHEN**: `render()` runs
+- **THEN**: no marker `Path2D` or `fill` is recorded

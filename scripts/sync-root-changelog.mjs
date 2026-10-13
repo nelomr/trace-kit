@@ -27,8 +27,8 @@ const DEFAULT_ICON = '📦';
 // Display metadata (a friendly name + icon) for packages this repo knows about by convention.
 // This is presentation-only — it never gates *whether* a package is included, only how its
 // section header reads. A matched package absent from this map still gets a derived name and
-// the default icon, per proposal.md's "derive from pnpm-workspace.yaml's packages: globs, not
-// a hardcoded array" fix: the governed set of *which* packages are checked is always derived.
+// the default icon, derived from pnpm-workspace.yaml's packages: globs rather than a
+// hardcoded array, so: the governed set of *which* packages are checked is always derived.
 const DISPLAY_OVERRIDES = {
   '@trace-kit/core': { name: 'Core Engine', icon: '⚡' },
   '@trace-kit/renderers': { name: 'Renderers', icon: '🎨' },

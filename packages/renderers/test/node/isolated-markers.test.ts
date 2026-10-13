@@ -3,6 +3,7 @@ import { createViewportTransform, projectX, projectY } from "@trace-kit/core";
 import { describe, expect, it } from "vitest";
 import {
   buildIsolatedMarkers,
+  collectIsolatedSampleIndices,
   countIsolatedSegments,
   type MarkerSink,
 } from "../../src/path/isolated-markers.js";
@@ -212,6 +213,103 @@ describe("isolated markers allocation", () => {
       sink.calls.length = 0;
       buildIsolatedMarkers(sink, transform, x, y, new Int32Array(0), 0, n, 3);
     }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    observer.disconnect();
+    expect(events).toBe(0);
+  }, 60_000);
+});
+
+describe("collectIsolatedSampleIndices", () => {
+  it("writes the source index of every isolated direct-path sample and returns their count", () => {
+    const y = new Float32Array([1, NaN, 5, NaN, 2, 3]);
+    const x = new Float32Array(y.length);
+    const out = new Int32Array(4).fill(-9);
+
+    const count = collectIsolatedSampleIndices(x, y, new Int32Array(0), 0, y.length, out);
+
+    expect(count).toBe(2);
+    expect(Array.from(out.subarray(0, count))).toEqual([0, 2]);
+    expect(out[2]).toBe(-9);
+  });
+
+  it("collects the singleton of a decimated stream and the [i, i] min-max bucket", () => {
+    const x = new Float32Array(10);
+    const y = new Float32Array(10);
+    const lttbStream = new Int32Array([0, 1, -1, 5, -1, 8, 9]);
+    const minMaxStream = new Int32Array([-1, -1, 7, 7, -1, -1]);
+    const out = new Int32Array(4);
+
+    expect(collectIsolatedSampleIndices(x, y, lttbStream, lttbStream.length, 0, out)).toBe(1);
+    expect(out[0]).toBe(5);
+    expect(collectIsolatedSampleIndices(x, y, minMaxStream, minMaxStream.length, 0, out)).toBe(1);
+    expect(out[0]).toBe(7);
+  });
+
+  it("agrees with countIsolatedSegments and with the marker painter over random gap patterns", () => {
+    let state = 0x9e3779b9;
+    const next = (): number => {
+      state ^= state << 13;
+      state >>>= 0;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      state >>>= 0;
+      return state / 0x1_0000_0000;
+    };
+    for (let trial = 0; trial < 200; trial += 1) {
+      const n = 1 + Math.floor(next() * 60);
+      const x = new Float32Array(n);
+      const y = new Float32Array(n);
+      const gapRate = next();
+      for (let i = 0; i < n; i += 1) {
+        x[i] = i;
+        y[i] = next() < gapRate ? NaN : next() * 10 - 5;
+      }
+      // Half the trials run over a decimated stream with `-1` break markers.
+      const decimated = trial % 2 === 1;
+      let indices = new Int32Array(0);
+      let decimatedCount = 0;
+      if (decimated) {
+        indices = new Int32Array(n);
+        for (let i = 0; i < n; i += 1) indices[i] = next() < 0.3 ? -1 : Math.floor(next() * n);
+        decimatedCount = n;
+      }
+      const expected = countIsolatedSegments(x, y, indices, decimatedCount, n);
+      const out = new Int32Array(n + 1);
+      const count = collectIsolatedSampleIndices(x, y, indices, decimatedCount, n, out);
+      expect(count).toBe(expected);
+
+      const sink = new CountingMarkerSink();
+      buildIsolatedMarkers(sink, transform, x, y, indices, decimatedCount, n, 1);
+      expect(sink.calls).toHaveLength(count);
+      for (let k = 0; k < count; k += 1) {
+        const source = out[k] ?? -1;
+        expect(sink.calls[k]?.x).toBeCloseTo(projectX(transform, x[source] ?? 0) - 1, 9);
+        expect(sink.calls[k]?.y).toBeCloseTo(projectY(transform, y[source] ?? 0) - 1, 9);
+      }
+    }
+  });
+
+  it("allocates nothing across repeated walks", async () => {
+    if (typeof globalThis.gc !== "function") throw new Error("run with --expose-gc");
+    const n = 10_000;
+    const x = new Float32Array(n);
+    const y = new Float32Array(n);
+    for (let i = 0; i < n; i += 1) {
+      x[i] = i;
+      y[i] = i % 20 === 0 ? NaN : i;
+    }
+    const out = new Int32Array(n);
+    const none = new Int32Array(0);
+    let events = 0;
+    const observer = new PerformanceObserver((list) => {
+      events += list.getEntriesByType("gc").length;
+    });
+    observer.observe({ entryTypes: ["gc"] });
+    for (let i = 0; i < 5; i += 1) collectIsolatedSampleIndices(x, y, none, 0, n, out);
+    globalThis.gc();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    events = 0;
+    for (let i = 0; i < 50; i += 1) collectIsolatedSampleIndices(x, y, none, 0, n, out);
     await new Promise((resolve) => setTimeout(resolve, 0));
     observer.disconnect();
     expect(events).toBe(0);
