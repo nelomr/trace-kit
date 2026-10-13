@@ -1,6 +1,6 @@
 {
   "name": "@trace-kit/core",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "description": "High-throughput isomorphic telemetry & decimation engine",
   "type": "module",
   "license": "MIT",
