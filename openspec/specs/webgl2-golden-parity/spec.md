@@ -126,13 +126,22 @@ the background and the gridline colors exceeds `INK_DELTA`, attributed to the ne
 trace color. For each trace and device-pixel column, the `[firstInkRow, lastInkRow]` extent of that
 trace's ink on WebGL2 MUST lie within `K_ROWS` rows of the Canvas2D extent, for at least
 `P_COLUMNS` of the columns where either engine has that trace's ink; and the fraction of columns
-where exactly one engine has that trace's ink MUST NOT exceed `P_MISSING`. `K_INSET`, `K_ROWS`, `P_COLUMNS`, `P_MISSING`
-and `INK_DELTA` are named constants. The check MUST NOT use the Canvas2D comparator
+where exactly one engine has that trace's ink MUST NOT exceed `P_MISSING`. `K_INSET`, `K_ROWS`, `P_COLUMNS`, `P_MISSING`,
+`INK_DELTA` and `AXIS_LUMA_DELTA` are named constants. The check MUST NOT use the Canvas2D comparator
 options and MUST NOT read goldens. A trace is one-directional when Canvas2D's default decimates it
 (`deriveDecimationTarget(sampleCount, plotWidth) < sampleCount`: `resonance-peak`, `noise-floor`
 and `decimation-minmax`) or when its style carries a non-empty `dash` (drawn solid on WebGL2). For a
 one-directional trace the Canvas2D extent MUST lie within the WebGL2 extent expanded by `K_ROWS`,
 and only columns where Canvas2D has ink and WebGL2 has none count toward `P_MISSING`.
+
+Axes, ticks and labels MUST be compared outside the plot rectangle grown by
+`ceil(lineWidthCss * dpr) + K_INSET` device pixels, on the `axes-grid` fixture, by luminance rather
+than by exact color: both engines run the same painters on the same layout, so glyph geometry is
+identical, while the sub-pixel anti-aliasing differs (an opaque 2D context may use LCD text
+anti-aliasing with coloured fringes, a transparent one only grayscale). No pixel there may differ in
+luminance (Rec. 709 weights, 0-255) by more than `AXIS_LUMA_DELTA`, a non-zero constant chosen
+above the largest difference between aligned renders and below the difference a one-device-pixel
+shift produces.
 
 #### Scenario: Every fixture passes the structural check
 - **GIVEN**: all nine fixtures
@@ -155,6 +164,17 @@ and only columns where Canvas2D has ink and WebGL2 has none count toward `P_MISS
 - **WHEN**: both engines render it
 - **THEN**: for each gap column range of the payload, neither engine has ink on the trace row, and
   every isolated sample's marker location has ink on both engines
+
+#### Scenario: Axes and labels match in luminance outside the plot
+- **GIVEN**: the `axes-grid` fixture rendered on both engines
+- **WHEN**: pixels outside the plot rectangle grown by `ceil(lineWidthCss * dpr) + K_INSET` are compared
+- **THEN**: no pixel differs in luminance by more than `AXIS_LUMA_DELTA`, whatever the text
+  anti-aliasing mode of each context
+
+#### Scenario: A one-pixel shift of the labels fails the axis comparison
+- **GIVEN**: the same two renders, with one of them shifted by one device pixel
+- **WHEN**: the luminance comparison runs
+- **THEN**: at least one pixel exceeds `AXIS_LUMA_DELTA`, demonstrating the check is not vacuous
 
 #### Scenario: The comparator constants are separate from the Canvas2D ones
 - **GIVEN**: the sources

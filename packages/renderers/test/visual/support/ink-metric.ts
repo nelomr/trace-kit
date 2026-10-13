@@ -36,6 +36,38 @@ export interface InkPalette {
   readonly traces: readonly Rgb[];
 }
 
+function luma(data: ArrayLike<number>, offset: number): number {
+  return 0.2126 * (data[offset] ?? 0) + 0.7152 * (data[offset + 1] ?? 0) + 0.0722 * (data[offset + 2] ?? 0);
+}
+
+/**
+ * Pixels outside `rect` grown by `margin` whose luminance differs by more than `lumaDelta`. Used
+ * for axes and labels, where two engines draw identical glyph geometry but may anti-alias it
+ * differently (LCD fringes on an opaque canvas, grayscale on a transparent one): the chroma of a
+ * fringe is ignored, a shifted glyph is not.
+ */
+export function outsideRectLumaDifferences(
+  a: Pixels,
+  b: Pixels,
+  rect: Rect,
+  margin: number,
+  lumaDelta: number,
+): number {
+  const left = rect.left - margin;
+  const top = rect.top - margin;
+  const right = rect.left + rect.width + margin;
+  const bottom = rect.top + rect.height + margin;
+  let differing = 0;
+  for (let y = 0; y < a.height; y += 1) {
+    for (let x = 0; x < a.width; x += 1) {
+      if (x >= left && x < right && y >= top && y < bottom) continue;
+      const offset = (y * a.width + x) * 4;
+      if (Math.abs(luma(a.data, offset) - luma(b.data, offset)) > lumaDelta) differing += 1;
+    }
+  }
+  return differing;
+}
+
 export interface ColumnExtents {
   /** First inked row of each column of the measured rectangle, or -1. */
   readonly first: Int32Array;

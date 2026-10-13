@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  AXIS_LUMA_DELTA,
   INK_DELTA,
   K_INSET,
   K_ROWS,
@@ -31,7 +32,7 @@ describe("WebGL2 tolerance constants", () => {
   });
 
   it("starts at the documented values", () => {
-    expect([K_INSET, K_ROWS, P_COLUMNS, P_MISSING, INK_DELTA]).toEqual([3, 2, 0.95, 0.02, 32]);
+    expect([K_INSET, K_ROWS, P_COLUMNS, P_MISSING, INK_DELTA, AXIS_LUMA_DELTA]).toEqual([3, 2, 0.95, 0.02, 32, 48]);
   });
 
   it("keeps every constant non-zero and inside its calibration bound", () => {
@@ -48,6 +49,8 @@ describe("WebGL2 tolerance constants", () => {
     expect(P_MISSING).toBeLessThanOrEqual(0.05);
     expect(INK_DELTA).toBeGreaterThanOrEqual(24);
     expect(INK_DELTA).toBeLessThanOrEqual(48);
+    expect(AXIS_LUMA_DELTA).toBeGreaterThan(0);
+    expect(AXIS_LUMA_DELTA).toBeLessThanOrEqual(64);
   });
 
   it("is defined once: the literals appear in no other file", () => {
@@ -56,7 +59,7 @@ describe("WebGL2 tolerance constants", () => {
       if (file === home || file.endsWith("webgl2-tolerances.test.ts")) continue;
       const source = readFileSync(file, "utf8");
       expect(source, file).not.toMatch(/allowedMismatchedPixelRatio:\s*0\.002/);
-      expect(source, file).not.toMatch(/\b(K_INSET|K_ROWS|P_COLUMNS|P_MISSING|INK_DELTA)\s*=\s*[\d.]+/);
+      expect(source, file).not.toMatch(/\b(K_INSET|K_ROWS|P_COLUMNS|P_MISSING|INK_DELTA|AXIS_LUMA_DELTA)\s*=\s*[\d.]+/);
     }
   });
 });

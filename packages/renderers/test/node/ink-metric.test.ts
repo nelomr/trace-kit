@@ -8,10 +8,11 @@ import {
   inkLabels,
   insetPlotRect,
   outsideRectDifferences,
+  outsideRectLumaDifferences,
   type Pixels,
   type Rgb,
 } from "../visual/support/ink-metric.js";
-import { INK_DELTA, K_INSET, K_ROWS, P_COLUMNS, P_MISSING } from "../visual/support/webgl2-tolerances.js";
+import { AXIS_LUMA_DELTA, INK_DELTA, K_INSET, K_ROWS, P_COLUMNS, P_MISSING } from "../visual/support/webgl2-tolerances.js";
 
 const BG: Rgb = [10, 15, 20];
 const GRID: Rgb = [28, 37, 48];
@@ -182,5 +183,28 @@ describe("outsideRectDifferences", () => {
     expect(outsideRectDifferences(a, b, { left: 10, top: 5, width: 20, height: 10 }, 2)).toBe(1);
     paint(b, 9, 5, RED); // within the 2 px grown margin: ignored
     expect(outsideRectDifferences(a, b, { left: 10, top: 5, width: 20, height: 10 }, 2)).toBe(1);
+  });
+});
+
+describe("outsideRectLumaDifferences", () => {
+  const rect = { left: 20, top: 8, width: 10, height: 4 };
+
+  it("ignores a chroma-only change of equal luminance, as an LCD fringe is", () => {
+    const a = image(40, 20);
+    const b = image(40, 20);
+    paint(a, 3, 3, [100, 100, 100]);
+    paint(b, 3, 3, [118, 98, 94]); // luminance within a few levels, strongly different chroma
+    expect(outsideRectDifferences(a, b, rect, 1)).toBe(1);
+    expect(outsideRectLumaDifferences(a, b, rect, 1, AXIS_LUMA_DELTA)).toBe(0);
+  });
+
+  it("still fails a one-pixel shift of a glyph-like stroke", () => {
+    const a = image(40, 20);
+    const b = image(40, 20);
+    for (let y = 2; y < 6; y += 1) {
+      paint(a, 5, y, [220, 220, 220]);
+      paint(b, 6, y, [220, 220, 220]);
+    }
+    expect(outsideRectLumaDifferences(a, b, rect, 1, AXIS_LUMA_DELTA)).toBeGreaterThan(0);
   });
 });

@@ -26,5 +26,14 @@ export const P_COLUMNS = 0.95;
 /** Largest fraction of inked columns where exactly one engine has ink. */
 export const P_MISSING = 0.02;
 
+/** Largest allowed luminance difference (0-255, Rec. 709 weights) for a pixel outside the plot when
+ * the axes and labels of the two engines are compared. Both engines run the same painters on the
+ * same layout, so glyph geometry is identical; what differs is the sub-pixel treatment. Canvas2D's
+ * opaque context lets Chromium use LCD text anti-aliasing (coloured fringes) while the transparent
+ * overlay can only use grayscale. Measured on Linux Chromium: aligned layers differ by at most 34.5
+ * in luminance, while any 1-device-pixel shift produces differences above 125 on about two thousand
+ * pixels, so `48` separates the two with margin. */
+export const AXIS_LUMA_DELTA = 48;
+
 /** Smallest per-channel distance (0-255) from the background and grid colour that counts as ink. */
 export const INK_DELTA = 32;

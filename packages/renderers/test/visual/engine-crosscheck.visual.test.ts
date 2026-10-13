@@ -16,14 +16,15 @@ import {
   compareExtents,
   inkLabels,
   insetPlotRect,
-  outsideRectDifferences,
+  outsideRectLumaDifferences,
+  type Rect,
   type ColumnExtents,
   type ComparisonRule,
   type InkPalette,
   type Pixels,
   type Rgb,
 } from "./support/ink-metric.js";
-import { K_INSET, K_ROWS, P_MISSING, WEBGL2_SCREENSHOT_TOLERANCE } from "./support/webgl2-tolerances.js";
+import { AXIS_LUMA_DELTA, K_INSET, K_ROWS, P_MISSING, WEBGL2_SCREENSHOT_TOLERANCE } from "./support/webgl2-tolerances.js";
 
 // No `toMatchScreenshot` here and no Canvas2D comparator: this suite compares where each engine
 // puts a trace's ink, so it tolerates the pixel-level differences between two rasterizers and
@@ -125,21 +126,48 @@ describe("Canvas2D versus WebGL2, structurally", { timeout: BROWSER_TEST_TIMEOUT
     });
   }
 
-  it("axes-grid: pixels outside the plot, grown by the stroke width and K_INSET, are identical", async () => {
+  it("axes-grid: axes and labels outside the plot, grown by the stroke width and K_INSET, match in luminance", async () => {
     await ensureDefaultFont();
-    const fixture = SCENARIO_FIXTURES.find((f) => f.id === "axes-grid");
-    if (fixture === undefined) throw new Error("fixture axes-grid missing");
-    const rendered = renderBoth(fixture);
-    const margin = Math.ceil(DEFAULT_FIGURE_STYLE.lineWidthCss * fixture.dpr) + K_INSET;
-    const rect = {
+    const { rendered, rect, margin } = axesGridRender();
+    expect(outsideRectLumaDifferences(rendered.canvas2d, rendered.webgl2, rect, margin, AXIS_LUMA_DELTA)).toBe(0);
+  });
+
+  it("axes-grid: the luminance comparison fails a real 1-device-pixel shift of the labels", async () => {
+    await ensureDefaultFont();
+    const { rendered, rect, margin } = axesGridRender();
+    const shifted = shiftRight(rendered.webgl2, 1);
+    expect(outsideRectLumaDifferences(rendered.canvas2d, shifted, rect, margin, AXIS_LUMA_DELTA)).toBeGreaterThan(0);
+  });
+});
+
+function axesGridRender(): { rendered: Rendered; rect: Rect; margin: number } {
+  const fixture = SCENARIO_FIXTURES.find((f) => f.id === "axes-grid");
+  if (fixture === undefined) throw new Error("fixture axes-grid missing");
+  const rendered = renderBoth(fixture);
+  return {
+    rendered,
+    margin: Math.ceil(DEFAULT_FIGURE_STYLE.lineWidthCss * fixture.dpr) + K_INSET,
+    rect: {
       left: Math.round(rendered.plotLeft),
       top: Math.round(rendered.plotTop),
       width: Math.round(rendered.plotWidth),
       height: Math.round(rendered.plotHeight),
-    };
-    expect(outsideRectDifferences(rendered.canvas2d, rendered.webgl2, rect, margin)).toBe(0);
-  });
-});
+    },
+  };
+}
+
+/** A copy of `source` moved `dx` device pixels to the right, the left edge repeating. */
+function shiftRight(source: ImageData, dx: number): Pixels {
+  const data = new Uint8ClampedArray(source.data.length);
+  for (let y = 0; y < source.height; y += 1) {
+    for (let x = 0; x < source.width; x += 1) {
+      const from = (y * source.width + Math.max(0, x - dx)) * 4;
+      const to = (y * source.width + x) * 4;
+      for (let c = 0; c < 4; c += 1) data[to + c] = source.data[from + c] ?? 0;
+    }
+  }
+  return { data, width: source.width, height: source.height };
+}
 
 describe("non-vacuity of the cross-check", { timeout: BROWSER_TEST_TIMEOUT_MS }, () => {
   it("fails simple-trace when only the WebGL2 Y domain is shifted by 3 * K_ROWS rows", async () => {
