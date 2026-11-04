@@ -17,5 +17,5 @@ catalog:
   'fast-check': '4.10.0'
   'tweakpane': '^4.0.5'
   '@tweakpane/core': '^2.0.5'
-  'happy-dom': '20.14.5'
+  'happy-dom': '21.0.4'
   'vite': '8.3.3'
