@@ -94,7 +94,11 @@ export class Canvas2DRenderer implements FigureRenderer {
   #cssWidth = 1;
   #cssHeight = 1;
   #dpr = 1;
+  /** Origin of the single payload drawn through the layout's own transforms (`setData`); a trace
+   * collection projects through per-trace transforms and never reads it. */
   #xOrigin = 0;
+  /** Visible X window in absolute physical X (`xOrigin + x[i]`), as given to `setDomain` or taken
+   * from `collection.xDomainMin`/`xDomainMax`; never an offset from any payload's `xOrigin`. */
   #xDomainMin = 0;
   #xDomainMax = 1;
   /** Only meaningful for the default implicit single-axis case (`#yAxisRegistrations === null`);
@@ -195,6 +199,9 @@ export class Canvas2DRenderer implements FigureRenderer {
     if (this.#disposed) return;
     this.#traceCollection = collection;
     this.#payload = null;
+    // A collection has no origin of its own: each trace's transform carries its payload's origin,
+    // and the shared layout must not keep the one a previous single payload left behind.
+    this.#xOrigin = 0;
 
     const entries = collection.entries;
     const count = entries.length;
@@ -233,6 +240,8 @@ export class Canvas2DRenderer implements FigureRenderer {
       this.#traceMarkIsolated[i] = resolved.markIsolatedSamples;
     }
 
+    // The collection's X domain is absolute physical X, so it is adopted as is: each trace's own
+    // transform converts it into that trace's offset space through its `xOrigin`.
     this.#xDomainMin = collection.xDomainMin;
     this.#xDomainMax = collection.xDomainMax;
     // Tick selection follows the collection's X domain immediately, while the transforms only
@@ -245,6 +254,7 @@ export class Canvas2DRenderer implements FigureRenderer {
     this.#ensureTraceIndexCapacities();
   }
 
+  /** `xMin`/`xMax` are absolute physical X, never offsets from a payload's `xOrigin`. */
   setDomain(xMin: number, xMax: number, yMin: number, yMax: number): void {
     if (this.#disposed) return;
     this.#xDomainMin = xMin;
@@ -301,10 +311,10 @@ export class Canvas2DRenderer implements FigureRenderer {
     if (this.#traceCollection !== null) context.setLineDash(EMPTY_DASH);
     refreshFigureTicks(layout, this.#payload?.xUnit ?? "", this.#payload?.yUnit ?? "");
 
-    // X gridlines are shared across every axis (one X domain) — painted once, against the
-    // primary transform, whose plotLeft/plotWidth/xScale are byte-identical to every other
-    // registered axis's transform (the `multi-axis-viewport` shared-plot-geometry invariant).
-    drawXGridlines(context, t, this.#style, layout.xTicks, layout.xTickCount);
+    // X gridlines are shared across every axis (one X domain) — painted once, at the layout's
+    // origin-free `xGridPositions`, computed from plotLeft/xDomainMin/xScale that are
+    // byte-identical on every registered axis's transform.
+    drawXGridlines(context, t, this.#style, layout.xGridPositions, layout.xTickCount);
     for (let axisIndex = 0; axisIndex < layout.transforms.length; axisIndex += 1) {
       const axisTransform = layout.transforms[axisIndex];
       const yTicks = layout.yTicks[axisIndex];
@@ -362,7 +372,7 @@ export class Canvas2DRenderer implements FigureRenderer {
 
     // Same leak, inside the frame: the last trace's dash must not carry onto the axis strokes.
     if (this.#traceCollection !== null) context.setLineDash(EMPTY_DASH);
-    drawBottomAxis(context, t, this.#deviceStyle, this.#axes, layout.xTicks, layout.xTickCount, layout.xLabels);
+    drawBottomAxis(context, t, this.#deviceStyle, this.#axes, layout.xGridPositions, layout.xTickCount, layout.xLabels);
     for (let axisIndex = 0; axisIndex < layout.transforms.length; axisIndex += 1) {
       const axisTransform = layout.transforms[axisIndex];
       const yTicks = layout.yTicks[axisIndex];
@@ -519,8 +529,9 @@ export class Canvas2DRenderer implements FigureRenderer {
     this.#memoYMax = t.yDomainMax;
   }
 
-  /** Rebuilds one `ViewportTransform` per trace through the shared builder, so each trace keeps
-   * its own `xOrigin` while sharing the axes' plot geometry. */
+  /** Rebuilds one `ViewportTransform` per trace through the shared builder. Every trace shares the
+   * absolute X domain and the axes' plot geometry, while its own `xOrigin` gives it its own
+   * offset-space left edge, so raw payload offsets land at their physical X. */
   #recomputeTraceTransforms(): void {
     buildTraceTransforms(
       this.#resolveYAxes(),

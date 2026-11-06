@@ -9,31 +9,33 @@
 ## ADDED Requirements
 
 ### Requirement: Layout Is Computed Once Per Scene by One Backend-Neutral Module
-A single layout module under `packages/renderers/src/` (outside `canvas2d/` and `svg/`) MUST
-compute, from a scene description (CSS-px width/height, device pixel ratio, visible domain, Y-axis
-registrations, style/layout configuration), a layout result containing: plot-area insets, the plot
-rectangle, one `ViewportTransform` per registered Y axis, per-axis tick values, per-axis decade
-gridline positions for log axes, and formatted tick labels. Both `Canvas2DRenderer` and
-`exportToSvg` MUST obtain these values exclusively from this module. Neither backend MAY
-independently compute an inset, tick value, gridline position or label string. The module MUST NOT
-import from `canvas2d/` or `svg/` and MUST NOT reference browser globals.
+A single layout module under `packages/renderers/src/` (outside `canvas2d/`, `svg/` and `webgl2/`)
+MUST compute, from a scene description (CSS-px width/height, device pixel ratio, visible domain,
+Y-axis registrations, style/layout configuration), a layout result containing: plot-area insets, the
+plot rectangle, one `ViewportTransform` per registered Y axis, per-axis tick values, per-axis
+decade gridline positions for log axes, X tick values and gridline positions, and formatted tick
+labels. `Canvas2DRenderer`, `WebGL2FigureRenderer` (for its axes, grid and labels overlay) and
+`exportToSvg` MUST obtain these values exclusively from this module. No backend MAY independently
+compute an inset, tick value, gridline position or label string. The module MUST NOT import from
+`canvas2d/`, `svg/` or `webgl2/` and MUST NOT reference browser globals.
 
-#### Scenario: Both backends import the layout module
-- **GIVEN**: the sources of `canvas2d/` and `svg/`
+#### Scenario: Every backend imports the layout module
+- **GIVEN**: the sources of `canvas2d/`, `svg/` and `webgl2/`
 - **WHEN**: their imports are inspected
-- **THEN**: both import the layout module and neither contains its own inset, tick-selection or
-  label-formatting implementation
+- **THEN**: each imports the layout module and none contains its own inset, tick-selection or
+  label-formatting implementation (no `selectTicks`/`selectLogTicks` call outside the layout
+  module)
 
 #### Scenario: The layout module has no backend or DOM dependency
 - **GIVEN**: the layout module's sources
 - **WHEN**: its imports and identifiers are inspected
-- **THEN**: it imports no `canvas2d/` or `svg/` module and references no `document`, `window` or
-  canvas type
+- **THEN**: it imports no `canvas2d/`, `svg/` or `webgl2/` module and references no `document`,
+  `window` or canvas type
 
-#### Scenario: The same scene yields identical layout for both backends
+#### Scenario: The same scene yields identical layout for every backend
 - **GIVEN**: one scene description
 - **WHEN**: layout is computed through the Canvas2D path and through the SVG path (at `dpr = 1`)
-- **THEN**: insets, plot rectangle, tick values and label strings are equal
+- **THEN**: insets, plot rectangle, X and Y tick values and label strings are equal
 
 ### Requirement: Insets Are a Pure Function of Configuration and Axis Count, for N Left-Stacked Axes
 `computeAxisInsets(style, axes, yAxisCount)` MUST live in the layout module with the semantics
@@ -78,8 +80,11 @@ per axis.
 ### Requirement: Tick Values Come Only From Core's `selectTicks` and `selectLogTicks`
 Layout MUST obtain tick values per axis with `selectTicks` (linear) or `selectLogTicks` (log),
 chosen by that axis's `ViewportTransform.yScaleKind`, writing into a preallocated
-`Float64Array` of capacity `MAX_TICKS`. It MUST NOT implement its own nice-number or logarithmic
-selection algorithm and MUST NOT call `Math.log10` or `Math.pow` for tick selection.
+`Float64Array` of capacity `MAX_TICKS`. X ticks MUST be obtained with `selectTicks` over the
+layout's X domain, which is absolute physical X (`viewport-transform`); the X tick values and
+their labels therefore show absolute X, never offsets from any payload's `xOrigin`. Layout MUST NOT
+implement its own nice-number or logarithmic selection algorithm and MUST NOT call `Math.log10` or
+`Math.pow` for tick selection.
 
 #### Scenario: Selector is chosen per axis kind
 - **GIVEN**: one linear and one log axis
@@ -91,16 +96,45 @@ selection algorithm and MUST NOT call `Math.log10` or `Math.pow` for tick select
 - **WHEN**: it is inspected
 - **THEN**: it imports both selectors from `@trace-kit/core` and has no local tick loop
 
+#### Scenario: X ticks and labels are absolute for a non-zero origin
+- **GIVEN**: a scene whose payload has `xOrigin: 1550`, with the X domain `[1550, 1551]`
+- **WHEN**: layout is computed
+- **THEN**: every X tick value lies in `[1550, 1551]`, the first X label parses to a number
+  `>= 1550`, and no X label shows a value near `0` or `1` (the offsets)
+
+#### Scenario: X ticks do not depend on the payload origin
+- **GIVEN**: two scenes with the same X domain `[0, 299]`, one holding a payload with `xOrigin: 0`
+  and one holding a payload with `xOrigin: 1000`
+- **WHEN**: layout is computed for both
+- **THEN**: the X tick values and X label strings are equal
+
 ### Requirement: Decade Gridline Positions Are Computed Once and Shared
 For a log axis the layout result MUST expose one gridline position per `selectLogTicks` value,
 equal to `projectY(transform, tickValue)` for that axis's transform. For linear axes it MUST
-expose one position per `selectTicks` value likewise. Backends MUST draw gridlines at these
-positions only.
+expose one position per `selectTicks` value likewise. X gridline and tick positions MUST be the
+device X of each absolute X tick value on the layout's absolute X domain, that is
+`plotLeft + (tickValue - xDomainMin) * xScale`, computed so that they do not depend on the
+`xOrigin` of the transform used to derive them: the position of an X tick equals the device X that
+`projectX` gives, through any trace's own transform, to a sample whose `xOrigin + x[i]` equals the
+tick value. Backends MUST draw gridlines at these positions only.
 
 #### Scenario: Gridline positions match projection
 - **GIVEN**: a log axis and its tick values
 - **WHEN**: layout is computed
 - **THEN**: the `i`-th gridline position equals `projectY(transform, ticks[i])` for every `i`
+
+#### Scenario: An X gridline coincides with the sample at the same absolute X
+- **GIVEN**: a scene with X domain `[1550, 1551]`, a trace transform with `xOrigin: 1550`, and an X
+  tick at `1550.5`
+- **WHEN**: layout is computed
+- **THEN**: the tick's gridline position equals `projectX(traceTransform, 0.5)` within f64
+  tolerance
+
+#### Scenario: An X gridline is independent of the layout transform's origin
+- **GIVEN**: two layouts of the same scene geometry and X domain `[0, 299]`, built with layout
+  origins `0` and `1000`
+- **WHEN**: X gridline positions are compared
+- **THEN**: the position arrays are equal element by element
 
 ### Requirement: Tick Labels Are Formatted Once, Cached by `tickRevision`, and Are Locale-Independent
 Label strings MUST be formatted in the layout module (not in `@trace-kit/core`) into a
@@ -123,29 +157,6 @@ Identical input MUST yield identical strings on every platform.
 - **GIVEN**: a host locale with `,` decimal separator
 - **WHEN**: labels are formatted
 - **THEN**: they are identical to those under `en-US`
-
-### Requirement: Extraction Changes Canvas2D Output Only by the Declared Cross-Backend Fixes
-After extraction, `Canvas2DRenderer` output MUST be unchanged except for exactly three declared
-fixes that align it with `exportToSvg`: (1) each registered Y axis is drawn in its own stacked
-column (`canvas2d-axes-grid`), (2) axis strokes use the explicit `AxisLayout.axisLineWidthCss`
-instead of inheriting the last trace's `lineWidth` (`canvas2d-axes-grid`), and (3) a single-payload
-trace paints isolated-sample markers (`canvas2d-trace-rendering`). Every fake-context call-sequence
-expectation not asserting one of these three behaviors MUST pass unedited. Of the committed pixel
-goldens, only `dual-axis.png`, `overlay-two-axis.png` and `gapped-trace.png` MAY be regenerated
-(through the CI-only update path of `visual-golden-corpus`); every other golden MUST pass without
-regeneration. Any other edited expectation or golden is a defect.
-
-#### Scenario: Unrelated call-sequence tests pass unedited
-- **GIVEN**: the Canvas2D test suite as at the parent commit
-- **WHEN**: it runs against the refactored renderer
-- **THEN**: every test that does not assert axis column position, axis line width or single-payload
-  markers passes with no expectation modified in this change's diff
-
-#### Scenario: Only the three declared pixel goldens change
-- **GIVEN**: this change's diff
-- **WHEN**: the pixel golden directory is inspected
-- **THEN**: the only modified images are `dual-axis.png`, `overlay-two-axis.png` and
-  `gapped-trace.png`, and no image is added
 
 ### Requirement: Layout Exposes Per-Axis Column Offsets
 The layout result MUST expose, for each registered Y axis `i` (registration order), a column

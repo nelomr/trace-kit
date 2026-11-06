@@ -12,7 +12,6 @@
  */
 import {
   createAxisTransforms,
-  projectX,
   projectY,
   selectLogTicks,
   selectTicks,
@@ -129,6 +128,10 @@ export interface FigureLayoutInput {
   readonly axes: AxisLayout;
   readonly xDomainMin: number;
   readonly xDomainMax: number;
+  /**
+   * Origin of the single payload drawn through the layout's own transforms; `0` for a trace
+   * collection, whose traces use per-trace transforms. Ticks and gridlines never depend on it.
+   */
   readonly xOrigin: number;
   /** Length must equal the `yAxisCount` the layout was created with. */
   readonly yAxes: readonly YAxisRegistration[];
@@ -148,7 +151,10 @@ export interface FigureLayout {
   readonly xTicks: Float64Array;
   xTickCount: number;
   readonly xLabels: string[];
-  /** `projectX` of each X tick through the first transform, device px. */
+  /**
+   * Device X of each absolute X tick: `plotLeft + (tick - xDomainMin) * xScale`. Origin-free, so it
+   * lands where any trace's `projectX` puts a sample whose absolute X equals the tick.
+   */
   readonly xGridPositions: Float64Array;
   readonly yTicks: Float64Array[];
   readonly yTickCounts: Int32Array;
@@ -315,8 +321,14 @@ export function refreshFigureTicks(layout: FigureLayout, xUnit: string, yUnit: s
 function projectGridPositions(layout: FigureLayout): void {
   const first = layout.transforms[0];
   if (first !== undefined) {
+    // Ticks are absolute X, while `projectX` takes payload offsets and subtracts the transform's
+    // offset-space left edge. Going through it would tie the gridlines to whichever origin the
+    // layout's transform happens to carry, so project against the absolute domain directly.
+    const left = first.plotLeft;
+    const xMin = first.xDomainMin;
+    const scale = first.xScale;
     for (let i = 0; i < layout.xTickCount; i += 1) {
-      layout.xGridPositions[i] = projectX(first, layout.xTicks[i] ?? 0);
+      layout.xGridPositions[i] = left + ((layout.xTicks[i] ?? 0) - xMin) * scale;
     }
   }
   for (let axis = 0; axis < layout.transforms.length; axis += 1) {

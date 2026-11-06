@@ -268,16 +268,24 @@ before upload.
   holds the identical float32 values, and contains no value near `1550`
 
 ### Requirement: X Uses a Hi/Lo Float32 Origin Derived in Float64
-The X domain of a `ViewportTransform` (`xDomainMin`, `xDomainMax`) is in the same offset space as the payload's X offsets: `projectX` computes `plotLeft + (xOffset - t.xDomainMin) * t.xScale` and does not read `xOrigin`. Each trace's transform is the one built for that trace.
-Per trace and per frame the renderer MUST take `originOffset = t.xDomainMin` from that trace's
-own `ViewportTransform` (an IEEE-754 binary64 value in offset space), split it as `hi = Math.fround(originOffset)` and
-`lo = Math.fround(originOffset - hi)`, and pass `hi` and `lo` as two float32 uniforms. The vertex
+The X domain of a `ViewportTransform` (`xDomainMin`, `xDomainMax`) is in absolute physical X, while
+the payload's X attribute holds offsets from `xOrigin`. Each trace's transform is the one built for
+that trace and carries `xOffsetMin = xDomainMin - xOrigin` (binary64), the domain minimum in the
+offset space of the attribute; `projectX` computes `plotLeft + (xOffset - t.xOffsetMin) * t.xScale`
+(`viewport-transform`).
+Per trace and per frame the renderer MUST take `originOffset = t.xOffsetMin` from that trace's
+own `ViewportTransform` (an IEEE-754 binary64 value in offset space), split it as
+`hi = Math.fround(originOffset)` and `lo = Math.fround(originOffset - hi)`, and pass `hi` and `lo`
+as two float32 uniforms named `u_xOffsetMin` (a `vec2`, `(hi, lo)`). No uniform, program-location
+field or variable in the renderer sources MUST be named `u_xOrigin`/`xOrigin` for this value, since
+it is not an origin in absolute space. The vertex
 shader MUST compute the normalized X as `((offset - hi) * one - lo)`, where `one` is a float32
 uniform (`u_one`) that the renderer always sets to `1`. Multiplying the first difference by a value
 the compiler cannot know stops it from reassociating the expression into `offset - (hi + lo)`; measured on the Metal GPU, that reassociation produces a 2.0 px error, while SwiftShader preserves the order. The expression is then
-scale by the plot width over the X span (itself computed in binary64 and passed as a float32
+scaled by the plot width over the X span (itself computed in binary64 and passed as a float32
 uniform). The shader therefore reproduces `projectX` exactly. The renderer MUST NOT pass
-`xOrigin`, `xDomainMin` or `xDomainMax` to the shader as a single float32 each, and MUST NOT
+`xOrigin`, `xDomainMin`, `xDomainMax` or `xOffsetMin` to the shader as a single float32 each, MUST
+NOT pass the absolute `xDomainMin` as the origin of the offsets, and MUST NOT
 compute `xOrigin + offset` in the shader. The split MUST be done
 by a pure exported function `splitFloat64ToHiLo(value: number, out: Float32Array, index: number):
 void` (module `packages/renderers/src/webgl2/precision.ts`) that allocates nothing, so tests
@@ -285,10 +293,10 @@ exercise the exact code the renderer runs. This is the only permitted float32 su
 involving the X origin (`viewport-transform`).
 
 The hardened form MUST be validated by a deep-zoom probe (exact X read back from a float
-render target, `d = 1000.00002`, span `0.01`, 1,001 offsets) on both SwiftShader and the Metal GPU,
-with a maximum error below `0.01` device px on each. If it fails on either
-renderer, implementation MUST stop: the documented contingency (CPU binary64 renormalisation with
-re-upload keyed on domain change) requires a user decision and amends
+render target, offsets near `1000`, `d = t.xOffsetMin = 1000.00002`, span `0.01`, 1,001 offsets)
+on both SwiftShader and the Metal GPU, with a maximum error below `0.01` device px on each. If it
+fails on either renderer, implementation MUST stop: the documented contingency (CPU binary64
+renormalisation with re-upload keyed on domain change) requires a user decision and amends
 `viewport-transform` before it can be adopted.
 
 #### Scenario: The one uniform is set to 1 and the shader uses it
@@ -302,18 +310,31 @@ re-upload keyed on domain change) requires a user decision and amends
 - **WHEN**: `splitFloat64ToHiLo(value, out, 0)` runs
 - **THEN**: `out[0] === Math.fround(value)` and `Math.abs((out[0] + out[1]) - value) < 1e-9`
 
-#### Scenario: The uniforms handed to the shader are the hi/lo pair
-- **GIVEN**: a payload with `xOrigin = 1550` and a domain `xMin = 1000.00002` (offset space)
+#### Scenario: The uniforms handed to the shader are the hi/lo pair of the offset-space minimum
+- **GIVEN**: a payload with `xOrigin = 1550` and a domain `xMin = 2550.00002` (absolute), so
+  `t.xOffsetMin` is approximately `1000.00002`
 - **WHEN**: `render()` runs on the recording fake GL
-- **THEN**: the recorded hi/lo uniform values equal `splitFloat64ToHiLo(1000.00002)` and the
-  vertex shader source contains no use of a single-float origin uniform summed with the offset
+- **THEN**: the recorded `u_xOffsetMin` values equal `splitFloat64ToHiLo(t.xOffsetMin)`, differ
+  from the split of `2550.00002`, and the vertex shader source contains no use of a single-float
+  origin uniform summed with the offset
+
+#### Scenario: A zero-origin payload uploads the split of its domain minimum
+- **GIVEN**: a payload with `xOrigin = 0` and a domain `xMin = 1000.00002`
+- **WHEN**: `render()` runs on the recording fake GL
+- **THEN**: the recorded `u_xOffsetMin` values equal `splitFloat64ToHiLo(1000.00002)`, exactly as
+  when the domain was defined as offsets
 
 #### Scenario: Each trace gets its own pair from its own transform
-- **GIVEN**: a collection of two traces with `xOrigin` 1550 and 1560 sharing one X domain
+- **GIVEN**: a collection of two traces with `xOrigin` 1550 and 1560 sharing one absolute X domain
 - **WHEN**: `render()` runs
-- **THEN**: each line pass's recorded hi/lo uniforms equal `splitFloat64ToHiLo` of that trace's
-  own transform `xDomainMin`; the two pairs are identical because the traces share one
-  offset-space X domain, and neither pair depends on `xOrigin`
+- **THEN**: each line pass's recorded `u_xOffsetMin` equals `splitFloat64ToHiLo` of that trace's
+  own `xOffsetMin`; the two pairs differ by the origin difference (`xOffsetMin` values differ by
+  `10`), so each trace lands at its physical X
+
+#### Scenario: The uniform keeps no misleading name
+- **GIVEN**: `shaders.ts`, `program.ts` and `frame.ts`
+- **WHEN**: they are scanned for `u_xOrigin`
+- **THEN**: no occurrence is found, and the shared uniform block declares `u_xOffsetMin`
 
 ### Requirement: Y Projection Reproduces the Shared `ViewportTransform` for Linear and Log Axes
 The vertex shader MUST project Y with the same formulas as `projectY`: on a linear axis
@@ -347,11 +368,13 @@ NaN detection.
 
 ### Requirement: Multi-Trace Collections Draw With Per-Trace Style, Axis and Origin, in Collection Order
 `setTraces(collection)` MUST be supported with the same semantics as Canvas2D: per-trace axis
-binding via `resolveTraceAxisIndices`, per-trace `ViewportTransform` carrying the trace's own
-`xOrigin`, per-trace color and width from `resolveTraceStyle` (palette cycling by trace index),
-and drawing in collection order (later traces over earlier). `setData(payload)` MUST be the
-single-trace convenience, mutually exclusive with `setTraces`, as on Canvas2D. Replacing the trace
-set MUST release the previous set's GL buffers (see the lifecycle requirement).
+binding via `resolveTraceAxisIndices`, per-trace `ViewportTransform` built from the shared absolute
+X domain and carrying the trace's own `xOrigin` (and therefore its own `xOffsetMin`), per-trace
+color and width from `resolveTraceStyle` (palette cycling by trace index), and drawing in
+collection order (later traces over earlier). `setData(payload)` MUST be the single-trace
+convenience, mutually exclusive with `setTraces`, as on Canvas2D. Replacing the trace set MUST
+release the previous set's GL buffers (see the lifecycle requirement). For the same scene the
+WebGL2 engine MUST place each trace at the same absolute X as Canvas2D and `exportToSvg` do.
 
 #### Scenario: Palette cycling matches Canvas2D
 - **GIVEN**: a collection of 7 traces with no explicit colors
@@ -370,6 +393,21 @@ set MUST release the previous set's GL buffers (see the lifecycle requirement).
 - **GIVEN**: a renderer with `setTraces` applied
 - **WHEN**: `setData(payload)` is called and `render()` runs
 - **THEN**: exactly one trace is drawn
+
+#### Scenario: Mixed origins covering one absolute range project identically
+- **GIVEN**: the `overlay-two-axis` collection (`linear-trace` with `xOrigin: 0`, `log-trace` with
+  `xOrigin: 1000`, domain `[0, 299]`)
+- **WHEN**: `render()` runs on the recording fake GL and the float32 shader X path is emulated per
+  trace with `Math.fround`, from each pass's recorded `u_xOffsetMin`, `u_xScale` and `u_plot`
+- **THEN**: for every sample index `i` the emulated device X of `linear-trace` and of `log-trace`
+  differ by less than `0.01` device pixels, and equal `Canvas2D`'s `projectX` of that trace within
+  `0.01` device pixels
+
+#### Scenario: The three engines draw the same X for a non-zero origin
+- **GIVEN**: a payload with `xOrigin: 1550` and offsets across `[0, 1]`, domain `[1550, 1551]`
+- **WHEN**: it is projected by `projectX` (Canvas2D and `exportToSvg`) and by the float32 emulation
+  of the WebGL2 shader
+- **THEN**: all three device X values agree within `0.01` device pixels for every sample
 
 ### Requirement: A Trace Style `dash` Is Not Honoured by This Engine
 `TraceStyle.dash` has no WebGL2 implementation. A trace whose style carries a

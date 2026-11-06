@@ -1,5 +1,6 @@
 /** @vitest-environment node */
 import {
+  createTraceCollection,
   projectX,
   projectY,
   selectLogTicks,
@@ -19,6 +20,7 @@ import { formatSvgNumber } from "../../src/svg/svg-number.js";
 import {
   installRecordingPath2D,
   RecordingContext,
+  RecordingPath2D,
   recordingSurface,
 } from "./support/recording-context.js";
 import {
@@ -28,9 +30,11 @@ import {
   groupBody,
   layoutFor,
   linearAxis,
+  payloadAt,
   payloadOf,
   payloadScene,
   paths,
+  pathXs,
   pointCount,
 } from "./support/svg-helpers.js";
 import { assertWellFormedXml } from "./support/xml.js";
@@ -542,6 +546,134 @@ describe("cross-backend label equality", () => {
   });
 });
 
+describe("absolute X domain", () => {
+  let restore: () => void;
+  beforeEach(() => {
+    restore = installRecordingPath2D();
+  });
+  afterEach(() => {
+    restore();
+  });
+
+  const ABSOLUTE_DOMAIN = { xMin: 1550, xMax: 1551, yMin: 0, yMax: 10 };
+
+  function absoluteScene() {
+    return payloadScene([], {
+      traces: payloadAt(1550, [0, 0.5, 1], [2, 8, 4]),
+      domain: ABSOLUTE_DOMAIN,
+    });
+  }
+
+  function plotOf(scene: ReturnType<typeof payloadScene>) {
+    const t = layoutFor(scene).transforms[0];
+    if (t === undefined) throw new Error("no transform");
+    return t;
+  }
+
+  function xLabelTexts(svg: string): string[] {
+    return elements(groupBody(svg, `fill="${DEFAULT_FIGURE_STYLE.labelColor}"`), "text")
+      .filter((el) => attr(el, "text-anchor") === "middle")
+      .map((el) => />([^<]*)</.exec(el)?.[1] ?? "");
+  }
+
+  it("spans the plot with a non-zero-origin payload under an absolute domain", () => {
+    const scene = absoluteScene();
+    const t = plotOf(scene);
+    const [path] = paths(exportToSvg(scene));
+    expect(pathXs(path?.d ?? "")).toEqual([
+      Number(f(t.plotLeft)),
+      Number(f(t.plotLeft + t.plotWidth / 2)),
+      Number(f(t.plotLeft + t.plotWidth)),
+    ]);
+  });
+
+  it("labels the X axis with absolute values", () => {
+    const labels = xLabelTexts(exportToSvg(absoluteScene()));
+    expect(labels.length).toBeGreaterThan(1);
+    for (const label of labels) {
+      const value = parseFloat(label);
+      expect(value).toBeGreaterThanOrEqual(1550);
+      expect(value).toBeLessThanOrEqual(1551);
+    }
+    expect(labels[0]).toBe("1550 nm");
+  });
+
+  it("overlaps traces with different origins covering the same absolute range", () => {
+    const axes = [linearAxis("y", 0, 10)];
+    const count = 300;
+    const y = Array.from({ length: count }, (_, i) => 5 + Math.sin(i / 9));
+    const collection = createTraceCollection(
+      [
+        { id: "a", payload: payloadAt(0, Array.from({ length: count }, (_, i) => i), y), yAxisId: "y", style: {} },
+        { id: "b", payload: payloadAt(1000, Array.from({ length: count }, (_, i) => i - 1000), y), yAxisId: "y", style: {} },
+      ],
+      axes,
+      0,
+      299,
+    );
+    const svg = exportToSvg({
+      traces: collection,
+      domain: { xMin: 0, xMax: 299, yMin: 0, yMax: 10 },
+      yAxes: axes,
+      width: 800,
+      height: 400,
+    });
+    const [a, b] = paths(svg);
+    const xs = pathXs(a?.d ?? "");
+    expect(xs.length).toBeGreaterThan(100);
+    expect(pathXs(b?.d ?? "")).toEqual(xs);
+  });
+
+  it("emits the X coordinates Canvas2D draws at dpr 1 for the same scene", () => {
+    const scene = absoluteScene();
+    const payload = scene.traces;
+    if ("entries" in payload) throw new Error("expected a bare payload");
+    const context = new RecordingContext();
+    const renderer = new Canvas2DRenderer({ surface: recordingSurface(context) });
+    renderer.setData(payload);
+    renderer.resize(800, 400, 1);
+    renderer.setDomain(1550, 1551, 0, 10);
+    RecordingPath2D.created.length = 0;
+    renderer.render();
+    const canvasXs = (RecordingPath2D.created[0]?.ops ?? []).map((op) => f(Number(op.args[0])));
+    const svgXs = pathXs(paths(exportToSvg(scene))[0]?.d ?? "").map((x) => f(x));
+    expect(canvasXs).toHaveLength(3);
+    expect(svgXs).toEqual(canvasXs);
+  });
+
+  it("draws X gridlines at the same device X whatever the payload origin", () => {
+    const gridXs = (origin: number) => {
+      const scene = payloadScene([], {
+        traces: payloadAt(origin, [0, 1, 2], [1, 2, 3]),
+        domain: { xMin: 0, xMax: 299, yMin: 0, yMax: 10 },
+      });
+      return elements(groupBody(exportToSvg(scene), `stroke="${DEFAULT_FIGURE_STYLE.gridColor}"`), "line")
+        .filter((el) => attr(el, "x1") === attr(el, "x2"))
+        .map((el) => attr(el, "x1"));
+    };
+    expect(gridXs(1000)).toEqual(gridXs(0));
+    expect(gridXs(0).length).toBeGreaterThan(1);
+  });
+
+  it("leaves a zero-origin scene as it was", () => {
+    const scene = payloadScene([1, 2, 3, 4, 5], { domain: { xMin: 0, xMax: 4, yMin: 0, yMax: 10 } });
+    const t = plotOf(scene);
+    const [path] = paths(exportToSvg(scene));
+    expect(pathXs(path?.d ?? "")).toEqual([0, 1, 2, 3, 4].map((x) => Number(f(projectX(t, x)))));
+  });
+
+  it("falls back to the unit domain [0, 1] for an invalid X domain, which hides a far-origin payload", () => {
+    const traces = payloadAt(1550, [0, 0.5, 1], [2, 8, 4]);
+    const reference = exportToSvg({ ...absoluteScene(), traces, domain: { xMin: 0, xMax: 1, yMin: 0, yMax: 10 } });
+    const nan = exportToSvg({ ...absoluteScene(), traces, domain: { xMin: NaN, xMax: 1, yMin: 0, yMax: 10 } });
+    const inverted = exportToSvg({ ...absoluteScene(), traces, domain: { xMin: 5, xMax: 1, yMin: 0, yMax: 10 } });
+    expect(nan).toBe(reference);
+    expect(inverted).toBe(reference);
+    const t = plotOf(payloadScene([], { domain: { xMin: 0, xMax: 1, yMin: 0, yMax: 10 } }));
+    expect(pathXs(paths(reference)[0]?.d ?? "").every((x) => x > t.plotLeft + t.plotWidth)).toBe(true);
+  });
+});
+
 describe("empty and degenerate input", () => {
   const cases: [string, () => ReturnType<typeof payloadScene>][] = [
     ["empty collection", () => collectionScene([], [linearAxis("y", 0, 10)])],
@@ -571,6 +703,37 @@ describe("empty and degenerate input", () => {
     expect(svg).not.toMatch(/NaN|Infinity/);
     expect(svg).not.toMatch(/\d[eE][+-]?\d/);
     assertWellFormedXml(svg);
+  });
+
+  it("collapses a zero-span X domain onto the left plot edge with a single tick at the domain value", () => {
+    const scene = payloadScene([1, 2, 3], { domain: { xMin: 2, xMax: 2, yMin: 0, yMax: 10 } });
+    const svg = exportToSvg(scene);
+    const t = layoutFor(scene).transforms[0];
+    if (t === undefined) throw new Error("no transform");
+    const [path] = paths(svg);
+    expect(pathXs(path?.d ?? "")).toEqual([Number(f(t.plotLeft)), Number(f(t.plotLeft)), Number(f(t.plotLeft))]);
+    const xLabels = elements(groupBody(svg, `fill="${DEFAULT_FIGURE_STYLE.labelColor}"`), "text")
+      .filter((el) => attr(el, "text-anchor") === "middle")
+      .map((el) => />([^<]*)</.exec(el)?.[1]);
+    expect(xLabels).toEqual(["2 nm"]);
+  });
+
+  it("collapses a zero-span Y domain onto one Y with a single tick at the domain value", () => {
+    const svg = exportToSvg(payloadScene([1, 2, 3], { domain: { xMin: 0, xMax: 2, yMin: 5, yMax: 5 } }));
+    const [path] = paths(svg);
+    const ys = [...(path?.d ?? "").matchAll(/[ML]-?[\d.]+ (-?[\d.]+)/g)].map((m) => m[1]);
+    expect(new Set(ys).size).toBe(1);
+    const yLabels = elements(groupBody(svg, `fill="${DEFAULT_FIGURE_STYLE.labelColor}"`), "text")
+      .filter((el) => attr(el, "text-anchor") === "end")
+      .map((el) => />([^<]*)</.exec(el)?.[1]);
+    expect(yLabels).toEqual(["5 dBm"]);
+  });
+
+  it("replaces an invalid X domain by the document exported over [0, 1]", () => {
+    const base = { yMin: 0, yMax: 10 };
+    const unit = exportToSvg(payloadScene([1, 2, 3], { domain: { xMin: 0, xMax: 1, ...base } }));
+    expect(exportToSvg(payloadScene([1, 2, 3], { domain: { xMin: NaN, xMax: 1, ...base } }))).toBe(unit);
+    expect(exportToSvg(payloadScene([1, 2, 3], { domain: { xMin: 5, xMax: 1, ...base } }))).toBe(unit);
   });
 
   it("an empty collection still draws axes and grid, with no path", () => {

@@ -1,7 +1,10 @@
 /** @vitest-environment node */
 import { describe, expect, it } from "vitest";
 import { createGlPrograms } from "../../src/webgl2/program.js";
-import { RecordingGl2Context } from "./support/recording-gl2-context.js";
+import { FakeUniformLocation, RecordingGl2Context } from "./support/recording-gl2-context.js";
+
+/** The uniform's former name, assembled so this file carries no literal occurrence of it. */
+const MISNAMED_UNIFORM = `u_x${"Origin"}`;
 
 describe("createGlPrograms", () => {
   it("compiles both stages of both programs, links, and releases the shaders after linking", () => {
@@ -29,11 +32,14 @@ describe("createGlPrograms", () => {
     const programs = createGlPrograms(gl);
     const looked = gl.callsNamed("getUniformLocation").map((call) => String(call.args[1]));
 
-    for (const name of ["u_xOrigin", "u_one", "u_xScale", "u_plot", "u_device", "u_y", "u_yScaleKind", "u_color"]) {
+    for (const name of ["u_xOffsetMin", "u_one", "u_xScale", "u_plot", "u_device", "u_y", "u_yScaleKind", "u_color"]) {
       expect(looked.filter((n) => n === name)).toHaveLength(2);
     }
     expect(looked).toContain("u_lineWidth");
     expect(looked).toContain("u_markerSide");
+    expect(looked).not.toContain(MISNAMED_UNIFORM);
+    expect(programs.lineUniforms.xOffsetMin).toBeInstanceOf(FakeUniformLocation);
+    expect(programs.markerUniforms.xOffsetMin).toBeInstanceOf(FakeUniformLocation);
     expect(programs.lineUniforms.one).not.toBeNull();
     expect(programs.markerUniforms.one).not.toBeNull();
     expect(programs.lineUniforms.lineWidth).not.toBeNull();

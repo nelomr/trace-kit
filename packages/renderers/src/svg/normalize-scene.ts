@@ -29,8 +29,11 @@ export interface NormalizedScene {
   readonly height: number;
   readonly style: FigureStyle;
   readonly axes: AxisLayout;
+  /** Absolute physical X (`xOrigin + x[i]`), the space of the scene's `domain.xMin`/`xMax`. */
   readonly xDomainMin: number;
   readonly xDomainMax: number;
+  /** Origin of a bare payload, used for the layout's own transforms; `0` for a trace collection,
+   * whose traces are placed through per-trace transforms. */
   readonly xOrigin: number;
   /** Safe to hand to the viewport transform: an unusable registration is replaced by a neutral
    * linear axis, so its gutter is still reserved and the inset arithmetic stays stable. */
@@ -42,6 +45,8 @@ export interface NormalizedScene {
   readonly yUnit: string;
 }
 
+// Fallback for an invalid X domain: the unit window in absolute X. A payload whose origin lies
+// elsewhere draws nothing inside it, which is the honest result for an unusable domain.
 const DEFAULT_X_DOMAIN_MIN = 0;
 const DEFAULT_X_DOMAIN_MAX = 1;
 const DEFAULT_Y_DOMAIN_MIN = -1;

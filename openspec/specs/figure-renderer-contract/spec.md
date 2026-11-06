@@ -116,9 +116,15 @@ call, MUST be picked up by the next `render()`.
 `resize(width, height, dpr)` MUST resize the backing store to
 `round(width * dpr) x round(height * dpr)` device pixels and recompute `transform`. It MUST NOT
 issue any drawing-surface call. `setDomain(xMin, xMax, yMin, yMax)` MUST recompute `transform`
-for the new visible window and MUST NOT issue any drawing-surface call. Both methods MUST
-invalidate the currently held decimated index set and the currently held tick values, so the
-next `render()` recomputes them.
+for the new visible window and MUST NOT issue any drawing-surface call. `xMin` and `xMax` MUST be
+interpreted as absolute physical X, the space of `payload.xOrigin + payload.x[i]`, never as offsets
+from a payload's `xOrigin`; the same holds for the X domain a renderer seeds from
+`setTraces(collection)` (`collection.xDomainMin`/`xDomainMax`). The renderer MUST place every
+trace by converting through that trace's own `xOrigin` (`viewport-transform`), so a payload with
+`xOrigin = 1550` is visible under `setDomain(1550, 1551, ...)`, and the same call shows a payload
+with `xOrigin = 0` only where its absolute X lies in `[1550, 1551]`. Both methods MUST invalidate
+the currently held decimated index set and the currently held tick values, so the next `render()`
+recomputes them. The JSDoc of `setDomain` and `setTraces` MUST state that X bounds are absolute.
 
 #### Scenario: resize paints nothing
 - **GIVEN**: a `Canvas2DRenderer` wired to a fake `TraceDrawingContext` that records calls
@@ -136,6 +142,29 @@ next `render()` recomputes them.
   backing-store size
 - **WHEN**: `resize` changes the backing-store width and `render()` is called again
 - **THEN**: the decimation function is invoked again on that `render()` call
+
+#### Scenario: setDomain bounds are absolute X
+- **GIVEN**: a renderer holding a payload with `xOrigin: 1550` and offsets `[0, 0.5, 1]`, and
+  `setDomain(1550, 1551, -1, 1)` applied
+- **WHEN**: `renderer.transform` is read
+- **THEN**: `transform.xDomainMin === 1550`, `transform.xDomainMax === 1551`,
+  `transform.xOffsetMin === 0`, and the sample at offset `0.5` projects to the horizontal centre of
+  the plot area
+
+#### Scenario: The same absolute window selects different payloads by their origins
+- **GIVEN**: two renderers, one holding a payload with `xOrigin: 1550` and offsets `[0, 1]`, one
+  holding a payload with `xOrigin: 0` and offsets `[0, 1]`, both with `setDomain(1550, 1551, ...)`
+- **WHEN**: each projects its samples
+- **THEN**: the first renderer's samples project to the left and right plot edges, and the second
+  renderer's samples project far outside the plot area (absolute `0` and `1` lie outside
+  `[1550, 1551]`)
+
+#### Scenario: setTraces seeds the absolute collection domain
+- **GIVEN**: a collection with `xDomainMin: 0`, `xDomainMax: 299` holding a payload with
+  `xOrigin: 1000` and offsets `-1000..-701`
+- **WHEN**: `setTraces(collection)` and `resize` are applied
+- **THEN**: the trace's transform has `xDomainMin === 0`, `xDomainMax === 299` and
+  `xOffsetMin === -1000`
 
 ### Requirement: Post-`dispose()` Calls Are No-Ops, Never Throws
 `dispose()` MUST be idempotent: a second and subsequent call MUST change nothing and MUST NOT

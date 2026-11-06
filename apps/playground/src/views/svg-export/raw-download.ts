@@ -77,8 +77,10 @@ function fillOptions(element: HTMLSelectElement, values: readonly string[]): voi
 
 /**
  * Raw-data download row for the `/svg-export` view: an optional X window, a CSV download of the
- * whole scenario and a `.npy` download of one selected array. The window empty means the
- * scenario domain the view already draws, resolved strictly (no neighbour samples).
+ * whole scenario and a `.npy` download of one selected array. The window is in absolute X (the
+ * space of `xOrigin + x[i]`, the same one the exporters filter in), and an empty window means the
+ * scenario domain the view already draws, which is absolute by construction, resolved strictly
+ * (no neighbour samples).
  *
  * Invalid window text reports an error and produces no file: silently falling back to the full
  * domain after a typo would hand over a plausible-looking but unrequested download.

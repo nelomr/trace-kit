@@ -157,3 +157,60 @@ MUST iterate `SCENARIO_FIXTURES`.
 - **GIVEN**: the cross-engine test enumeration
 - **WHEN**: its cases are listed
 - **THEN**: their ids are exactly those of `SCENARIO_FIXTURES`
+
+### Requirement: Fixture X Data Are Consistent With Their Absolute Domain
+A fixture's `domain.xMin`/`xMax` MUST be absolute physical X (`payload.xOrigin + payload.x[i]`),
+the space every engine and the exporters take the X domain in. For every fixture and every trace of
+that fixture, at least one sample's absolute X MUST lie inside `[domain.xMin, domain.xMax]`, so the
+fixture's default export window is non-empty for every trace (`playground-svg-export-view`). A
+fixture's samples MUST NOT be defined in a way that makes its drawn range differ from its absolute
+X range.
+
+#### Scenario: Every trace of every fixture has samples inside the fixture domain
+- **GIVEN**: every fixture in `SCENARIO_FIXTURES` and every trace of it (the payload, or each
+  collection entry)
+- **WHEN**: `resolveSampleWindow` is evaluated with the fixture's `domain.xMin`/`xMax` as the window
+- **THEN**: the resolved span is non-empty for every trace
+
+### Requirement: `overlay-two-axis` Keeps a Distinct Per-Trace Origin Over the Shared Absolute Range
+The `overlay-two-axis` fixture MUST contain a `linear-trace` with `xOrigin: 0` and a `log-trace`
+with a different, non-zero `xOrigin` (`1000`), and the collection MUST be the fixture's regression
+guard for per-trace origins: the `log-trace` offsets MUST be `i - 1000` for sample index `i` in
+`0..299` (offsets `-1000..-701`), so its absolute X (`xOrigin + x[i]`) is `0..299`, the same
+absolute range as `linear-trace` and as the fixture domain `[0, 299]`. The collection and the
+fixture's `domain` MUST be `[0, 299]` in absolute X, and the number of samples and every Y value
+MUST be unchanged. Under the absolute-domain contract the two traces MUST overlap sample for sample
+in X in Canvas2D, WebGL2 and SVG, and the fixture's rendering MUST match its committed Canvas2D,
+WebGL2 and SVG goldens without regenerating any of them.
+
+#### Scenario: The log-trace carries a distinct origin and offsets covering the shared range
+- **GIVEN**: the `overlay-two-axis` fixture
+- **WHEN**: the `log-trace` payload is inspected
+- **THEN**: `xOrigin === 1000`, `sampleCount === 300`, `x[0] === -1000`, `x[299] === -701`, and
+  `xOrigin + x[i] === i` for every `i`; the `linear-trace` payload has `xOrigin === 0`
+
+#### Scenario: The fixture domain is the shared absolute range
+- **GIVEN**: the `overlay-two-axis` fixture
+- **WHEN**: its `domain` and its collection's `xDomainMin`/`xDomainMax` are read
+- **THEN**: `domain.xMin === 0`, `domain.xMax === 299`, `collection.xDomainMin === 0` and
+  `collection.xDomainMax === 299`
+
+#### Scenario: Both traces project to the same device X in every engine
+- **GIVEN**: the fixture rendered through `Canvas2DRenderer` (fake context), `WebGL2FigureRenderer`
+  (recording fake GL with the `Math.fround` emulation) and `exportToSvg`
+- **WHEN**: sample `i` of each trace is projected
+- **THEN**: for every `i` and every engine the two traces' device X values agree within `0.01`
+  device pixels
+
+#### Scenario: The committed goldens match without regeneration
+- **GIVEN**: the committed `overlay-two-axis` Canvas2D pixel golden, WebGL2 pixel golden and SVG
+  golden
+- **WHEN**: the pixel and SVG golden suites run against the fixture
+- **THEN**: every comparison passes on the committed goldens as they are, and no golden is
+  regenerated
+
+#### Scenario: The log-trace default-window exports are non-empty
+- **GIVEN**: the `overlay-two-axis` collection and the default window `[0, 299]`
+- **WHEN**: `exportCsv` and `exportNpy` (X array of `log-trace`) run
+- **THEN**: the CSV has `300` data rows with X `0..299` for `log-trace`, and the `.npy` has shape
+  `(300,)`

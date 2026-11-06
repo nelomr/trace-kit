@@ -33,31 +33,43 @@ unit tests MUST NOT require a browser, a GPU or `happy-dom`.
 ### Requirement: Shader X Arithmetic Is Verified by `Math.fround` Emulation Against a Float64 Reference
 A unit test module MUST emulate the vertex shader's X path with `Math.fround` applied after every
 float32 operation, in the shader's evaluation order `((offset - hi) * one - lo) * scale + plotLeft` with `one = 1`,
-using `splitFloat64ToHiLo` from the renderer sources, and compare it with a binary64 reference
-`plotLeft + (offset - xDomainMin) * (plotWidth / (xDomainMax - xDomainMin))` (the domain in the offset space `projectX` uses) evaluated
-from the same Float32 offset values. The comparison MUST be expressed in device pixels. The suite
+using `splitFloat64ToHiLo` from the renderer sources applied to `t.xOffsetMin`, and compare it with
+a binary64 reference
+`plotLeft + (offset - xOffsetMin) * (plotWidth / (xDomainMax - xDomainMin))`, where `xOffsetMin =
+xDomainMin - xOrigin` is the offset-space domain minimum of the transform and `xDomainMin`/
+`xDomainMax` are absolute, evaluated from the same Float32 offset values. The comparison MUST be
+expressed in device pixels. The suite
 MUST include a deep-zoom scenario with offsets near `1000`, a window of about `0.01`
-(`xDomainMax - xDomainMin`), and an offset-space `xDomainMin` not representable in float32 (for example
-`1000.00002`). Tests MUST fail if the shader formula is edited without updating the emulation: the
-emulation MUST be generated from, or asserted equal to, the formula text in the shader source
-constant.
+(`xDomainMax - xDomainMin`), and an `xOffsetMin` not representable in float32 (for example
+`1000.00002`), run both with `xOrigin = 0` and with a non-zero `xOrigin` (for example `1550`, with
+absolute `xDomainMin = 2550.00002`). Tests MUST fail if the shader formula is edited without
+updating the emulation: the emulation MUST be generated from, or asserted equal to, the formula
+text in the shader source constant.
 
 #### Scenario: Deep zoom stays under a hundredth of a device pixel
-- **GIVEN**: offset-space `xDomainMin = 1000.00002`, `xDomainMax = 1000.01002`,
+- **GIVEN**: `xOrigin = 0`, `xOffsetMin = xDomainMin = 1000.00002`, `xDomainMax = 1000.01002`,
   `plotLeft = 56`, `plotWidth = 1000`, and 1,001 float32 offsets evenly spaced from `1000.00002`
   to `1000.01002`
 - **WHEN**: each is projected by the fround emulation and by the float64 reference
 - **THEN**: the maximum absolute difference is below `0.01` device pixels
 
+#### Scenario: Deep zoom at a non-zero origin stays under a hundredth of a device pixel
+- **GIVEN**: `xOrigin = 1550`, absolute `xDomainMin = 2550.00002`, `xDomainMax = 2550.01002`, so
+  `xOffsetMin` is approximately `1000.00002`, `plotLeft = 56`, `plotWidth = 1000`, and 1,001
+  float32 offsets evenly spaced across the offset-space window
+- **WHEN**: each is projected by the fround emulation (origin split from `xOffsetMin`) and by the
+  float64 reference
+- **THEN**: the maximum absolute difference is below `0.01` device pixels
+
 #### Scenario: The naive single-float origin fails the same test
 - **GIVEN**: the same inputs and an emulation that uses a single float32 origin
-  `Math.fround(xDomainMin)` and no `lo`
+  `Math.fround(xOffsetMin)` and no `lo`
 - **WHEN**: compared with the float64 reference
 - **THEN**: the maximum difference exceeds `1` device pixel, demonstrating the hi/lo pair is
   necessary
 
 #### Scenario: A shallow-zoom window agrees as well
-- **GIVEN**: a 1500-unit offset-space window `[0, 1500]` with offsets across it
+- **GIVEN**: a 1500-unit window `[0, 1500]` with `xOrigin = 0` and offsets across it
 - **WHEN**: compared as above
 - **THEN**: the maximum difference is below `0.01` device pixels
 

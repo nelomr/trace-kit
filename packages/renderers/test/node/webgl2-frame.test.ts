@@ -19,7 +19,7 @@ import {
   GL_SCISSOR_TEST,
   GL_TRIANGLE_STRIP,
 } from "../../src/webgl2/gl-context.js";
-import { drawGlFrame, FrameState, UNIFORM_ROW_STRIDE } from "../../src/webgl2/frame.js";
+import { drawGlFrame, FrameState, ROW_X_OFFSET_MIN, UNIFORM_ROW_STRIDE } from "../../src/webgl2/frame.js";
 import { createGlPrograms } from "../../src/webgl2/program.js";
 import { GUARD_BAND_PX } from "../../src/webgl2/shaders.js";
 import { splitFloat64ToHiLo } from "../../src/webgl2/precision.js";
@@ -178,9 +178,9 @@ describe("uniform rows", () => {
     drawGlFrame(local.frame, local.slots, 1);
 
     const hiLo = new Float32Array(2);
-    splitFloat64ToHiLo(t.xDomainMin, hiLo, 0);
+    splitFloat64ToHiLo(t.xOffsetMin, hiLo, 0);
     const f = Math.fround;
-    expect(local.gl.uniformValues("u_xOrigin")[0]).toEqual([hiLo[0], hiLo[1]]);
+    expect(local.gl.uniformValues("u_xOffsetMin")[0]).toEqual([hiLo[0], hiLo[1]]);
     expect(local.gl.uniformValues("u_xScale")[0]).toEqual([f(t.xScale)]);
     expect(local.gl.uniformValues("u_lineWidth")[0]).toEqual([f(1.5 * 2)]);
     expect(local.gl.uniformValues("u_plot")[0]).toEqual([f(t.plotLeft), f(t.plotTop), f(t.plotWidth), f(t.plotHeight)]);
@@ -214,14 +214,72 @@ describe("uniform rows", () => {
     }
   });
 
-  it("derives the hi/lo origin in Float64 from the transform's xDomainMin, not xOrigin", () => {
+  it("derives the hi/lo split in Float64 from the transform's offset-space domain minimum", () => {
     const t = transformFor({ xDomainMin: 12.5, xDomainMax: 20, xOrigin: 987654.321 });
     const local = harness([{ payload: payloadOf(20), transform: t }]);
     drawGlFrame(local.frame, local.slots, 1);
 
     const expected = new Float32Array(2);
-    splitFloat64ToHiLo(12.5, expected, 0);
-    expect(local.gl.uniformValues("u_xOrigin")[0]).toEqual([expected[0], expected[1]]);
+    splitFloat64ToHiLo(12.5 - 987654.321, expected, 0);
+    expect(t.xOffsetMin).toBe(12.5 - 987654.321);
+    expect(local.gl.uniformValues("u_xOffsetMin")[0]).toEqual([expected[0], expected[1]]);
+  });
+
+  it("places the offset-space domain minimum in row floats 0 and 1", () => {
+    expect(ROW_X_OFFSET_MIN).toBe(0);
+    const t = transformFor({ xDomainMin: 1000.00002, xDomainMax: 1000.01002 });
+    const local = harness([{ payload: payloadOf(20), transform: t }]);
+    drawGlFrame(local.frame, local.slots, 1);
+
+    const expected = new Float32Array(2);
+    splitFloat64ToHiLo(t.xOffsetMin, expected, 0);
+    expect(local.frame.rows[ROW_X_OFFSET_MIN]).toBe(expected[0]);
+    expect(local.frame.rows[ROW_X_OFFSET_MIN + 1]).toBe(expected[1]);
+  });
+
+  it("uploads the same pair as the absolute domain minimum when the origin is zero", () => {
+    const t = transformFor({ xDomainMin: 1000.00002, xDomainMax: 1000.01002, xOrigin: 0 });
+    const local = harness([{ payload: payloadOf(20), transform: t }]);
+    drawGlFrame(local.frame, local.slots, 1);
+
+    const absolute = new Float32Array(2);
+    splitFloat64ToHiLo(1000.00002, absolute, 0);
+    expect(local.gl.uniformValues("u_xOffsetMin")[0]).toEqual([absolute[0], absolute[1]]);
+  });
+
+  it("uploads (-1000, 0) for a payload at origin 1000 under the absolute domain [0, 299]", () => {
+    const t = transformFor({ xDomainMin: 0, xDomainMax: 299, xOrigin: 1000 });
+    const local = harness([{ payload: payloadOf(20), transform: t }]);
+    drawGlFrame(local.frame, local.slots, 1);
+
+    expect(local.gl.uniformValues("u_xOffsetMin")[0]).toEqual([-1000, 0]);
+  });
+
+  it("changes only the first two row floats when the origin moves under the same offset window", () => {
+    const zero = transformFor({ xDomainMin: 0, xDomainMax: 299, xOrigin: 0 });
+    const shifted = transformFor({ xDomainMin: 1000, xDomainMax: 1299, xOrigin: 1000 });
+    const a = harness([{ payload: payloadOf(20), transform: zero }]);
+    const b = harness([{ payload: payloadOf(20), transform: shifted }]);
+    drawGlFrame(a.frame, a.slots, 1);
+    drawGlFrame(b.frame, b.slots, 1);
+
+    expect(a.frame.rows.length).toBe(UNIFORM_ROW_STRIDE);
+    expect(b.frame.rows.length).toBe(UNIFORM_ROW_STRIDE);
+    expect(Array.from(b.frame.rows)).toEqual(Array.from(a.frame.rows));
+    expect(a.gl.uniformValues("u_xOffsetMin")[0]).toEqual([0, 0]);
+    expect(b.gl.uniformValues("u_xOffsetMin")[0]).toEqual([0, 0]);
+  });
+
+  it("gives each trace the split of its own transform when origins differ", () => {
+    const first = transformFor({ xDomainMin: 1550, xDomainMax: 1560, xOrigin: 1550 });
+    const second = transformFor({ xDomainMin: 1550, xDomainMax: 1560, xOrigin: 1000 });
+    const local = harness([
+      { payload: payloadOf(20), transform: first },
+      { payload: payloadOf(20), transform: second },
+    ]);
+    drawGlFrame(local.frame, local.slots, 2);
+
+    expect(local.gl.uniformValues("u_xOffsetMin")).toEqual([[0, 0], [550, 0]]);
   });
 
   it("multiplies the line width by dpr unsnapped, per trace", () => {

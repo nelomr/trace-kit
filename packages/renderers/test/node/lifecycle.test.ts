@@ -1,5 +1,5 @@
 /** @vitest-environment node */
-import { createSpectrumDataPayload } from "@trace-kit/core";
+import { createSpectrumDataPayload, projectX } from "@trace-kit/core";
 import { describe, expect, it } from "vitest";
 import { Canvas2DRenderer } from "../../src/canvas2d/canvas2d-renderer.js";
 import type { TraceDrawingContext } from "../../src/surface.js";
@@ -41,6 +41,12 @@ function createFakeCanvas(): FakeCanvas {
     },
     fillText(): void {
       calls.push("fillText");
+    },
+    setLineDash(): void {
+      calls.push("setLineDash");
+    },
+    fill(): void {
+      calls.push("fill");
     },
   };
   return {
@@ -98,6 +104,31 @@ describe("Canvas2DRenderer lifecycle", () => {
     expect(renderer.transform.xDomainMax).toBe(10);
     expect(renderer.transform.yDomainMin).toBe(-1);
     expect(renderer.transform.yDomainMax).toBe(1);
+  });
+
+  it("setDomain reads its X bounds as absolute X for a payload with a non-zero origin", () => {
+    const canvas = createFakeCanvas();
+    const renderer = new Canvas2DRenderer({ surface: asSurface(canvas) });
+    renderer.resize(400, 200, 1);
+    const payload = createSpectrumDataPayload({
+      capacity: 3,
+      xOrigin: 1550,
+      xUnit: "nm",
+      yUnit: "dBm",
+    });
+    renderer.setData(payload);
+    canvas.calls.length = 0;
+
+    renderer.setDomain(1550, 1551, -1, 1);
+
+    const t = renderer.transform;
+    expect(canvas.calls).toEqual([]);
+    expect(t.xDomainMin).toBe(1550);
+    expect(t.xDomainMax).toBe(1551);
+    expect(t.xOffsetMin).toBe(0);
+    expect(projectX(t, 0)).toBe(t.plotLeft);
+    expect(projectX(t, 0.5)).toBeCloseTo(t.plotLeft + t.plotWidth / 2, 9);
+    expect(projectX(t, 1)).toBeCloseTo(t.plotLeft + t.plotWidth, 9);
   });
 
   it("dispose is idempotent and disposed never returns to false", () => {

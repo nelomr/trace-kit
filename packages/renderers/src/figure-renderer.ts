@@ -34,13 +34,20 @@ export interface FigureRenderer {
   /**
    * Replaces the whole trace set. Retains `collection` by reference: never copied, never
    * mutated. Resolves per-trace axis binding and rebuilds per-trace transforms/style/memo
-   * columns; view X domain is seeded from `collection.xDomainMin`/`xDomainMax`. Does not draw.
+   * columns; view X domain is seeded from `collection.xDomainMin`/`xDomainMax`, which are absolute
+   * physical X (`xOrigin + x[i]`), so traces with different `xOrigin` land at their physical X.
+   * Does not draw.
    * `setData(payload)` is retained as the single-trace convenience it always was — internally
    * equivalent to a one-entry collection bound to the first registered Y axis.
    */
   setTraces(collection: TraceCollection): void;
 
-  /** Replaces the visible data window. Recomputes `transform`. Does not draw. */
+  /**
+   * Replaces the visible data window. Recomputes `transform`. Does not draw. `xMin`/`xMax` are
+   * absolute physical X (the space of `payload.xOrigin + payload.x[i]`), never offsets from a
+   * payload's `xOrigin`: a payload with `xOrigin = 1550` is visible under `setDomain(1550, 1551,
+   * ...)`.
+   */
   setDomain(xMin: number, xMax: number, yMin: number, yMax: number): void;
 
   /**

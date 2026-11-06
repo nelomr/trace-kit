@@ -2,9 +2,15 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { commitPayloadRevision, createSpectrumDataPayload } from "@trace-kit/core";
-import { describe, expect, it } from "vitest";
+import { commitPayloadRevision, createSpectrumDataPayload, projectX } from "@trace-kit/core";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Canvas2DRenderer } from "../../src/canvas2d/canvas2d-renderer.js";
+import {
+  installRecordingPath2D,
+  RecordingContext,
+  RecordingPath2D,
+  recordingSurface,
+} from "./support/recording-context.js";
 
 function collectSourceFiles(dirPath: string): string[] {
   const files: string[] = [];
@@ -120,5 +126,71 @@ describe("renderer payload consumption (renderers never construct, mutate, or tr
     } finally {
       (globalThis as Record<string, unknown>)["Path2D"] = originalPath2D;
     }
+  });
+});
+
+describe("single payload under an absolute X domain", () => {
+  let restorePath2D: () => void;
+  beforeEach(() => {
+    restorePath2D = installRecordingPath2D();
+  });
+  afterEach(() => {
+    restorePath2D();
+  });
+
+  function drawn(xOrigin: number, offsets: readonly number[], xMin: number, xMax: number) {
+    const payload = createSpectrumDataPayload({
+      capacity: offsets.length,
+      xOrigin,
+      xUnit: "nm",
+      yUnit: "dBm",
+    });
+    offsets.forEach((x, i) => {
+      payload.x[i] = x;
+      payload.y[i] = i;
+    });
+    commitPayloadRevision(payload, offsets.length);
+    const context = new RecordingContext();
+    const renderer = new Canvas2DRenderer({ surface: recordingSurface(context) });
+    renderer.setData(payload);
+    renderer.resize(400, 200, 1);
+    renderer.setDomain(xMin, xMax, -1, 1);
+    RecordingPath2D.created.length = 0;
+    renderer.render();
+    const xs = (RecordingPath2D.created[0]?.ops ?? []).map((op) => Number(op.args[0]));
+    return { renderer, payload, xs };
+  }
+
+  it("spans the plot for a non-zero origin whose domain is absolute", () => {
+    const { renderer, xs } = drawn(1550, [0, 0.5, 1], 1550, 1551);
+    const t = renderer.transform;
+    expect(xs).toHaveLength(3);
+    expect(xs[0]).toBe(t.plotLeft);
+    expect(xs[1]).toBeCloseTo(t.plotLeft + t.plotWidth / 2, 9);
+    expect(xs[2]).toBeCloseTo(t.plotLeft + t.plotWidth, 9);
+  });
+
+  it("reads setDomain bounds as absolute X and keeps the offset-space left edge in xOffsetMin", () => {
+    const { renderer } = drawn(1550, [0, 0.5, 1], 1550, 1551);
+    const t = renderer.transform;
+    expect(t.xDomainMin).toBe(1550);
+    expect(t.xDomainMax).toBe(1551);
+    expect(t.xOffsetMin).toBe(0);
+    expect(projectX(t, 0.5)).toBeCloseTo(t.plotLeft + t.plotWidth / 2, 9);
+  });
+
+  it("puts a zero-origin payload far outside the same absolute window", () => {
+    const { renderer, xs } = drawn(0, [0, 1], 1550, 1551);
+    const t = renderer.transform;
+    expect(t.xOffsetMin).toBe(1550);
+    expect(xs[0]).toBeLessThan(t.plotLeft - 1000);
+    expect(xs[1]).toBeLessThan(t.plotLeft - 1000);
+  });
+
+  it("draws a zero-origin payload at plotLeft + (x - 0) * xScale", () => {
+    const offsets = [0, 3.5, 64, 511];
+    const { renderer, xs } = drawn(0, offsets, 0, 512);
+    const t = renderer.transform;
+    expect(xs).toEqual(offsets.map((x) => t.plotLeft + (x - 0) * t.xScale));
   });
 });

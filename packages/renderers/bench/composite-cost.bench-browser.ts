@@ -271,7 +271,7 @@ function runDeepZoomProbe(): DeepZoomResult {
   gl.vertexAttribPointer(0, 1, gl.FLOAT, false, 0, 0);
   gl.useProgram(program);
   gl.viewport(0, 0, count, 1);
-  gl.uniform2f(gl.getUniformLocation(program, "u_xOrigin"), hi, lo);
+  gl.uniform2f(gl.getUniformLocation(program, "u_xOffsetMin"), hi, lo);
   gl.uniform1f(gl.getUniformLocation(program, "u_one"), 1);
   gl.uniform1f(gl.getUniformLocation(program, "u_xScale"), scale64);
   gl.uniform4f(gl.getUniformLocation(program, "u_plot"), plotLeft, 0, plotWidth, 100);

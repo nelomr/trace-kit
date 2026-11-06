@@ -151,6 +151,12 @@ function copiedBytes(chunks: Iterable<Uint8Array>): Uint8Array {
   return out;
 }
 
+async function lastBlobText(): Promise<string> {
+  const last = created[created.length - 1];
+  if (last === undefined) throw new Error("no object URL was created");
+  return last.blob.text();
+}
+
 async function lastBlobBytes(): Promise<Uint8Array> {
   const last = created[created.length - 1];
   if (last === undefined) throw new Error("no object URL was created");
@@ -177,9 +183,58 @@ describe("raw download: CSV", () => {
     view.csvButton.click();
     const text = (await created[0]?.blob.text()) ?? "";
     expect(text).toBe(joinChunks(exportCsv(sourceOf(fixture), fixture.domain.xMin, fixture.domain.xMax)));
-    // The second trace sits at xOrigin 1000, outside this scenario's 0..299 domain: skipped.
+    // Both traces cover the same absolute 0..299 window, so neither is skipped.
     expect(text).toContain("\nlinear-trace,");
-    expect(text).not.toContain("log-trace,");
+    expect(text).toContain("\nlog-trace,");
+  });
+
+  it("exports log-trace for the default window as 300 rows with absolute X 0..299", async () => {
+    const fixture = fixtureById("overlay-two-axis");
+    const view = mountControl(fixture);
+    view.csvButton.click();
+    const rows = ((await created[0]?.blob.text()) ?? "").trim().split("\n").slice(1);
+    const logRows = rows.filter((row) => row.startsWith("log-trace,"));
+    expect(logRows.length).toBe(300);
+    expect(logRows.map((row) => Number(row.split(",")[1]))).toEqual(
+      Array.from({ length: 300 }, (_, i) => i),
+    );
+  });
+
+  it("the default window is the absolute scenario domain, shown as the placeholders", () => {
+    for (const fixture of SCENARIO_FIXTURES) {
+      const view = mountControl(fixture);
+      expect(view.xMin.placeholder, fixture.id).toBe(String(fixture.domain.xMin));
+      expect(view.xMax.placeholder, fixture.id).toBe(String(fixture.domain.xMax));
+      view.control.dispose();
+    }
+  });
+
+  it("every trace of every scenario has rows in the default-window CSV", async () => {
+    for (const fixture of SCENARIO_FIXTURES) {
+      const ids =
+        fixture.kind === "collection"
+          ? fixture.collection.entries.map((entry) => entry.id)
+          : [fixture.id];
+      const view = mountControl(fixture);
+      view.csvButton.click();
+      const text = await lastBlobText();
+      for (const id of ids) {
+        expect(text, `${fixture.id}/${id}`).toContain(`\n${id},`);
+      }
+      view.control.dispose();
+    }
+  });
+
+  it("narrows the log-trace rows to a typed absolute window", async () => {
+    const view = mountControl(fixtureById("overlay-two-axis"));
+    view.xMin.value = "100";
+    view.xMax.value = "109";
+    view.csvButton.click();
+    const rows = ((await created[0]?.blob.text()) ?? "").trim().split("\n").slice(1);
+    const logXs = rows
+      .filter((row) => row.startsWith("log-trace,"))
+      .map((row) => Number(row.split(",")[1]));
+    expect(logXs).toEqual([100, 101, 102, 103, 104, 105, 106, 107, 108, 109]);
   });
 
   it("narrows every downloaded row to the typed window", async () => {
@@ -240,6 +295,18 @@ describe("raw download: .npy", () => {
     expect(Array.from(bytes.subarray(0, 8))).toEqual([0x93, 0x4e, 0x55, 0x4d, 0x50, 0x59, 0x01, 0x00]);
     expect(Array.from(bytes)).toEqual(Array.from(reference));
     expect(clicked[0]?.download).toBe("overlay-two-axis-linear-trace-y.npy");
+  });
+
+  it("exports the log-trace X array for the default window as a (300,) array of absolute X", async () => {
+    const fixture = fixtureById("overlay-two-axis");
+    const view = mountControl(fixture);
+    view.trace.value = "log-trace";
+    view.array.value = "x";
+    view.npyButton.click();
+    const bytes = await lastBlobBytes();
+    expect(new TextDecoder().decode(bytes.subarray(10, 128))).toContain("'shape': (300,)");
+    const values = new Float64Array(bytes.slice(128).buffer);
+    expect(Array.from(values)).toEqual(Array.from({ length: 300 }, (_, i) => i));
   });
 
   it("reduces the trace id to portable file-name characters", () => {

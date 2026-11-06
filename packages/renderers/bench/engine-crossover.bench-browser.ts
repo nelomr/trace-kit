@@ -15,6 +15,10 @@ const CSS_HEIGHT = 600;
 const DPR = 2; // 1600 x 1200 device pixels
 const WARMUP = 20;
 const ITERATIONS = 60;
+/** Origin of the payload and the absolute X window it is viewed through: the samples are offsets
+ * `0..SPAN` from the origin, so the visible range is `X_ORIGIN .. X_ORIGIN + SPAN`. */
+const X_ORIGIN = 1550;
+const X_SPAN = 10;
 
 type Engine = "canvas2d" | "webgl2";
 
@@ -42,13 +46,13 @@ function noiseSource(seed: number): () => number {
 
 /** A Lorentzian resonance on a noise floor, the signal shape this engine targets. */
 function sweepPayload(n: number): SpectrumDataPayload {
-  const payload = createSpectrumDataPayload({ capacity: n, xOrigin: 1550, xUnit: "nm", yUnit: "dBm" });
+  const payload = createSpectrumDataPayload({ capacity: n, xOrigin: X_ORIGIN, xUnit: "nm", yUnit: "dBm" });
   const noise = noiseSource(0x1234abcd);
   const centre = n / 2;
   const halfWidth = n / 200;
   for (let i = 0; i < n; i += 1) {
     const d = (i - centre) / halfWidth;
-    payload.x[i] = (i / (n - 1)) * 10;
+    payload.x[i] = (i / (n - 1)) * X_SPAN;
     payload.y[i] = -60 + 50 / (1 + d * d) + (noise() - 0.5) * 2;
   }
   commitPayloadRevision(payload, n);
@@ -66,7 +70,7 @@ function measureCanvas2d(payload: SpectrumDataPayload): Row {
   document.body.appendChild(canvas);
   const renderer = new Canvas2DRenderer({ surface: canvas });
   renderer.setData(payload);
-  renderer.setDomain(0, 10, -70, -5);
+  renderer.setDomain(X_ORIGIN, X_ORIGIN + X_SPAN, -70, -5);
   renderer.resize(CSS_WIDTH, CSS_HEIGHT, DPR);
   const context = canvas.getContext("2d");
   if (context === null) throw new Error("no 2d context");
@@ -103,7 +107,7 @@ function measureWebGl2(payload: SpectrumDataPayload): Row {
   const overlay = make();
   const renderer = new WebGL2FigureRenderer({ surfaces: { underlay, plot, overlay } });
   renderer.setData(payload);
-  renderer.setDomain(0, 10, -70, -5);
+  renderer.setDomain(X_ORIGIN, X_ORIGIN + X_SPAN, -70, -5);
   renderer.resize(CSS_WIDTH, CSS_HEIGHT, DPR);
   // The renderer's own context: `getContext("webgl2")` on a canvas returns the existing one.
   const gl = plot.getContext("webgl2");

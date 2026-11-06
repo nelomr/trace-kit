@@ -105,7 +105,13 @@ export class WebGL2FigureRenderer implements FigureRenderer {
   #cssWidth = 1;
   #cssHeight = 1;
   #dpr = 1;
+  /** Origin of the single payload drawn through the layout's own transforms; `0` while a trace
+   * collection is set, because each trace transform then carries its own payload's origin. */
   #xOrigin = 0;
+  /** Visible X window in absolute physical X (`xOrigin + x[i]`), as given to `setDomain` or taken
+   * from `collection.xDomainMin`/`xDomainMax`; never an offset from any payload's `xOrigin`. Each
+   * transform converts it into its trace's offset space, and the shader receives that converted
+   * minimum split into hi/lo. */
   #xDomainMin = 0;
   #xDomainMax = 1;
   #yDomainMin = -1;
@@ -197,6 +203,9 @@ export class WebGL2FigureRenderer implements FigureRenderer {
     this.#retireSlots();
     this.#traceCollection = collection;
     this.#payload = null;
+    // A collection has no origin of its own: each trace's transform carries its payload's origin,
+    // and the shared layout must not keep the one a previous single payload left behind.
+    this.#xOrigin = 0;
 
     const entries = collection.entries;
     const count = entries.length;
@@ -221,6 +230,7 @@ export class WebGL2FigureRenderer implements FigureRenderer {
       this.#writeColor(i, resolved.color);
     }
 
+    // The collection's X domain is absolute physical X and is adopted as is.
     this.#xDomainMin = collection.xDomainMin;
     this.#xDomainMax = collection.xDomainMax;
     // Tick selection follows the collection's X domain immediately, while the transforms follow
@@ -230,6 +240,7 @@ export class WebGL2FigureRenderer implements FigureRenderer {
     this.#recomputeTraceTransforms();
   }
 
+  /** `xMin`/`xMax` are absolute physical X, never offsets from a payload's `xOrigin`. */
   setDomain(xMin: number, xMax: number, yMin: number, yMax: number): void {
     if (this.#disposed) return;
     this.#xDomainMin = xMin;
@@ -275,7 +286,7 @@ export class WebGL2FigureRenderer implements FigureRenderer {
     underlay.fillStyle = this.#style.backgroundColor;
     underlay.fillRect(0, 0, t.deviceWidth, t.deviceHeight);
     refreshFigureTicks(layout, this.#unit("x"), this.#unit("y"));
-    drawXGridlines(underlay, t, this.#style, layout.xTicks, layout.xTickCount);
+    drawXGridlines(underlay, t, this.#style, layout.xGridPositions, layout.xTickCount);
     for (let axisIndex = 0; axisIndex < layout.transforms.length; axisIndex += 1) {
       const axisTransform = layout.transforms[axisIndex];
       const yTicks = layout.yTicks[axisIndex];
@@ -287,7 +298,7 @@ export class WebGL2FigureRenderer implements FigureRenderer {
 
     overlay.setTransform(1, 0, 0, 1, 0, 0);
     overlay.clearRect(0, 0, t.deviceWidth, t.deviceHeight);
-    drawBottomAxis(overlay, t, this.#deviceStyle, this.#axes, layout.xTicks, layout.xTickCount, layout.xLabels);
+    drawBottomAxis(overlay, t, this.#deviceStyle, this.#axes, layout.xGridPositions, layout.xTickCount, layout.xLabels);
     for (let axisIndex = 0; axisIndex < layout.transforms.length; axisIndex += 1) {
       const axisTransform = layout.transforms[axisIndex];
       const yTicks = layout.yTicks[axisIndex];

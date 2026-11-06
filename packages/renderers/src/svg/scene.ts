@@ -19,8 +19,10 @@ export interface SvgScene {
    */
   readonly traces: TraceCollection | SpectrumDataPayload;
   /**
-   * `xMin`/`xMax` are authoritative for both shapes. `yMin`/`yMax` only drive the implicit axis
-   * used when `yAxes` is omitted.
+   * `xMin`/`xMax` are authoritative for both shapes and are absolute physical X (the space of
+   * `payload.xOrigin + payload.x[i]`): a payload with `xOrigin = 1550` fills the plot under
+   * `xMin: 1550`, `xMax: 1551`. `yMin`/`yMax` only drive the implicit axis used when `yAxes` is
+   * omitted.
    */
   readonly domain: SvgSceneDomain;
   /** Omitted: one implicit linear left axis spanning `domain.yMin..yMax`. */

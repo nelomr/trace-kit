@@ -1,6 +1,7 @@
 /** @vitest-environment node */
 import {
   AXIS_SIDE_LEFT,
+  createViewportTransform,
   projectX,
   projectY,
   selectLogTicks,
@@ -224,6 +225,72 @@ describe("ticks and gridlines", () => {
   });
 });
 
+describe("absolute X domain", () => {
+  const ABSOLUTE = { xDomainMin: 1550, xDomainMax: 1551 };
+
+  it("selects absolute X ticks and labels, not offsets from the payload origin", () => {
+    const layout = build(makeInput([LINEAR], { ...ABSOLUTE, xOrigin: 1550 }));
+    expect(layout.xTickCount).toBeGreaterThan(1);
+    expect(layout.xTicks[0]).toBe(1550);
+    expect(layout.xTicks[layout.xTickCount - 1]).toBe(1551);
+    expect(parseFloat(layout.xLabels[0] ?? "")).toBeGreaterThanOrEqual(1550);
+    for (let i = 0; i < layout.xTickCount; i += 1) {
+      const value = layout.xTicks[i] ?? 0;
+      expect(value).toBeGreaterThanOrEqual(1550);
+      expect(value).toBeLessThanOrEqual(1551);
+      expect(layout.xLabels[i]).toBe(formatTickLabel(value, "nm"));
+    }
+  });
+
+  it("produces equal X ticks and labels for layout origins 0 and 1000", () => {
+    const a = build(makeInput([LINEAR], { xDomainMax: 299, xOrigin: 0 }));
+    const b = build(makeInput([LINEAR], { xDomainMax: 299, xOrigin: 1000 }));
+    expect(b.xTickCount).toBe(a.xTickCount);
+    expect(Array.from(b.xTicks.subarray(0, b.xTickCount))).toEqual(Array.from(a.xTicks.subarray(0, a.xTickCount)));
+    expect(b.xLabels.slice(0, b.xTickCount)).toEqual(a.xLabels.slice(0, a.xTickCount));
+  });
+
+  it("places the gridline of an absolute tick where a trace sample at the same absolute X projects", () => {
+    const layout = build(
+      makeInput([LINEAR], { ...ABSOLUTE, xOrigin: 1550, axes: { ...DEFAULT_AXIS_LAYOUT, targetTickCount: 3 } }),
+    );
+    const traceTransform = createViewportTransform({
+      cssWidth: 800,
+      cssHeight: 400,
+      dpr: 1,
+      ...layout.insets,
+      ...ABSOLUTE,
+      xOrigin: 1550,
+      yDomainMin: -1,
+      yDomainMax: 1,
+    });
+    const index = Array.from(layout.xTicks.subarray(0, layout.xTickCount)).indexOf(1550.5);
+    expect(index).toBeGreaterThanOrEqual(0);
+    expect(layout.xGridPositions[index]).toBe(projectX(traceTransform, 0.5));
+    for (let i = 0; i < layout.xTickCount; i += 1) {
+      expect(layout.xGridPositions[i]).toBeCloseTo(projectX(traceTransform, (layout.xTicks[i] ?? 0) - 1550), 9);
+    }
+  });
+
+  it("computes X gridlines independently of the layout origin", () => {
+    const a = build(makeInput([LINEAR], { xDomainMax: 299, xOrigin: 0 }));
+    const b = build(makeInput([LINEAR], { xDomainMax: 299, xOrigin: 1000 }));
+    const c = build(makeInput([LINEAR], { ...ABSOLUTE, xOrigin: 1550 }));
+    const d = build(makeInput([LINEAR], { ...ABSOLUTE, xOrigin: 0 }));
+    expect(Array.from(b.xGridPositions)).toEqual(Array.from(a.xGridPositions));
+    expect(Array.from(d.xGridPositions)).toEqual(Array.from(c.xGridPositions));
+  });
+
+  it("keeps the gridline X of a zero-origin layout bit-identical to the projection of its tick", () => {
+    const layout = build(makeInput([LINEAR], { xDomainMin: 0, xDomainMax: 511, xOrigin: 0, dpr: 2 }));
+    const t = layout.transforms[0];
+    if (t === undefined) throw new Error("no transform");
+    for (let i = 0; i < layout.xTickCount; i += 1) {
+      expect(layout.xGridPositions[i]).toBe(projectX(t, layout.xTicks[i] ?? 0));
+    }
+  });
+});
+
 describe("refreshFigureTicks revision gate", () => {
   it("does not reformat or reallocate on an unchanged key", () => {
     const layout = build(makeInput([LINEAR, LOG]));
@@ -287,6 +354,55 @@ describe("layout module neutrality", () => {
     expect(source).toMatch(/selectLogTicks/);
     expect(source).toMatch(/from\s+["']@trace-kit\/core["']/);
     expect(source).not.toMatch(/Math\.(log10|pow)/);
+  });
+});
+
+describe("one layout for every backend entry point", () => {
+  const srcDir = fileURLToPath(new URL("../../src/", import.meta.url));
+  const entryPoints = ["canvas2d/canvas2d-renderer.ts", "svg/export-to-svg.ts", "webgl2/webgl2-figure-renderer.ts"];
+
+  it.each(entryPoints)("%s takes its layout from the layout module and selects no ticks itself", (file) => {
+    const source = readFileSync(`${srcDir}${file}`, "utf8");
+    expect(source).toMatch(/from\s+["']\.\.\/layout\/figure-layout\.js["']/);
+    expect(source).toMatch(/updateFigureGeometry/);
+    expect(source).not.toMatch(/selectTicks|selectLogTicks|formatTickLabel/);
+  });
+
+  function expectSameLayout(actual: ReturnType<typeof build>, expected: ReturnType<typeof build>): void {
+    expect(actual.insets).toEqual(expected.insets);
+    expect(actual.transforms.map((t) => [t.plotLeft, t.plotWidth, t.xDomainMin, t.xDomainMax])).toEqual(
+      expected.transforms.map((t) => [t.plotLeft, t.plotWidth, t.xDomainMin, t.xDomainMax]),
+    );
+    expect(Array.from(actual.xTicks)).toEqual(Array.from(expected.xTicks));
+    expect(actual.xLabels).toEqual(expected.xLabels);
+    expect(Array.from(actual.xGridPositions)).toEqual(Array.from(expected.xGridPositions));
+    expect(actual.yLabels).toEqual(expected.yLabels);
+    expect(actual.yGridPositions.map((p) => Array.from(p))).toEqual(
+      expected.yGridPositions.map((p) => Array.from(p)),
+    );
+  }
+
+  it("yields the same ticks, labels and gridlines whatever payload origin the layout carries", () => {
+    // A bare payload hands the layout its own origin while a collection hands it 0; both draw the same
+    // absolute domain, so the axis furniture every backend renders must not depend on that origin.
+    const bare = build(makeInput([LINEAR, LOG], { xDomainMin: 1550, xDomainMax: 1551, xOrigin: 1550 }));
+    const collection = build(makeInput([LINEAR, LOG], { xDomainMin: 1550, xDomainMax: 1551, xOrigin: 0 }));
+    expect(bare.xTickCount).toBeGreaterThan(0);
+    expectSameLayout(bare, collection);
+  });
+
+  it("yields the same layout for a scene whether the layout is fresh or was reused after another scene", () => {
+    // Backends keep one preallocated layout across frames; nothing from a previous scene may survive.
+    const scene = makeInput([LINEAR, LOG], { xDomainMin: 1550, xDomainMax: 1551, xOrigin: 1550 });
+    // Same Y domains and X minimum: only the X maximum and the width differ, so a cache that ignored
+    // either would keep the other scene's ticks.
+    const other = makeInput([LINEAR, LOG], { xDomainMin: 1550, xDomainMax: 1600, cssWidth: 1000 });
+    const reused = createFigureLayout(2);
+    updateFigureGeometry(reused, other);
+    refreshFigureTicks(reused, "nm", "dBm");
+    updateFigureGeometry(reused, scene);
+    refreshFigureTicks(reused, "nm", "dBm");
+    expectSameLayout(reused, build(scene));
   });
 });
 

@@ -16,16 +16,30 @@ function payloadWithOrigin(xOrigin: number) {
 }
 
 describe("Float64 normalisation before any Float32 cast", () => {
-  it("derives hi/lo from the transform's xDomainMin in offset space, not from xOrigin", () => {
+  it("derives hi/lo from the Float64 difference xDomainMin - xOrigin of an absolute domain", () => {
     const h = createHarness();
     h.renderer.resize(400, 300, 1);
     h.renderer.setData(payloadWithOrigin(987654.321));
+    h.renderer.setDomain(987654.3210001, 987654.4, -1, 8);
+    h.renderer.render();
+
+    const offsetMin = 987654.3210001 - 987654.321;
+    const hi = Math.fround(offsetMin);
+    const lo = Math.fround(offsetMin - hi);
+    expect(h.renderer.transform.xOffsetMin).toBe(offsetMin);
+    expect(h.gl.uniformValues("u_xOffsetMin")[0]).toEqual([hi, lo]);
+  });
+
+  it("uploads the plain domain minimum when the payload origin is zero", () => {
+    const h = createHarness();
+    h.renderer.resize(400, 300, 1);
+    h.renderer.setData(payloadWithOrigin(0));
     h.renderer.setDomain(12.5000001, 12.6, -1, 8);
     h.renderer.render();
 
     const hi = Math.fround(12.5000001);
     const lo = Math.fround(12.5000001 - hi);
-    expect(h.gl.uniformValues("u_xOrigin")[0]).toEqual([hi, lo]);
+    expect(h.gl.uniformValues("u_xOffsetMin")[0]).toEqual([hi, lo]);
   });
 
   it("preserves a non-float32-representable xOrigin in the transform", () => {
@@ -39,22 +53,28 @@ describe("Float64 normalisation before any Float32 cast", () => {
   });
 
   it("never hands xOrigin, xDomainMin or their sum to the GPU as one float32", () => {
+    const origin = 1550.123456;
+    const xMin = origin + 0.1234567;
     const h = createHarness();
     h.renderer.resize(400, 300, 1);
-    h.renderer.setData(payloadWithOrigin(987654.321));
-    h.renderer.setDomain(0.0000123, 0.064, -1, 8);
+    h.renderer.setData(payloadWithOrigin(origin));
+    h.renderer.setDomain(xMin, origin + 0.2, -1, 8);
     h.renderer.render();
 
-    const [hi, lo] = h.gl.uniformValues("u_xOrigin")[0] ?? [];
-    expect(hi).toBe(Math.fround(0.0000123));
-    expect(hi).not.toBe(Math.fround(987654.321));
-    expect(hi).not.toBe(Math.fround(987654.321 + 0.0000123));
+    const offsetMin = xMin - origin;
+    const [hi, lo] = h.gl.uniformValues("u_xOffsetMin")[0] ?? [];
+    expect(hi).toBe(Math.fround(offsetMin));
+    expect(hi).not.toBe(Math.fround(origin));
+    expect(hi).not.toBe(Math.fround(xMin));
     expect(lo).not.toBe(0);
+    expect((hi ?? 0) + (lo ?? 0)).toBeCloseTo(offsetMin, 12);
   });
 
   it("has no xOrigin + offset in either vertex shader", () => {
     for (const source of [LINE_VERTEX_SHADER, MARKER_VERTEX_SHADER]) {
-      expect(source.replace(/\s+/g, "")).not.toMatch(/xOrigin\+offset|offset\+u_xOrigin/);
+      const squashed = source.replace(/\s+/g, "");
+      expect(squashed).not.toMatch(/xOrigin\+offset|offset\+xOrigin|offset\+u_xOffsetMin/);
+      expect(squashed).toContain("u_xOffsetMin");
     }
   });
 

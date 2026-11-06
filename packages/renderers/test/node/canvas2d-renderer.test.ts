@@ -12,6 +12,12 @@ import {
 } from "@trace-kit/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Canvas2DRenderer } from "../../src/canvas2d/canvas2d-renderer.js";
+import {
+  installRecordingPath2D,
+  RecordingContext,
+  RecordingPath2D,
+  recordingSurface,
+} from "./support/recording-context.js";
 
 vi.mock("@trace-kit/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@trace-kit/core")>();
@@ -463,4 +469,133 @@ describe("Canvas2DRenderer.setTraces — zero-GC", () => {
     observer.disconnect();
     expect(events).toBe(0);
   }, 60_000);
+});
+
+describe("Canvas2DRenderer.setTraces — absolute X domain across trace origins", () => {
+  let restorePath2D: () => void;
+  beforeEach(() => {
+    restorePath2D = installRecordingPath2D();
+  });
+  afterEach(() => {
+    restorePath2D();
+  });
+
+  /** Samples `offsets[i]` at origin `xOrigin`, with a Y that depends only on the sample index. */
+  function payloadAt(xOrigin: number, offsets: readonly number[]): SpectrumDataPayload {
+    const payload = createSpectrumDataPayload({
+      capacity: offsets.length,
+      xOrigin,
+      xUnit: "nm",
+      yUnit: "dBm",
+    });
+    offsets.forEach((x, i) => {
+      payload.x[i] = x;
+      payload.y[i] = Math.sin(i / 7);
+    });
+    commitPayloadRevision(payload, offsets.length);
+    return payload;
+  }
+
+  function range(start: number, count: number): number[] {
+    return Array.from({ length: count }, (_, i) => start + i);
+  }
+
+  function pathXs(path: RecordingPath2D | undefined): number[] {
+    return (path?.ops ?? []).map((op) => Number(op.args[0]));
+  }
+
+  function renderCollection(
+    traces: readonly { id: string; payload: SpectrumDataPayload }[],
+    xMin: number,
+    xMax: number,
+  ) {
+    const axes = [axis("y0", -2, 2)];
+    const context = new RecordingContext();
+    const renderer = new Canvas2DRenderer({ surface: recordingSurface(context), yAxes: axes });
+    renderer.setTraces(
+      createTraceCollection(
+        traces.map((t) => ({ id: t.id, payload: t.payload, yAxisId: "y0", style: {} })),
+        axes,
+        xMin,
+        xMax,
+      ),
+    );
+    renderer.resize(800, 200, 1);
+    RecordingPath2D.created.length = 0;
+    renderer.render();
+    return { renderer, paths: [...RecordingPath2D.created] };
+  }
+
+  it("draws traces with origins 0 and 1000 over the same absolute range at identical X", () => {
+    const { paths } = renderCollection(
+      [
+        { id: "a", payload: payloadAt(0, range(0, 300)) },
+        { id: "b", payload: payloadAt(1000, range(-1000, 300)) },
+      ],
+      0,
+      299,
+    );
+    const a = pathXs(paths[0]);
+    const b = pathXs(paths[1]);
+    expect(a).toHaveLength(300);
+    expect(b).toEqual(a);
+  });
+
+  it("makes a trace at origin 1550 visible across the plot under the absolute domain [1550, 1560]", () => {
+    const { renderer, paths } = renderCollection([{ id: "a", payload: payloadAt(1550, range(0, 11)) }], 1550, 1560);
+    const t = renderer.transform;
+    const xs = pathXs(paths[0]);
+    expect(xs).toHaveLength(11);
+    expect(xs[0]).toBe(t.plotLeft);
+    expect(xs[10]).toBeCloseTo(t.plotLeft + t.plotWidth, 9);
+    expect(xs[5]).toBeCloseTo(t.plotLeft + t.plotWidth / 2, 9);
+  });
+
+  it("projects each sample as plotLeft + (x - xOffsetMin) * xScale with no origin added in the loop", () => {
+    const offsets = [-1000, -990.5, -900, -701];
+    const { renderer, paths } = renderCollection([{ id: "a", payload: payloadAt(1000, offsets) }], 0, 299);
+    const t = renderer.transform;
+    const xOffsetMin = 0 - 1000;
+    expect(pathXs(paths[0])).toEqual(offsets.map((x) => t.plotLeft + (Math.fround(x) - xOffsetMin) * t.xScale));
+  });
+
+  it("draws a zero-origin trace at plotLeft + (x - 0) * xScale, as it did with an offset domain", () => {
+    const offsets = [0, 12.25, 100, 511];
+    const { renderer, paths } = renderCollection([{ id: "a", payload: payloadAt(0, offsets) }], 0, 512);
+    const t = renderer.transform;
+    expect(t.xOffsetMin).toBe(0);
+    expect(pathXs(paths[0])).toEqual(offsets.map((x) => t.plotLeft + (x - 0) * t.xScale));
+  });
+
+  it("seeds the absolute collection domain on setTraces", () => {
+    const { renderer, paths } = renderCollection(
+      [{ id: "a", payload: payloadAt(1000, range(-1000, 300)) }],
+      0,
+      299,
+    );
+    const t = renderer.transform;
+    expect(t.xDomainMin).toBe(0);
+    expect(t.xDomainMax).toBe(299);
+    const xs = pathXs(paths[0]);
+    expect(xs[0]).toBe(t.plotLeft);
+    expect(xs[299]).toBeCloseTo(t.plotLeft + t.plotWidth, 9);
+  });
+});
+
+describe("Canvas2DRenderer.setTraces — layout origin", () => {
+  it("drops the origin of a previously set single payload, since a trace collection has none", () => {
+    const axes = [axis("y0", -2, 2)];
+    const { renderer } = makeRenderer({ yAxes: axes });
+    renderer.setData(payloadWith([1, 2, 3], 1000));
+    renderer.resize(800, 200, 1);
+    expect(renderer.transform.xOrigin).toBe(1000);
+
+    renderer.setTraces(
+      createTraceCollection([{ id: "a", payload: payloadWith([1, 2, 3], 1000), yAxisId: "y0", style: {} }], axes, 0, 299),
+    );
+    renderer.setDomain(0, 299, -2, 2);
+
+    expect(renderer.transform.xOrigin).toBe(0);
+    expect(renderer.transform.xOffsetMin).toBe(0);
+  });
 });

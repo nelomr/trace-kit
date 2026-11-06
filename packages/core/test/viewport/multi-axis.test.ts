@@ -93,6 +93,7 @@ describe("createAxisTransforms — N transforms from one shared X domain", () =>
       "xDomainMin",
       "xDomainMax",
       "xOrigin",
+      "xOffsetMin",
       "xScale",
       "deviceWidth",
       "deviceHeight",
@@ -100,6 +101,25 @@ describe("createAxisTransforms — N transforms from one shared X domain", () =>
     ];
     for (const field of sharedFields) {
       expect(Object.is(out[0]?.[field], out[1]?.[field]), field).toBe(true);
+    }
+  });
+
+  it("derives one shared offset-space minimum from the absolute domain and origin on every axis", () => {
+    const axes: YAxisRegistration[] = [
+      { id: "a", scaleKind: Y_SCALE_KIND_LOG, domainMin: 1, domainMax: 1000, side: AXIS_SIDE_LEFT },
+      { id: "b", scaleKind: Y_SCALE_KIND_LINEAR, domainMin: -10, domainMax: 10, side: AXIS_SIDE_LEFT },
+    ];
+    const out: ViewportTransform[] = [];
+    createAxisTransforms(
+      sharedOptions({ xOrigin: 1000, xDomainMin: 0, xDomainMax: 299 }),
+      axes,
+      out,
+    );
+    expect(out).toHaveLength(2);
+    for (const t of out) {
+      expect(t.xOffsetMin).toBe(-1000);
+      expect(t.xDomainMin).toBe(0);
+      expect(t.xOrigin).toBe(1000);
     }
   });
 });

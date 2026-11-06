@@ -3,6 +3,7 @@ import {
   AXIS_SIDE_LEFT,
   commitPayloadRevision,
   createSpectrumDataPayload,
+  createTraceCollection,
   Y_SCALE_KIND_LINEAR,
   Y_SCALE_KIND_LOG,
   type SpectrumDataPayload,
@@ -229,5 +230,25 @@ describe("shared layout reuse", () => {
     expect(offsets[1]).toBeGreaterThan(0);
     const secondTransform = vi.mocked(axes.drawLeftAxis).mock.calls[1]?.[1];
     expect(secondTransform?.yScaleKind).toBe(Y_SCALE_KIND_LOG);
+  });
+});
+
+describe("layout origin", () => {
+  it("drops the origin of a previously set single payload when a trace collection replaces it", () => {
+    const yAxes = [{ id: "a", scaleKind: Y_SCALE_KIND_LINEAR, domainMin: -1, domainMax: 1, side: AXIS_SIDE_LEFT }];
+    const local = createHarness({ rendererOptions: { yAxes } });
+    const withOrigin = createSpectrumDataPayload({ capacity: 4, xOrigin: 1000, xUnit: "nm", yUnit: "dBm" });
+    commitPayloadRevision(withOrigin, 4);
+    local.renderer.setData(withOrigin);
+    local.renderer.resize(400, 300, 1);
+    expect(local.renderer.transform.xOrigin).toBe(1000);
+
+    local.renderer.setTraces(
+      createTraceCollection([{ id: "t", payload: payloadOf(4), yAxisId: "a", style: {} }], yAxes, 0, 299),
+    );
+    local.renderer.setDomain(0, 299, -1, 1);
+
+    expect(local.renderer.transform.xOrigin).toBe(0);
+    expect(local.renderer.transform.xOffsetMin).toBe(0);
   });
 });

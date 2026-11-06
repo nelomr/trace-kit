@@ -35,6 +35,32 @@ export function payloadOf(
   return payload;
 }
 
+/** A payload whose raw X offsets are given explicitly, sampled from `xOrigin`. */
+export function payloadAt(
+  xOrigin: number,
+  offsets: readonly number[],
+  y: readonly number[],
+  options: { xUnit?: string; yUnit?: string } = {},
+): SpectrumDataPayload {
+  const payload = createSpectrumDataPayload({
+    capacity: Math.max(1, offsets.length),
+    xOrigin,
+    xUnit: options.xUnit ?? "nm",
+    yUnit: options.yUnit ?? "dBm",
+  });
+  for (let i = 0; i < offsets.length; i += 1) {
+    payload.x[i] = offsets[i] ?? NaN;
+    payload.y[i] = y[i] ?? NaN;
+  }
+  commitPayloadRevision(payload, offsets.length);
+  return payload;
+}
+
+/** The X coordinates of every `M`/`L` command of a path `d` attribute, in order. */
+export function pathXs(d: string): number[] {
+  return [...d.matchAll(/[ML](-?[\d.]+) -?[\d.]+/g)].map((m) => Number(m[1]));
+}
+
 export function linearAxis(id: string, min: number, max: number): YAxisRegistration {
   return { id, scaleKind: Y_SCALE_KIND_LINEAR, domainMin: min, domainMax: max, side: AXIS_SIDE_LEFT };
 }

@@ -1,4 +1,5 @@
 /** @vitest-environment node */
+import { readFileSync } from "node:fs";
 import { createViewportTransform, projectX, projectY } from "@trace-kit/core";
 import { describe, expect, it } from "vitest";
 import { buildTracePath } from "../../src/path/build-trace-path.js";
@@ -235,3 +236,46 @@ describe("buildTracePath", () => {
     expect(sink.points[3]?.x).toBe(projectX(transform, x[40] ?? 0));
   });
 });
+
+describe("buildTracePath with a non-zero origin", () => {
+  const originTransform = createViewportTransform({
+    cssWidth: 800,
+    cssHeight: 400,
+    dpr: 1,
+    insetLeft: 0,
+    insetRight: 0,
+    insetTop: 0,
+    insetBottom: 0,
+    xDomainMin: 0,
+    xDomainMax: 299,
+    yDomainMin: -1,
+    yDomainMax: 1,
+    xOrigin: 1000,
+  });
+
+  it("walks raw payload offsets and lands them at their absolute X", () => {
+    const n = 300;
+    const x = new Float32Array(n);
+    const y = new Float32Array(n);
+    for (let i = 0; i < n; i += 1) {
+      x[i] = -1000 + i;
+      y[i] = Math.sin(i);
+    }
+    const sink = new CountingSink();
+
+    buildTracePath(sink, originTransform, x, y, new Int32Array(0), 0, n);
+
+    expect(sink.points[0]?.x).toBe(originTransform.plotLeft);
+    for (let i = 0; i < n; i += 1) {
+      expect(sink.points[i]?.x).toBe(originTransform.plotLeft + (i - 0) * originTransform.xScale);
+    }
+  });
+
+  it("never mentions xOrigin in the per-point loop or the marker pass", () => {
+    for (const file of ["build-trace-path.ts", "isolated-markers.ts"]) {
+      const source = readFileSync(new URL(`../../src/path/${file}`, import.meta.url), "utf8");
+      expect(source).not.toMatch(/xOrigin/);
+    }
+  });
+});
+

@@ -3,15 +3,18 @@ import {
   AXIS_SIDE_LEFT,
   commitPayloadRevision,
   createSpectrumDataPayload,
+  createViewportTransform,
+  projectX,
+  selectTicks,
   Y_SCALE_KIND_LINEAR,
   Y_SCALE_KIND_LOG,
   type YAxisRegistration,
 } from "@trace-kit/core";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Canvas2DRenderer } from "../../src/canvas2d/canvas2d-renderer.js";
-import { computeAxisInsets } from "../../src/canvas2d/axes.js";
+import { computeAxisInsets, drawBottomAxis, drawXGridlines } from "../../src/canvas2d/axes.js";
 import { DEFAULT_AXIS_LAYOUT, DEFAULT_FIGURE_STYLE } from "../../src/style.js";
 import type { PolylineSink } from "../../src/path/polyline-sink.js";
 import {
@@ -20,6 +23,11 @@ import {
   RecordingContext,
   recordingSurface,
 } from "./support/recording-context.js";
+
+vi.mock("@trace-kit/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@trace-kit/core")>();
+  return { ...actual, projectX: vi.fn(actual.projectX) };
+});
 
 class FakePath2D implements PolylineSink {
   moveTo(x: number, y: number): void {
@@ -493,5 +501,108 @@ describe("Canvas2DRenderer — stacked Y-axis columns and explicit axis width", 
       .filter((c) => c.name === "set lineWidth")
       .map((c) => c.args[0]);
     expect(widths).toEqual([4, 4]);
+  });
+});
+
+describe("X gridlines and tick marks come from the layout's gridline positions", () => {
+  let restorePath2D: () => void;
+  beforeEach(() => {
+    restorePath2D = installRecordingPath2D();
+    vi.mocked(projectX).mockClear();
+  });
+  afterEach(() => {
+    restorePath2D();
+  });
+
+  function payloadAt(xOrigin: number, offsets: readonly number[]) {
+    const payload = createSpectrumDataPayload({
+      capacity: offsets.length,
+      xOrigin,
+      xUnit: "nm",
+      yUnit: "dBm",
+    });
+    offsets.forEach((x, i) => {
+      payload.x[i] = x;
+      payload.y[i] = Math.sin(i);
+    });
+    commitPayloadRevision(payload, offsets.length);
+    return payload;
+  }
+
+  function renderAbsolute(xOrigin: number, xMin: number, xMax: number, offsets: readonly number[]) {
+    const context = new RecordingContext();
+    const renderer = new Canvas2DRenderer({ surface: recordingSurface(context) });
+    renderer.setData(payloadAt(xOrigin, offsets));
+    renderer.resize(400, 200, 1);
+    renderer.setDomain(xMin, xMax, -1, 1);
+    renderer.render();
+    const t = renderer.transform;
+    expect(t.xOrigin).toBe(xOrigin);
+    const traceStroke = context.calls.findIndex((c) => c.name === "stroke" && c.args.length === 1);
+    const verticalXs = (calls: typeof context.calls, y1: number, y2: (y: number) => boolean) =>
+      contextSegments(calls)
+        .filter((s) => s.x1 === s.x2 && s.y1 === y1 && y2(s.y2))
+        .map((s) => s.x1);
+    return {
+      t,
+      gridXs: verticalXs(context.calls.slice(0, traceStroke), t.plotTop, (y) => y === t.plotTop + t.plotHeight),
+      tickXs: verticalXs(
+        context.calls.slice(traceStroke + 1),
+        t.plotTop + t.plotHeight,
+        (y) => y > t.plotTop + t.plotHeight,
+      ),
+    };
+  }
+
+  function expectedPositions(xMin: number, xMax: number, plotLeft: number, xScale: number): number[] {
+    const ticks = new Float64Array(32);
+    const count = selectTicks(xMin, xMax, DEFAULT_AXIS_LAYOUT.targetTickCount, ticks, 0);
+    return Array.from(ticks.subarray(0, count), (tick) => plotLeft + (tick - xMin) * xScale);
+  }
+
+  it("draws gridlines and tick marks at the absolute tick positions for a zero origin", () => {
+    const { t, gridXs, tickXs } = renderAbsolute(0, 0, 100, [0, 25, 50, 100]);
+    const expected = expectedPositions(0, 100, t.plotLeft, t.xScale);
+    expect(expected.length).toBeGreaterThan(1);
+    expect(gridXs).toEqual(expected);
+    expect(tickXs).toEqual(expected);
+  });
+
+  it("draws gridlines and tick marks at the absolute tick positions for a non-zero origin", () => {
+    const { t, gridXs, tickXs } = renderAbsolute(1550, 1550, 1551, [0, 0.25, 0.5, 1]);
+    const expected = expectedPositions(1550, 1551, t.plotLeft, t.xScale);
+    expect(expected.length).toBeGreaterThan(1);
+    expect(expected[0]).toBe(t.plotLeft);
+    expect(gridXs).toEqual(expected);
+    expect(tickXs).toEqual(expected);
+  });
+
+  it("does not project any tick itself", () => {
+    const t = createViewportTransform({
+      cssWidth: 400,
+      cssHeight: 200,
+      dpr: 1,
+      insetLeft: 28,
+      insetRight: 0,
+      insetTop: 0,
+      insetBottom: 28,
+      xDomainMin: 1550,
+      xDomainMax: 1551,
+      xOrigin: 1550,
+      yDomainMin: -1,
+      yDomainMax: 1,
+    });
+    const positions = new Float64Array([30, 60, 90]);
+    const context = new RecordingContext();
+    vi.mocked(projectX).mockClear();
+
+    drawXGridlines(context, t, DEFAULT_FIGURE_STYLE, positions, 3);
+    drawBottomAxis(context, t, DEFAULT_FIGURE_STYLE, DEFAULT_AXIS_LAYOUT, positions, 3, ["a", "b", "c"]);
+
+    expect(vi.mocked(projectX)).not.toHaveBeenCalled();
+    const xs = contextSegments(context.calls)
+      .filter((s) => s.x1 === s.x2)
+      .map((s) => s.x1);
+    expect(xs).toEqual([30, 60, 90, 30, 60, 90]);
   });
 });

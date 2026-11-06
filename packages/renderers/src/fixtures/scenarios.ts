@@ -243,11 +243,14 @@ function buildOverlayLinearPayload(
 }
 
 /** The overlay scenario's log-axis trace: strictly positive (a log Y domain has no meaning for a
- * non-positive value), sampled from a distinct `xOrigin`. */
+ * non-positive value), sampled from a distinct `xOrigin`, with offsets chosen so its absolute X
+ * matches the linear trace's `0..299`: the regression guard for per-trace origins under one
+ * absolute domain. `xStart` is the offset of the first sample (`x[i] = xStart + i`). */
 function buildOverlayLogPayload(
   sampleCount: number,
   seed: number,
   xOrigin: number,
+  xStart: number,
 ): SpectrumDataPayload {
   const payload = createSpectrumDataPayload({
     capacity: sampleCount,
@@ -259,7 +262,7 @@ function buildOverlayLogPayload(
   for (let i = 0; i < sampleCount; i += 1) {
     prngState = nextUint32(prngState);
     const noise = 1 + ((prngState / 0xffffffff) * 2 - 1) * 0.05;
-    payload.x[i] = i;
+    payload.x[i] = xStart + i;
     payload.y[i] = 1 * 10 ** ((i / (sampleCount - 1)) * 2) * noise;
   }
   commitPayloadRevision(payload, sampleCount);
@@ -274,7 +277,7 @@ const gappedTracePayload = buildGappedPayload(512, 256, 80, 5);
 const logSweepPayload = buildLogSweepPayload(512, 41);
 const dualAxisPayload = buildLogSweepPayload(512, 43);
 const overlayLinearPayload = buildOverlayLinearPayload(300, 17, 0);
-const overlayLogPayload = buildOverlayLogPayload(300, 19, 1000);
+const overlayLogPayload = buildOverlayLogPayload(300, 19, 1000, -1000);
 
 const LOG_AXIS: YAxisRegistration = Object.freeze({
   id: "log",

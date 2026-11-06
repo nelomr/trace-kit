@@ -6,7 +6,7 @@
  *
  * One row per trace, `UNIFORM_ROW_STRIDE` floats:
  *
- *   [0..1] x origin hi, lo   [2] x scale        [3] line width (device px)
+ *   [0..1] x offset-space domain min hi, lo   [2] x scale        [3] line width (device px)
  *   [4..7] plot left, top, width, height        [8..9] device width, height
  *   [10..13] y base, y scale, y log domain min, y log scale
  *   [14..17] color (straight alpha)             [18] marker side (device px)   [19] one (always 1)
@@ -30,7 +30,8 @@ import { ensureTraceUploaded } from "./upload.js";
 
 export const UNIFORM_ROW_STRIDE = 20;
 
-const ROW_ORIGIN = 0;
+/** Float64 hi/lo split of the offset-space domain minimum, `xDomainMin - xOrigin`. */
+export const ROW_X_OFFSET_MIN = 0;
 const ROW_X_SCALE = 2;
 const ROW_LINE_WIDTH = 3;
 const ROW_PLOT = 4;
@@ -87,7 +88,7 @@ function uploadSharedUniforms(
   base: number,
   index: number,
 ): void {
-  gl.uniform2fv(u.xOrigin, rows, base + ROW_ORIGIN, 2);
+  gl.uniform2fv(u.xOffsetMin, rows, base + ROW_X_OFFSET_MIN, 2);
   gl.uniform1fv(u.one, rows, base + ROW_ONE, 1);
   gl.uniform1fv(u.xScale, rows, base + ROW_X_SCALE, 1);
   gl.uniform4fv(u.plot, rows, base + ROW_PLOT, 4);
@@ -146,7 +147,7 @@ export function drawGlFrame(frame: FrameState, slots: readonly TraceGpuSlot[], c
 
     const base = i * UNIFORM_ROW_STRIDE;
     const lineWidthCss = frame.lineWidthCss[i] ?? 0;
-    splitFloat64ToHiLo(t.xDomainMin, rows, base + ROW_ORIGIN);
+    splitFloat64ToHiLo(t.xOffsetMin, rows, base + ROW_X_OFFSET_MIN);
     rows[base + ROW_X_SCALE] = t.xScale;
     rows[base + ROW_LINE_WIDTH] = lineWidthCss * t.dpr;
     rows[base + ROW_PLOT] = t.plotLeft;

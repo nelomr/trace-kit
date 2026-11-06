@@ -4,6 +4,7 @@ import {
   AXIS_SIDE_LEFT,
   createSpectrumDataPayload,
   createViewportTransform,
+  projectX,
   Y_SCALE_KIND_LINEAR,
   Y_SCALE_KIND_LOG,
   type SpectrumDataPayload,
@@ -77,6 +78,45 @@ describe("buildTraceTransforms", () => {
     expect(out).toBe(first);
     expect(out).toHaveLength(1);
     expect(out[0]?.xOrigin).toBe(5);
+  });
+
+  it("gives each trace an offset-space left edge of xDomainMin - xOrigin under one absolute domain", () => {
+    const geometry = { ...GEOMETRY, xDomainMin: 0, xDomainMax: 299 };
+    const payloads = [payloadWithOrigin(0), payloadWithOrigin(1000)];
+    const out: ViewportTransform[] = [];
+
+    buildTraceTransforms(AXES, new Int32Array([0, 0]), payloads, 2, geometry, out);
+
+    expect(out[0]?.xDomainMin).toBe(0);
+    expect(out[1]?.xDomainMin).toBe(0);
+    expect(out[0]?.xOffsetMin).toBe(0);
+    expect(out[1]?.xOffsetMin).toBe(-1000);
+  });
+
+  it("projects the same absolute X to the same device X whatever the trace origin", () => {
+    const geometry = { ...GEOMETRY, xDomainMin: 0, xDomainMax: 299 };
+    const payloads = [payloadWithOrigin(0), payloadWithOrigin(1000)];
+    const out: ViewportTransform[] = [];
+    buildTraceTransforms(AXES, new Int32Array([0, 0]), payloads, 2, geometry, out);
+    const [a, b] = out;
+    if (a === undefined || b === undefined) throw new Error("missing transform");
+
+    for (let i = 0; i < 300; i += 1) {
+      // Absolute X = i: offset i for origin 0, offset i - 1000 for origin 1000.
+      expect(projectX(b, i - 1000)).toBe(projectX(a, i));
+    }
+  });
+
+  it("keeps a non-zero-origin trace inside the plot under an absolute domain", () => {
+    const geometry = { ...GEOMETRY, xDomainMin: 1550, xDomainMax: 1551 };
+    const out: ViewportTransform[] = [];
+    buildTraceTransforms(AXES, new Int32Array([0]), [payloadWithOrigin(1550)], 1, geometry, out);
+    const t = out[0];
+    if (t === undefined) throw new Error("missing transform");
+
+    expect(projectX(t, 0)).toBe(t.plotLeft);
+    expect(projectX(t, 1)).toBeCloseTo(t.plotLeft + t.plotWidth, 9);
+    expect(projectX(t, 0.5)).toBeCloseTo(t.plotLeft + t.plotWidth / 2, 9);
   });
 
   it("imports nothing from the Canvas2D or SVG backends", () => {

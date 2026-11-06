@@ -27,6 +27,7 @@ interface Figure {
   dispose(): void;
 }
 
+/** Origin 0, so the absolute X domain handed to `setDomain` equals the stored offsets. */
 function payloadOf(values: readonly number[], x?: (i: number) => number): SpectrumDataPayload {
   const payload = createSpectrumDataPayload({ capacity: values.length, xOrigin: 0, xUnit: "", yUnit: "" });
   values.forEach((v, i) => {

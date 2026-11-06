@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Pane } from "tweakpane";
-import type { TraceDrawingContext } from "@trace-kit/renderers";
+import { Canvas2DRenderer, type TraceDrawingContext } from "@trace-kit/renderers";
 import { SCENARIO_FIXTURES } from "@trace-kit/renderers/fixtures";
 import { TRACEKIT_INTER_EMBEDDED_FONT } from "@trace-kit/renderers/font";
 import { exportToSvg } from "@trace-kit/renderers/svg";
@@ -254,5 +254,68 @@ describe("/svg-export view", () => {
     view.select.dispatchEvent(new Event("change"));
     view.target.dispatchEvent(new Event("input"));
     expect(created.length).toBe(before);
+  });
+});
+
+describe("/svg-export view: absolute X domain", () => {
+  function fixtureNamed(id: string) {
+    const fixture = SCENARIO_FIXTURES.find((f) => f.id === id);
+    if (fixture === undefined) throw new Error(`no fixture ${id}`);
+    return fixture;
+  }
+
+  it("passes the absolute fixture domain to setDomain and to the SVG scene", async () => {
+    const fixture = fixtureNamed("resonance-peak");
+    if (fixture.kind !== "payload") throw new Error("resonance-peak must be a payload");
+    expect(fixture.domain.xMin).toBeGreaterThan(0);
+    const setDomain = vi.spyOn(Canvas2DRenderer.prototype, "setDomain");
+    try {
+      const view = mounted();
+      view.select.value = fixture.id;
+      view.select.dispatchEvent(new Event("change"));
+      const { xMin, xMax, yMin, yMax } = fixture.domain;
+      expect(setDomain).toHaveBeenLastCalledWith(xMin, xMax, yMin, yMax);
+      expect(sceneFromFixture(fixture).domain).toBe(fixture.domain);
+      expect(await lastText()).toBe(exportToSvg(sceneFromFixture(fixture)));
+      await view.teardown();
+    } finally {
+      setDomain.mockRestore();
+    }
+  });
+
+  it("labels the X ticks of the default view with absolute values inside the domain", async () => {
+    const fixture = fixtureNamed("resonance-peak");
+    const view = mounted();
+    view.select.value = fixture.id;
+    view.select.dispatchEvent(new Event("change"));
+    const labels = [...(await lastText()).matchAll(/<text x="[\d.]+" y="[\d.]+" text-anchor="middle"[^>]*>(-?[\d.]+) index<\/text>/g)].map(
+      (m) => Number(m[1]),
+    );
+    expect(labels.length).toBeGreaterThan(0);
+    for (const label of labels) {
+      expect(label).toBeGreaterThanOrEqual(fixture.domain.xMin);
+      expect(label).toBeLessThanOrEqual(fixture.domain.xMax);
+    }
+    expect(labels).toEqual([1800, 2000, 2200]);
+    await view.teardown();
+  });
+
+  it("draws the overlay collection inside the plot under its absolute domain", async () => {
+    const fixture = fixtureNamed("overlay-two-axis");
+    const view = mounted();
+    view.select.value = fixture.id;
+    view.select.dispatchEvent(new Event("change"));
+    const svg = await lastText();
+    const traceXs = [...svg.matchAll(/<path d="(M[^"]*)"/g)].map((m) =>
+      [...(m[1] ?? "").matchAll(/[ML](-?[\d.]+) /g)].map((n) => Number(n[1])),
+    );
+    const traces = traceXs.filter((xs) => xs.length === 300);
+    expect(traces.length).toBe(2);
+    for (const xs of traces) {
+      expect(Math.min(...xs)).toBeGreaterThanOrEqual(56);
+      expect(Math.max(...xs)).toBeLessThanOrEqual(800);
+    }
+    expect(traces[1]).toEqual(traces[0]);
+    await view.teardown();
   });
 });

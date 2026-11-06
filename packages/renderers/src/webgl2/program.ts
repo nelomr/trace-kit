@@ -22,7 +22,7 @@ type Location = WebGLUniformLocation | null;
 
 /** Uniforms shared by both programs. */
 export interface SharedUniforms {
-  readonly xOrigin: Location;
+  readonly xOffsetMin: Location;
   readonly one: Location;
   readonly xScale: Location;
   readonly plot: Location;
@@ -96,7 +96,7 @@ export function compileProgram(
 
 function sharedUniforms(gl: Gl2Context, program: WebGLProgram): SharedUniforms {
   return {
-    xOrigin: gl.getUniformLocation(program, "u_xOrigin"),
+    xOffsetMin: gl.getUniformLocation(program, "u_xOffsetMin"),
     one: gl.getUniformLocation(program, "u_one"),
     xScale: gl.getUniformLocation(program, "u_xScale"),
     plot: gl.getUniformLocation(program, "u_plot"),

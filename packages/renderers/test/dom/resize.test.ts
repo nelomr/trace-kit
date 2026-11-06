@@ -23,6 +23,8 @@ function stubGetContext(canvas: HTMLCanvasElement): void {
     lineTo(): void {},
     stroke(): void {},
     fillText(): void {},
+    setLineDash(): void {},
+    fill(): void {},
   };
   // Test double: happy-dom's real getContext return type is far wider than this narrow
   // `TraceDrawingContext`; this is a genuine external boundary, not a production suppression.

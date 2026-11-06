@@ -36,9 +36,9 @@ export class RecordingContext {
   #strokeStyle = "";
   #lineWidth = 1;
   #font = "";
-  #textAlign = "start";
-  #textBaseline = "alphabetic";
-  lineJoin = "miter";
+  #textAlign: CanvasTextAlign = "start";
+  #textBaseline: CanvasTextBaseline = "alphabetic";
+  lineJoin: CanvasLineJoin = "miter";
 
   get fillStyle(): string {
     return this.#fillStyle;
@@ -67,16 +67,16 @@ export class RecordingContext {
   set font(value: string) {
     this.#font = value;
   }
-  get textAlign(): string {
+  get textAlign(): CanvasTextAlign {
     return this.#textAlign;
   }
-  set textAlign(value: string) {
+  set textAlign(value: CanvasTextAlign) {
     this.#textAlign = value;
   }
-  get textBaseline(): string {
+  get textBaseline(): CanvasTextBaseline {
     return this.#textBaseline;
   }
-  set textBaseline(value: string) {
+  set textBaseline(value: CanvasTextBaseline) {
     this.#textBaseline = value;
   }
 

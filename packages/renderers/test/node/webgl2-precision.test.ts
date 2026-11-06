@@ -1,9 +1,9 @@
 /** @vitest-environment node */
-import { createViewportTransform, projectY, Y_SCALE_KIND_LOG } from "@trace-kit/core";
+import { createViewportTransform, projectX, projectY, Y_SCALE_KIND_LOG } from "@trace-kit/core";
 import { describe, expect, it } from "vitest";
 import { LOG10_2, splitFloat64ToHiLo } from "../../src/webgl2/precision.js";
 import { LINE_VERTEX_SHADER, MARKER_VERTEX_SHADER } from "../../src/webgl2/shaders.js";
-import { extractXProjection } from "./support/shader-source.js";
+import { extractFunctionBody, extractXProjection } from "./support/shader-source.js";
 
 const f = Math.fround;
 
@@ -98,6 +98,47 @@ describe("X projection emulation against a Float64 reference", () => {
   });
 });
 
+describe("X projection emulation with a non-zero origin", () => {
+  function absoluteDomainTransform(xOrigin: number, xDomainMin: number, xDomainMax: number) {
+    return createViewportTransform({
+      cssWidth: 1056,
+      cssHeight: 400,
+      dpr: 1,
+      insetLeft: 56,
+      insetRight: 0,
+      insetTop: 0,
+      insetBottom: 0,
+      xDomainMin,
+      xDomainMax,
+      yDomainMin: 0,
+      yDomainMax: 1,
+      xOrigin,
+    });
+  }
+
+  function worstError(t: ReturnType<typeof absoluteDomainTransform>, samples: number): number {
+    const row = new Float32Array(2);
+    splitFloat64ToHiLo(t.xOffsetMin, row, 0);
+    let worst = 0;
+    for (let i = 0; i < samples; i += 1) {
+      const offset = f(t.xOffsetMin + (i / (samples - 1)) * (t.xDomainMax - t.xDomainMin));
+      const emulated = emulateX(offset, row, t.xScale, t.plotLeft);
+      worst = Math.max(worst, Math.abs(emulated - projectX(t, offset)));
+    }
+    return worst;
+  }
+
+  it("stays under 0.01 device px at origin 1550 over a 0.01-wide absolute window", () => {
+    const t = absoluteDomainTransform(1550, 2550.00002, 2550.01002);
+    expect(worstError(t, 1001)).toBeLessThan(0.01);
+  });
+
+  it("stays under 0.01 device px at origin 1000 over a shallow absolute window", () => {
+    const t = absoluteDomainTransform(1000, 0, 299);
+    expect(worstError(t, 1001)).toBeLessThan(0.01);
+  });
+});
+
 describe("log Y emulation against projectY", () => {
   it("stays under 0.01 device px for decade and in-between samples", () => {
     const t = createViewportTransform({
@@ -138,6 +179,14 @@ describe("shader binding of the X evaluation order", () => {
   it("extracts the modelled expression from both vertex shaders", () => {
     expect(extractXProjection(LINE_VERTEX_SHADER)).toBe(MODELLED);
     expect(extractXProjection(MARKER_VERTEX_SHADER)).toBe(MODELLED);
+  });
+
+  it("reads the hi/lo pair from the offset-space domain minimum uniform", () => {
+    for (const source of [LINE_VERTEX_SHADER, MARKER_VERTEX_SHADER]) {
+      const body = (extractFunctionBody(source, "projectXDevice") ?? "").replace(/\s+/g, "");
+      expect(body).toContain("floathi=u_xOffsetMin.x;");
+      expect(body).toContain("floatlo=u_xOffsetMin.y;");
+    }
   });
 
   it("rejects a reassociated copy, so the check is not vacuous", () => {

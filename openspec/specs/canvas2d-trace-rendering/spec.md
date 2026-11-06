@@ -265,6 +265,14 @@ palette entry for its index. `ctx.lineWidth` MUST be derived from that trace's o
 and the injected `dpr`, as the archived "Device-Pixel Sizing" requirement derives it. Resolution
 MUST be allocation-free per frame in Canvas2D (resolved at `setTraces`).
 
+Each trace's `ViewportTransform` MUST be built from the renderer's shared X domain, which is
+absolute physical X (`figure-renderer-contract`), together with that trace's own payload `xOrigin`.
+Line paths and isolated-sample markers MUST be projected by calling `projectX` on the payload's raw
+`x[i]` offsets through that transform; the render loop MUST NOT add `xOrigin` to any sample and MUST
+NOT read `xOrigin` itself. Two traces that sample the same absolute X MUST therefore be drawn at
+the same device X whatever their origins. A payload with `xOrigin = 0` MUST draw exactly as it did
+when the domain was taken as offsets (the paths are call-for-call identical).
+
 #### Scenario: Two traces on two axes are drawn with their own resolved transform
 - **GIVEN**: a `TraceCollection` with two entries bound to two distinct `yAxisId`s with different
   Y domains
@@ -286,6 +294,31 @@ MUST be allocation-free per frame in Canvas2D (resolved at `setTraces`).
 - **GIVEN**: one `TraceCollection` with a mix of styled and unstyled traces
 - **WHEN**: it is resolved for Canvas2D and for `exportToSvg`
 - **THEN**: the resolved color, line width, dash and marker flag per trace are equal
+
+#### Scenario: Traces with different origins covering the same absolute range draw identical X
+- **GIVEN**: a collection with domain `[0, 299]` holding trace A (`xOrigin: 0`, offsets `0..299`) and
+  trace B (`xOrigin: 1000`, offsets `-1000..-701`), recorded on a fake `TraceDrawingContext`
+- **WHEN**: `render()` runs
+- **THEN**: the sequence of X arguments of the `moveTo`/`lineTo` calls of trace A equals that of
+  trace B, element by element
+
+#### Scenario: A non-zero origin trace is visible under an absolute domain
+- **GIVEN**: a single payload with `xOrigin: 1550` and offsets `[0, 0.5, 1]`, `setDomain(1550, 1551,
+  -1, 1)`
+- **WHEN**: `render()` runs on the fake context
+- **THEN**: the first path point is at `plotLeft`, the last at `plotLeft + plotWidth`, and the middle
+  at the horizontal centre of the plot area
+
+#### Scenario: A zero-origin payload draws bit-identically to the offset-domain behaviour
+- **GIVEN**: a payload with `xOrigin: 0` and a domain `[0, 512]`
+- **WHEN**: `render()` runs on the fake context
+- **THEN**: every recorded path coordinate equals `plotLeft + (x[i] - 0) * xScale` computed in
+  f64, the same values the render produced before the domain was defined as absolute
+
+#### Scenario: The per-point loop adds no origin
+- **GIVEN**: the source of `buildTracePath` and the marker pass
+- **WHEN**: it is scanned for `xOrigin`
+- **THEN**: no occurrence is found
 
 ### Requirement: Decimation Memoization Is Keyed Per Trace
 The archived "Decimation Is Memoized by Revision, Threshold, and Domain" requirement is extended:

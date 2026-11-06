@@ -14,10 +14,15 @@
 trace entries, each entry carrying a stable `id: string`, a `SpectrumDataPayload` reference, a
 `yAxisId: string` binding, and a per-trace style. A `TraceCollection` MUST carry exactly one
 shared X **domain** (`xDomainMin`, `xDomainMax`), not one shared X **buffer**: each entry's
-payload retains its own `x` buffer, `xOrigin`, and `sampleCount`, per Confirmed Product Decision
-2. The collection and its entry array MUST be frozen (`Object.isFrozen` true) after construction;
-no entry, and no field of an entry other than the payload's own mutable-through-
-`commitPayloadRevision` fields, MUST be reassignable after construction.
+payload retains its own `x` buffer, `xOrigin`, and `sampleCount`. The shared domain MUST be
+expressed in absolute physical X, the space of `payload.xOrigin + payload.x[i]`, and MUST NOT be
+interpreted relative to any entry's `xOrigin`. Entries whose payloads have different `xOrigin`
+values are therefore valid in one collection, and each entry MUST be placed on the shared axis by
+its own `xOrigin`: two entries that sample the same absolute X occupy the same position on the
+axis regardless of their origins. The collection and its entry array MUST be frozen
+(`Object.isFrozen` true) after construction; no entry, and no field of an entry other than the
+payload's own mutable-through-`commitPayloadRevision` fields, MUST be reassignable after
+construction.
 
 #### Scenario: A two-trace collection holds independent payloads under one shared X domain
 - **GIVEN**: two `SpectrumDataPayload`s with different `sampleCount` and different `xOrigin`
@@ -25,8 +30,30 @@ no entry, and no field of an entry other than the payload's own mutable-through-
 - **WHEN**: `createTraceCollection` builds a collection from both, with an explicit shared
   `xDomainMin`/`xDomainMax`
 - **THEN**: the collection exposes two entries, each entry's payload retains its own original `x`
-  buffer and `sampleCount` unchanged, and both entries report the same collection-level
-  `xDomainMin`/`xDomainMax`
+  buffer, `xOrigin` and `sampleCount` unchanged, and both entries report the same collection-level
+  `xDomainMin`/`xDomainMax`, stored as given
+
+#### Scenario: The shared domain is absolute, not relative to an entry's origin
+- **GIVEN**: a payload with `xOrigin: 1000` and offsets `-1000..-701` (absolute `0..299`), and a
+  collection built with `xDomainMin: 0`, `xDomainMax: 299`
+- **WHEN**: the per-entry `ViewportTransform` is built from the collection's domain and that
+  payload's `xOrigin`
+- **THEN**: the transform's `xDomainMin` is `0`, its `xDomainMax` is `299` and its `xOffsetMin` is
+  `-1000`, and the first sample (offset `-1000`) projects to `plotLeft`
+
+#### Scenario: Entries with different origins covering the same absolute range overlap exactly
+- **GIVEN**: entry A with `xOrigin: 0` and offsets `0..299`, entry B with `xOrigin: 1000` and
+  offsets `-1000..-701`, and a collection with `xDomainMin: 0`, `xDomainMax: 299`
+- **WHEN**: each entry's samples are projected through its own transform, sample index `i` of A and
+  of B
+- **THEN**: for every `i` the device X of A's sample equals the device X of B's sample
+
+#### Scenario: Entries sampling disjoint absolute ranges are placed at their physical X
+- **GIVEN**: entry A with `xOrigin: 0` and offsets `0..99`, entry B with `xOrigin: 100` and offsets
+  `0..99`, and a collection with `xDomainMin: 0`, `xDomainMax: 199`
+- **WHEN**: each entry's first and last sample are projected through its own transform
+- **THEN**: A spans the left half of the plot and B the right half, B's first sample projecting
+  where an absolute X of `100` projects
 
 #### Scenario: The collection and its entries are frozen
 - **GIVEN**: a constructed `TraceCollection`

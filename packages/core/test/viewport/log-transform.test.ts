@@ -113,6 +113,8 @@ describe("log field layout and coefficients", () => {
     const linear = buildLinear();
     const log = buildLog();
     expect(Object.keys(log)).toEqual(Object.keys(linear));
+    expect(Object.keys(log)).toHaveLength(19);
+    expect(Object.keys(log).indexOf("xOffsetMin")).toBe(Object.keys(log).indexOf("xOrigin") + 1);
   });
 
   it("survives structuredClone with all fields compared via Object.is, including the NaN sentinel", () => {

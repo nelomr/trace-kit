@@ -8,6 +8,7 @@ import {
   withTraceStyle,
 } from "../../src/payload/trace-collection.js";
 import type { YAxisRegistration } from "../../src/viewport/axes.js";
+import { buildPayload } from "../support/payload-builder.js";
 
 function payload(): SpectrumDataPayload {
   return createSpectrumDataPayload({
@@ -181,6 +182,100 @@ describe("createTraceCollection", () => {
   });
 });
 
+describe("absolute X domain shared by traces with different origins", () => {
+  const axes = [axis("y0"), axis("y1")];
+
+  function offsets(start: number, count: number): number[] {
+    return Array.from({ length: count }, (_, i) => start + i);
+  }
+
+  it("holds payloads of origin 0 and 1000 independently under one absolute domain", () => {
+    const a = buildPayload({ x: offsets(0, 300), xOrigin: 0 });
+    const b = buildPayload({ x: offsets(-1000, 300), xOrigin: 1000 });
+    const collection = createTraceCollection(
+      [
+        { id: "a", payload: a, yAxisId: "y0", style: {} },
+        { id: "b", payload: b, yAxisId: "y1", style: {} },
+      ],
+      axes,
+      0,
+      299,
+    );
+
+    expect(collection.entries[0]!.payload).toBe(a);
+    expect(collection.entries[1]!.payload).toBe(b);
+    expect(collection.entries[0]!.payload.xOrigin).toBe(0);
+    expect(collection.entries[1]!.payload.xOrigin).toBe(1000);
+    expect(collection.xDomainMin).toBe(0);
+    expect(collection.xDomainMax).toBe(299);
+  });
+
+  it("does not shift the shared domain by an entry's origin", () => {
+    const collection = createTraceCollection(
+      [
+        { id: "a", payload: buildPayload({ x: [0, 1], xOrigin: 5000 }), yAxisId: "y0", style: {} },
+        { id: "b", payload: buildPayload({ x: [0, 1], xOrigin: -250 }), yAxisId: "y1", style: {} },
+      ],
+      axes,
+      1550,
+      1551,
+    );
+    expect(collection.xDomainMin).toBe(1550);
+    expect(collection.xDomainMax).toBe(1551);
+  });
+
+  it("gives equal absolute X to entries with different origins covering the same range", () => {
+    const a = buildPayload({ x: offsets(0, 300), xOrigin: 0 });
+    const b = buildPayload({ x: offsets(-1000, 300), xOrigin: 1000 });
+    const collection = createTraceCollection(
+      [
+        { id: "a", payload: a, yAxisId: "y0", style: {} },
+        { id: "b", payload: b, yAxisId: "y1", style: {} },
+      ],
+      axes,
+      0,
+      299,
+    );
+    const [first, second] = collection.entries.map((e) => e.payload);
+    for (let i = 0; i < 300; i += 1) {
+      expect(second!.xOrigin + second!.x[i]!).toBe(first!.xOrigin + first!.x[i]!);
+    }
+  });
+
+  it("keeps the physical X of entries that sample disjoint absolute ranges", () => {
+    const low = buildPayload({ x: offsets(0, 10), xOrigin: 0 });
+    const high = buildPayload({ x: offsets(0, 10), xOrigin: 1000 });
+    const collection = createTraceCollection(
+      [
+        { id: "low", payload: low, yAxisId: "y0", style: {} },
+        { id: "high", payload: high, yAxisId: "y1", style: {} },
+      ],
+      axes,
+      0,
+      1009,
+    );
+    const [a, b] = collection.entries.map((e) => e.payload);
+    expect(a!.xOrigin + a!.x[9]!).toBe(9);
+    expect(b!.xOrigin + b!.x[0]!).toBe(1000);
+    expect(b!.xOrigin + b!.x[9]!).toBe(1009);
+  });
+
+  it("keeps the collection and its entries frozen; assigning a field throws in strict mode", () => {
+    const collection = createTraceCollection(
+      [{ id: "a", payload: buildPayload({ x: [0, 1], xOrigin: 1000 }), yAxisId: "y0", style: {} }],
+      axes,
+      0,
+      299,
+    );
+    expect(Object.isFrozen(collection)).toBe(true);
+    expect(Object.isFrozen(collection.entries[0])).toBe(true);
+    expect(() => {
+      (collection as { xDomainMin: number }).xDomainMin = 5;
+    }).toThrow(TypeError);
+    expect(collection.xDomainMin).toBe(0);
+  });
+});
+
 describe("resolveTraceAxisIndices", () => {
   it("resolves yAxisId to a transform index once, writing into the caller's Int32Array", () => {
     const axes = [axis("y0"), axis("y1"), axis("y2")];
@@ -214,7 +309,7 @@ describe("resolveTraceAxisIndices", () => {
 
     // Behavioral proxy for "no Map read in a loop": Map's prototype get/has traps would fire if
     // resolution used a Map at all. We assert only the observable index-based contract here —
-    // exact absence of Map usage is enforced by code review against D6, not by a runtime probe.
+    // exact absence of Map usage is enforced by code review (the scan is a plain nested loop), not by a runtime probe.
     expect(() => resolveTraceAxisIndices(collection, axes, out)).not.toThrow();
     expect(out[0]).toBe(0);
   });

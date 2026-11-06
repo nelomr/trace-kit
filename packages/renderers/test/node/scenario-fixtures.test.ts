@@ -5,7 +5,16 @@ import type {
   TraceCollection,
   ViewportTransform,
 } from "@trace-kit/core";
-import { createViewportTransform, Y_SCALE_KIND_LINEAR, Y_SCALE_KIND_LOG } from "@trace-kit/core";
+import {
+  commitPayloadRevision,
+  createSpectrumDataPayload,
+  createViewportTransform,
+  lttb,
+  minMaxEnvelopeIndices,
+  projectX,
+  Y_SCALE_KIND_LINEAR,
+  Y_SCALE_KIND_LOG,
+} from "@trace-kit/core";
 import {
   PARITY_SCENARIO_FIXTURES,
   SCENARIO_FIXTURES,
@@ -14,6 +23,10 @@ import {
 } from "@trace-kit/renderers/fixtures";
 import type { FigureRenderer, FigureRendererKind } from "../../src/figure-renderer.js";
 import { Canvas2DRenderer } from "../../src/canvas2d/canvas2d-renderer.js";
+import { exportToSvg } from "../../src/svg/index.js";
+import { splitFloat64ToHiLo } from "../../src/webgl2/precision.js";
+import { layoutFor, pathXs, paths } from "./support/svg-helpers.js";
+import { sceneFromFixture } from "./support/svg-scene.js";
 
 /**
  * A minimal, real `FigureRenderer` implementation that is not Canvas2D — WebGL2 does not exist
@@ -332,5 +345,182 @@ describe("scenario fixture drives a real renderer", () => {
 
     expect(standIn.calls).toEqual(["setData", "setDomain", "resize", "render"]);
     expect(standIn.disposed).toBe(true);
+  });
+});
+
+/** The collection entries of `overlay-two-axis`, narrowed so a test never reaches for a cast. */
+function overlayEntries(): { linear: SpectrumDataPayload; log: SpectrumDataPayload } {
+  const overlay = fixtureById("overlay-two-axis");
+  if (overlay.kind !== "collection") throw new Error("overlay must be a collection");
+  const [linear, log] = overlay.collection.entries;
+  if (linear === undefined || log === undefined) throw new Error("overlay needs two traces");
+  return { linear: linear.payload, log: log.payload };
+}
+
+/** The same Y values on `x[i] = i` sampled from origin 0: what the log trace looked like before
+ * its offsets were re-expressed against the absolute domain. */
+function zeroOriginTwin(source: SpectrumDataPayload): SpectrumDataPayload {
+  const twin = createSpectrumDataPayload({
+    capacity: source.sampleCount,
+    xOrigin: 0,
+    xUnit: source.xUnit,
+    yUnit: source.yUnit,
+  });
+  for (let i = 0; i < source.sampleCount; i += 1) {
+    twin.x[i] = i;
+    twin.y[i] = source.y[i] ?? NaN;
+  }
+  commitPayloadRevision(twin, source.sampleCount);
+  return twin;
+}
+
+describe("fixtures sit inside the absolute X domain", () => {
+  it("every trace of every fixture is non-empty and has a sample inside the fixture domain", () => {
+    for (const fixture of SCENARIO_FIXTURES) {
+      const payloads =
+        fixture.kind === "payload"
+          ? [fixture.payload]
+          : fixture.collection.entries.map((entry) => entry.payload);
+      expect(payloads.length, fixture.id).toBeGreaterThan(0);
+      for (const payload of payloads) {
+        expect(payload.sampleCount, fixture.id).toBeGreaterThan(0);
+        let inside = 0;
+        for (let i = 0; i < payload.sampleCount; i += 1) {
+          const absolute = payload.xOrigin + (payload.x[i] ?? NaN);
+          if (absolute >= fixture.domain.xMin && absolute <= fixture.domain.xMax) inside += 1;
+        }
+        expect(inside, `${fixture.id} has no sample inside the domain`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("keeps the fixture ids and the trace counts", () => {
+    const counts = SCENARIO_FIXTURES.map((fixture) => [
+      fixture.id,
+      fixture.kind === "payload" ? 1 : fixture.collection.entries.length,
+    ]);
+    expect(counts).toEqual([
+      ["simple-trace", 1],
+      ["axes-grid", 1],
+      ["resonance-peak", 1],
+      ["noise-floor", 1],
+      ["decimation-minmax", 1],
+      ["log-axis", 1],
+      ["dual-axis", 1],
+      ["gapped-trace", 1],
+      ["overlay-two-axis", 2],
+    ]);
+  });
+
+  it("overlay-two-axis: log-trace is sampled from origin 1000 with offsets -1000..-701 (absolute 0..299)", () => {
+    const { linear, log } = overlayEntries();
+    expect(log.xOrigin).toBe(1000);
+    expect(log.sampleCount).toBe(300);
+    expect(log.x[0]).toBe(-1000);
+    expect(log.x[299]).toBe(-701);
+    for (let i = 0; i < 300; i += 1) {
+      expect(log.xOrigin + (log.x[i] ?? NaN)).toBe(i);
+    }
+    expect(fixtureById("overlay-two-axis").domain.xMin).toBe(0);
+    expect(fixtureById("overlay-two-axis").domain.xMax).toBe(299);
+    // The linear trace is untouched and spans the same absolute range.
+    expect(linear.xOrigin).toBe(0);
+    expect(linear.x[0]).toBe(0);
+    expect(linear.x[299]).toBe(299);
+  });
+});
+
+describe("overlay-two-axis re-expression does not change decimation", () => {
+  const TARGET = 75;
+
+  it("LTTB selects the same indices as the zero-origin twin", () => {
+    const { log } = overlayEntries();
+    const twin = zeroOriginTwin(log);
+    const actual = new Int32Array(TARGET);
+    const expected = new Int32Array(TARGET);
+    expect(lttb(log.x, log.y, 0, 300, actual, 0, TARGET)).toBe(TARGET);
+    expect(lttb(twin.x, twin.y, 0, 300, expected, 0, TARGET)).toBe(TARGET);
+    expect([...actual]).toEqual([...expected]);
+  });
+
+  it("min-max selects the same indices as the zero-origin twin", () => {
+    const { log } = overlayEntries();
+    const twin = zeroOriginTwin(log);
+    const buckets = TARGET / 3;
+    const actual = new Int32Array(buckets * 2);
+    const expected = new Int32Array(buckets * 2);
+    minMaxEnvelopeIndices(log.y, 0, 300, actual, 0, buckets);
+    minMaxEnvelopeIndices(twin.y, 0, 300, expected, 0, buckets);
+    expect([...actual]).toEqual([...expected]);
+  });
+});
+
+describe("overlay-two-axis X placement agrees across the three engines", () => {
+  const fixture = fixtureById("overlay-two-axis");
+  if (fixture.kind !== "collection") throw new Error("overlay must be a collection");
+  const scene = sceneFromFixture(fixture);
+  const layout = layoutFor(scene);
+  const svg = exportToSvg(scene);
+  const traceXs = paths(svg)
+    .map((p) => pathXs(p.d))
+    .filter((xs) => xs.length === 300);
+
+  function transformFor(payload: SpectrumDataPayload) {
+    return createViewportTransform({
+      cssWidth: fixture.viewport.width,
+      cssHeight: fixture.viewport.height,
+      dpr: 1,
+      ...layout.insets,
+      xDomainMin: fixture.domain.xMin,
+      xDomainMax: fixture.domain.xMax,
+      xOrigin: payload.xOrigin,
+      yDomainMin: fixture.domain.yMin,
+      yDomainMax: fixture.domain.yMax,
+    });
+  }
+
+  it("emits one 300-vertex path per trace", () => {
+    expect(traceXs.length).toBe(2);
+  });
+
+  it.each([0, 1])("trace %i: projectX, the SVG path and the shader emulation agree to < 0.01 px", (n) => {
+    const { linear, log } = overlayEntries();
+    const payload = n === 0 ? linear : log;
+    const t = transformFor(payload);
+    const row = new Float32Array(2);
+    splitFloat64ToHiLo(t.xOffsetMin, row, 0);
+    const xs = traceXs[n] ?? [];
+    for (let i = 0; i < 300; i += 1) {
+      const offset = payload.x[i] ?? NaN;
+      const canvas = projectX(t, offset);
+      const emulated = Math.fround(
+        Math.fround(
+          Math.fround(Math.fround(offset - (row[0] ?? 0)) * Math.fround(1) - (row[1] ?? 0)) *
+            Math.fround(t.xScale),
+        ) + Math.fround(t.plotLeft),
+      );
+      expect(Math.abs((xs[i] ?? NaN) - canvas), `svg ${i}`).toBeLessThan(0.01);
+      expect(Math.abs(emulated - canvas), `webgl2 ${i}`).toBeLessThan(0.01);
+    }
+  });
+
+  it("log-trace projects exactly as the zero-origin twin did", () => {
+    const { log } = overlayEntries();
+    const twin = zeroOriginTwin(log);
+    const t = transformFor(log);
+    const twinTransform = createViewportTransform({
+      cssWidth: fixture.viewport.width,
+      cssHeight: fixture.viewport.height,
+      dpr: 1,
+      ...layout.insets,
+      xDomainMin: 0,
+      xDomainMax: 299,
+      xOrigin: 0,
+      yDomainMin: fixture.domain.yMin,
+      yDomainMax: fixture.domain.yMax,
+    });
+    for (let i = 0; i < 300; i += 1) {
+      expect(projectX(t, log.x[i] ?? NaN)).toBe(projectX(twinTransform, twin.x[i] ?? NaN));
+    }
   });
 });

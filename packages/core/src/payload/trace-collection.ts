@@ -32,7 +32,9 @@ export interface TraceEntry {
 
 export interface TraceCollection {
   readonly entries: readonly TraceEntry[];
+  /** Left edge of the shared X window: absolute physical X, shared by entries with different `xOrigin`. */
   readonly xDomainMin: number;
+  /** Right edge of the shared X window: absolute physical X, shared by entries with different `xOrigin`. */
   readonly xDomainMax: number;
   readonly revision: number;
 }

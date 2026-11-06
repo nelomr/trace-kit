@@ -160,8 +160,9 @@ function writeTraces(
     if (trace === undefined || trace.payload.sampleCount === 0) continue;
     const axis = scene.yAxes[trace.axisIndex];
     if (axis === undefined) continue;
-    // One transform per trace: payloads sharing an X domain may still be sampled from different
-    // absolute origins, so sharing the layout's transform would misplace all but the first.
+    // One transform per trace: the scene's X domain is absolute, and each payload's own `xOrigin`
+    // turns it into that trace's offset-space left edge. Sharing the layout's transform would
+    // misplace every trace whose origin differs from the first.
     const transform = createViewportTransform({
       cssWidth: scene.width,
       cssHeight: scene.height,

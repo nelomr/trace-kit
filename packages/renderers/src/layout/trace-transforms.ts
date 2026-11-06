@@ -1,10 +1,11 @@
 /**
- * Backend-neutral per-trace viewport transforms. Payloads that share one X domain may still have
- * been sampled from different absolute origins (two sweep runs), and one shared axis transform
- * would misplace every trace but the first, so each trace gets a transform built from its own
- * `xOrigin` together with the domain and scale kind of the Y axis it is bound to. Both the
- * Canvas2D and the WebGL2 renderer call this one builder, so the two engines cannot disagree on
- * where a trace sits.
+ * Backend-neutral per-trace viewport transforms. Payloads share one absolute X domain but may have
+ * been sampled from different origins (two sweep runs), and one shared axis transform would
+ * misplace every trace but the first. Each trace therefore gets a transform built from its own
+ * `xOrigin` together with the domain and scale kind of the Y axis it is bound to; the transform
+ * carries that trace's own offset-space left edge `xOffsetMin`, so `projectX` on the trace's raw
+ * offsets lands each sample at its physical X. Both the Canvas2D and the WebGL2 renderer call this
+ * one builder, so the two engines cannot disagree on where a trace sits.
  *
  * Cold path: runs on `setTraces`, `setDomain` and `resize`, never per frame. The only allocation
  * is the frozen transform object core returns for each trace.
@@ -24,6 +25,7 @@ export interface TraceTransformGeometry {
   readonly dpr: number;
   /** The shared, already clamped insets, so every trace has the plot geometry of the axes. */
   readonly insets: AxisInsets;
+  /** Absolute physical X, shared by every trace regardless of its `xOrigin`. */
   readonly xDomainMin: number;
   readonly xDomainMax: number;
 }

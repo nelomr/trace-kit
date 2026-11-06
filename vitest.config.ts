@@ -37,8 +37,17 @@ export default defineConfig({
           // propagates correctly to the forked worker, so it is scoped to only the two
           // projects whose allocation-gate tests read `globalThis.gc` rather than applied
           // workspace-wide.
+          //
+          // `--no-concurrent-recompilation` makes TurboFan (re)optimize on the main thread. With
+          // background compilation, a function that deopts on a new input shape (e.g. the gap
+          // branch of a decimator first exercised after gap-free runs) keeps executing in the
+          // interpreter until the background job lands; under CPU contention that job can land
+          // after the measured window opens, and interpreted float arithmetic boxes doubles into
+          // heap numbers, firing a spurious minor GC. Synchronous recompilation guarantees the
+          // warm-up ends on optimized code. It changes when code is optimized, not what it
+          // allocates, so a genuinely allocating path still fails the gate.
           pool: "forks",
-          execArgv: ["--expose-gc"],
+          execArgv: ["--expose-gc", "--no-concurrent-recompilation"],
         },
       },
       {
@@ -62,9 +71,10 @@ export default defineConfig({
           environment: "happy-dom",
           include: ["test/**/*.test.ts"],
           // Same `--expose-gc` scoping as `core`/`renderers` above — `test/node/buffer-reuse.test.ts`
-          // and `test/node/lorentzian-gc-gate.test.ts` also read `globalThis.gc`.
+          // and `test/node/lorentzian-gc-gate.test.ts` also read `globalThis.gc`; the same
+          // synchronous-recompilation flag keeps their measured windows on optimized code.
           pool: "forks",
-          execArgv: ["--expose-gc"],
+          execArgv: ["--expose-gc", "--no-concurrent-recompilation"],
         },
       },
       {
@@ -75,9 +85,10 @@ export default defineConfig({
           environment: "node",
           include: ["test/node/**/*.test.ts"],
           // Same `--expose-gc` scoping as the `core` project above — this project's
-          // `test/node/allocation-gate.test.ts` also reads `globalThis.gc`.
+          // `test/node/allocation-gate.test.ts` also reads `globalThis.gc`, with the same
+          // synchronous-recompilation flag.
           pool: "forks",
-          execArgv: ["--expose-gc"],
+          execArgv: ["--expose-gc", "--no-concurrent-recompilation"],
         },
       },
       {

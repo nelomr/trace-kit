@@ -133,9 +133,44 @@ describe("hi/lo identity barrier", () => {
   });
 });
 
+describe("offset-space domain minimum uniform", () => {
+  const FORMER_NAME = new RegExp(`u_x${"Orig"}in`);
+
+  it("declares u_xOffsetMin as a vec2 and reads both halves in projectXDevice", () => {
+    for (const source of Object.values(VERTEX)) {
+      expect(source).toContain("uniform vec2 u_xOffsetMin;");
+      expect(source).toContain("float hi = u_xOffsetMin.x;");
+      expect(source).toContain("float lo = u_xOffsetMin.y;");
+      expect(source).not.toMatch(FORMER_NAME);
+    }
+  });
+
+  it("keeps u_one declared and used by the multiply barrier", () => {
+    for (const source of Object.values(VERTEX)) {
+      expect(source).toContain("uniform float u_one;");
+      expect(source).toContain("float one = u_one;");
+    }
+  });
+
+  it("leaves the former uniform name out of every renderer source and the shader test support", () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const src = path.join(here, "../../src");
+    const scanned = [
+      ...readdirSync(src, { recursive: true, encoding: "utf8" })
+        .filter((file) => file.endsWith(".ts"))
+        .map((file) => path.join(src, file)),
+      path.join(here, "support/shader-source.ts"),
+    ];
+    expect(scanned.length).toBeGreaterThan(1);
+    for (const file of scanned) {
+      expect(readFileSync(file, "utf8"), file).not.toMatch(FORMER_NAME);
+    }
+  });
+});
+
 describe("uniform interface", () => {
   it("declares every uniform the frame path uploads", () => {
-    for (const name of ["u_xOrigin", "u_one", "u_xScale", "u_plot", "u_device", "u_y", "u_yScaleKind"]) {
+    for (const name of ["u_xOffsetMin", "u_one", "u_xScale", "u_plot", "u_device", "u_y", "u_yScaleKind"]) {
       expect(LINE_VERTEX_SHADER).toContain(name);
       expect(MARKER_VERTEX_SHADER).toContain(name);
     }

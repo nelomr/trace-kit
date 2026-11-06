@@ -31,7 +31,7 @@ precision highp int;
 `;
 
 export const SHARED_UNIFORMS_GLSL = `
-uniform vec2 u_xOrigin;
+uniform vec2 u_xOffsetMin;
 uniform float u_one;
 uniform float u_xScale;
 uniform vec4 u_plot;
@@ -68,8 +68,8 @@ bool isInfinityBits(float v) {
 }
 
 float projectXDevice(float offset) {
-  float hi = u_xOrigin.x;
-  float lo = u_xOrigin.y;
+  float hi = u_xOffsetMin.x;
+  float lo = u_xOffsetMin.y;
   float one = u_one;
   float scale = u_xScale;
   float plotLeft = u_plot.x;

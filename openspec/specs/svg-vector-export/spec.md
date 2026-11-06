@@ -347,12 +347,22 @@ or generator comments with version numbers. Line endings MUST be `\n`.
 
 ### Requirement: Empty and Degenerate Inputs Produce a Valid Document and Never Throw
 `exportToSvg` MUST return a valid SVG document and MUST NOT throw for: an empty collection, a
-zero-length payload, a payload of one sample, all-`NaN` data, a zero-width or zero-height
-domain, non-finite scene width/height, width/height too small to fit the insets (plot area
-`<= 0`), and an unregistered `yAxisId`. Non-finite scene dimensions MUST be treated as `0`. A
-plot area of non-positive width or height MUST yield no trace elements and no clip area beyond
-a zero-size rect. A trace bound to an unregistered `yAxisId` MUST be skipped. A zero-span
-domain MUST follow the same widening rule as `viewport-transform`.
+zero-length payload, a payload of one sample, all-`NaN` data, a zero-span X or Y domain, a
+non-finite or inverted domain, non-finite scene width/height, width/height too small to fit the
+insets (plot area `<= 0`), an unusable Y axis, and an unregistered `yAxisId`.
+
+- Non-finite scene dimensions MUST be treated as `0`. A plot area of non-positive width or height
+  MUST yield no trace elements and no clip area beyond a zero-size rect.
+- A zero-span domain (`min === max`) MUST be accepted as given, with no widening. On X every sample
+  of every trace projects to `plotLeft` (`xScale` is `0`, `viewport-transform`), and the X axis has
+  exactly one tick, at the domain value (`selectTicks`). On a Y axis every sample projects to that
+  axis's `yBase`, with one tick at the domain value. This is the behaviour of the shared
+  `ViewportTransform`, so Canvas2D and WebGL2 place such traces at the same coordinates.
+- A non-finite X domain bound, or `xMin > xMax`, MUST be replaced by the X domain `[0, 1]`.
+- A Y axis that is unusable (a non-finite bound, `domainMin > domainMax`, a log axis with
+  `domainMin <= 0`, or an unknown scale kind) MUST be drawn as a linear axis over `[-1, 1]`, and
+  every trace bound to it MUST be omitted.
+- A trace bound to an unregistered `yAxisId` MUST be skipped.
 
 #### Scenario: Empty collection
 - **GIVEN**: a `TraceCollection` with no traces
@@ -367,14 +377,81 @@ domain MUST follow the same widening rule as `viewport-transform`.
 #### Scenario: Too-small canvas
 - **GIVEN**: `width = 10` with insets exceeding it
 - **WHEN**: it is exported
-- **THEN**: it returns a valid document containing no trace elements and no non-finite number
+- **THEN**: it returns a valid document containing no trace elements, no non-finite number, and a
+  zero-size clip rect
 
 #### Scenario: Non-finite dimensions
 - **GIVEN**: `width = NaN` and `height = Infinity`
 - **WHEN**: it is exported
-- **THEN**: no exception is thrown and the string contains neither `NaN` nor `Infinity`
+- **THEN**: no exception is thrown, the root declares `width="0" height="0"`, and the string
+  contains neither `NaN` nor `Infinity`
+
+#### Scenario: Zero-span X domain collapses the trace onto the left plot edge
+- **GIVEN**: a payload `[1, 2, 3]` and domain `xMin: 2`, `xMax: 2`
+- **WHEN**: it is exported
+- **THEN**: no exception is thrown, every X coordinate of the trace equals the plot's left edge,
+  and the X axis has a single tick labelled `2`
+
+#### Scenario: Zero-span Y domain collapses the trace onto the axis base line
+- **GIVEN**: a payload `[1, 2, 3]` and domain `yMin: 5`, `yMax: 5`
+- **WHEN**: it is exported
+- **THEN**: no exception is thrown, every Y coordinate of the trace is the same value, and the Y
+  axis has a single tick labelled `5`
+
+#### Scenario: An invalid X domain falls back to the unit domain
+- **GIVEN**: a scene with `xMin: NaN` and one with `xMin: 5`, `xMax: 1`
+- **WHEN**: each is exported
+- **THEN**: both documents equal the document exported with `xMin: 0`, `xMax: 1`
+
+#### Scenario: An unusable Y axis omits its traces
+- **GIVEN**: a trace on a linear axis whose `domainMin` is `NaN`
+- **WHEN**: it is exported
+- **THEN**: the document is valid, contains no trace `<path>`, and the axis is drawn over `[-1, 1]`
 
 #### Scenario: Unregistered axis id
 - **GIVEN**: a trace whose `yAxisId` is absent from the axis registrations
 - **WHEN**: it is exported
 - **THEN**: the trace is omitted and the rest of the document is unaffected
+
+### Requirement: The Scene's X Domain Is Absolute Physical X and Traces Are Placed by Their Own Origin
+The scene's visible X domain (`domain.xMin`, `domain.xMax`) MUST be absolute physical X, the space of
+`payload.xOrigin + payload.x[i]`, matching `FigureRenderer.setDomain` and
+`TraceCollection.xDomainMin`/`xDomainMax`. For each trace `exportToSvg` MUST build that trace's
+`ViewportTransform` from the scene's absolute X domain and that payload's own `xOrigin` (a
+non-finite `xOrigin` counts as `0`), and project the trace's raw `x[i]` offsets through it with
+`projectX` (`viewport-transform`). X tick values and X tick labels MUST come from the same absolute
+domain (`figure-scene-layout`), so a scene over `[1550, 1551]` labels its X axis `1550..1551`, and
+a bare payload with `xOrigin = 1550` and the same domain draws across the whole plot. X gridline and
+tick positions MUST NOT depend on any trace's `xOrigin`. For the same scene, the document's X
+coordinates MUST equal those of Canvas2D at `dpr = 1`, and a payload with `xOrigin = 0` MUST
+produce the same document as it did when the domain was taken as offsets.
+
+#### Scenario: A non-zero-origin payload spans the plot under an absolute domain
+- **GIVEN**: a bare payload with `xOrigin: 1550` and offsets `[0, 0.5, 1]`, and domain
+  `xMin: 1550`, `xMax: 1551`
+- **WHEN**: it is exported
+- **THEN**: the trace path's first X equals the plot's left edge, its last X the right edge, and
+  the middle sample sits at the horizontal centre of the plot
+
+#### Scenario: X tick labels are absolute
+- **GIVEN**: the same scene
+- **WHEN**: it is exported
+- **THEN**: every X tick label text parses to a number in `[1550, 1551]`, and no label shows `0` or
+  `1`
+
+#### Scenario: Mixed origins over one absolute range overlap exactly
+- **GIVEN**: a collection over `[0, 299]` with trace A (`xOrigin: 0`, offsets `0..299`) and trace B
+  (`xOrigin: 1000`, offsets `-1000..-701`) on the same Y axis
+- **WHEN**: it is exported
+- **THEN**: the X coordinates of A's path points equal those of B's, in order
+
+#### Scenario: SVG X coordinates equal Canvas2D's at dpr 1
+- **GIVEN**: a scene with a non-zero-origin payload rendered by `Canvas2DRenderer` at `dpr = 1` and
+  exported by `exportToSvg` with the same size and absolute domain
+- **WHEN**: the X coordinates of the first and last path points are compared
+- **THEN**: they are equal after the exporter's fixed-precision formatting
+
+#### Scenario: A zero-origin scene is unchanged
+- **GIVEN**: the committed `svg-golden-corpus` fixtures
+- **WHEN**: each is exported and compared with its golden
+- **THEN**: every document equals its golden byte for byte

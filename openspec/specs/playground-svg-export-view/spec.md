@@ -68,12 +68,16 @@ renderer, remove its listeners, and release any object URL, leaving no retained 
 ### Requirement: The View Offers CSV and `.npy` Downloads of the Current Window
 The view MUST provide a minimal control set to download the current scenario's raw data through
 `@trace-kit/core`'s exporters: a CSV download of the whole collection, and an `.npy` download of one
-selected array (trace and X or Y). The window MUST be given by optional `xMin`/`xMax` inputs that
-default (empty) to the scenario collection's shared X domain; resolution MUST use the strict default
-of `viewport-window-resolution`. Downloaded bytes MUST be exactly the concatenation of the exporter's
-chunks, copied before advancing, with MIME `text/csv` and `application/octet-stream`, and file names
-derived from the scenario name (and, for `.npy`, the trace id and array). Object URLs MUST be
-released after use. No new route MAY be added.
+selected array (trace and X or Y). The window MUST be given by optional `xMin`/`xMax` inputs, in
+absolute physical X (the space `viewport-window-resolution` compares against), that default (empty)
+to the scenario's view domain (`fixture.domain`, which is itself absolute X and is the domain the
+view draws); resolution MUST use the strict default of `viewport-window-resolution`. The default
+window MUST therefore select the samples the view displays, and MUST be non-empty for every trace of
+every scenario, whatever the trace's `xOrigin`; no conversion between offset and absolute space is
+applied. Downloaded bytes MUST be exactly the concatenation of the exporter's chunks, copied before
+advancing, with MIME `text/csv` and `application/octet-stream`, and file names derived from the
+scenario name (and, for `.npy`, the trace id and array). Object URLs MUST be released after use. No
+new route MAY be added.
 
 #### Scenario: CSV bytes equal the exporter output
 - **GIVEN**: a scenario displayed with default window
@@ -90,6 +94,24 @@ released after use. No new route MAY be added.
 - **WHEN**: CSV is downloaded
 - **THEN**: all rows have X within `[xMin, xMax]`
 
+#### Scenario: The default window equals the view domain in absolute X
+- **GIVEN**: any scenario and empty `xMin`/`xMax` inputs
+- **WHEN**: a download is activated
+- **THEN**: the window passed to the exporter is `[fixture.domain.xMin, fixture.domain.xMax]`
+  unchanged
+
+#### Scenario: The default window is non-empty for a non-zero-origin trace
+- **GIVEN**: the `overlay-two-axis` scenario (`log-trace` with `xOrigin: 1000`) and the default
+  window `[0, 299]`
+- **WHEN**: the CSV is downloaded and the `.npy` of `log-trace` array `x` is downloaded
+- **THEN**: the CSV has `300` data rows for `log-trace` with X values `0..299`, and the `.npy` shape
+  is `(300,)`
+
+#### Scenario: The default window is non-empty for every trace of every scenario
+- **GIVEN**: each scenario of `SCENARIO_FIXTURES`
+- **WHEN**: the CSV is produced with the default window for every trace
+- **THEN**: every trace has at least one data row
+
 #### Scenario: Chunks are copied, not retained by reference
 - **GIVEN**: a multi-chunk `.npy` export
 - **WHEN**: the download file is built
@@ -103,7 +125,7 @@ released after use. No new route MAY be added.
 #### Scenario: Invalid window input does not download garbage
 - **GIVEN**: a non-numeric `xMin`
 - **WHEN**: a download is activated
-- **THEN**: the control reports the invalid input and no file is produced, or the field is treated as empty (design fixes which), and no exception escapes
+- **THEN**: the control reports the invalid input and no file is produced, and no exception escapes
 
 ### Requirement: Download Controls Respect the Balanced Lifecycle
 Unmounting the view MUST remove the listeners of the new controls and release any outstanding

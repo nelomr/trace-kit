@@ -5,25 +5,29 @@
  * shared with the SVG exporter; the symbols below are re-exported only so existing imports keep
  * resolving.
  */
-import { projectX, projectY, type ViewportTransform } from "@trace-kit/core";
+import { projectY, type ViewportTransform } from "@trace-kit/core";
 import type { AxisLayout, FigureStyle } from "../style.js";
 import type { TraceDrawingContext } from "../surface.js";
 
 export { computeAxisInsets, MAX_TICKS, selectYTicks, type AxisInsets } from "../layout/figure-layout.js";
 export { formatTickLabel } from "../layout/tick-label.js";
 
-/** Paints one vertical gridline per x-tick, projected through the (X-shared) transform. */
+/**
+ * Paints one vertical gridline per x-tick at the device X the layout already computed for it
+ * (`xGridPositions`). The ticks are absolute X while `projectX` takes payload offsets, so
+ * projecting them again here would make the gridlines depend on the transform's `xOrigin`.
+ */
 export function drawXGridlines(
   context: TraceDrawingContext,
   t: ViewportTransform,
   style: FigureStyle,
-  xTicks: Float64Array,
+  xGridPositions: Float64Array,
   xTickCount: number,
 ): void {
   context.strokeStyle = style.gridColor;
   context.lineWidth = 1;
   for (let i = 0; i < xTickCount; i += 1) {
-    const px = projectX(t, xTicks[i] ?? 0);
+    const px = xGridPositions[i] ?? 0;
     context.beginPath();
     context.moveTo(px, t.plotTop);
     context.lineTo(px, t.plotTop + t.plotHeight);
@@ -61,22 +65,25 @@ export function drawGrid(
   context: TraceDrawingContext,
   t: ViewportTransform,
   style: FigureStyle,
-  xTicks: Float64Array,
+  xGridPositions: Float64Array,
   xTickCount: number,
   yTicks: Float64Array,
   yTickCount: number,
 ): void {
-  drawXGridlines(context, t, style, xTicks, xTickCount);
+  drawXGridlines(context, t, style, xGridPositions, xTickCount);
   drawYGridlines(context, t, style, yTicks, yTickCount);
 }
 
-/** Paints the bottom (X) axis line, tick marks and labels for one shared transform. */
+/**
+ * Paints the bottom (X) axis line, tick marks and labels for one shared transform. Tick marks sit
+ * at the layout's `xGridPositions`, the same device X as the gridlines.
+ */
 export function drawBottomAxis(
   context: TraceDrawingContext,
   t: ViewportTransform,
   style: FigureStyle,
   axes: AxisLayout,
-  xTicks: Float64Array,
+  xGridPositions: Float64Array,
   xTickCount: number,
   xLabels: readonly string[],
 ): void {
@@ -95,7 +102,7 @@ export function drawBottomAxis(
   context.stroke();
 
   for (let i = 0; i < xTickCount; i += 1) {
-    const px = projectX(t, xTicks[i] ?? 0);
+    const px = xGridPositions[i] ?? 0;
     context.beginPath();
     context.moveTo(px, axisY);
     context.lineTo(px, tickEnd);
@@ -154,13 +161,13 @@ export function drawAxes(
   t: ViewportTransform,
   style: FigureStyle,
   axes: AxisLayout,
-  xTicks: Float64Array,
+  xGridPositions: Float64Array,
   xTickCount: number,
   xLabels: readonly string[],
   yTicks: Float64Array,
   yTickCount: number,
   yLabels: readonly string[],
 ): void {
-  drawBottomAxis(context, t, style, axes, xTicks, xTickCount, xLabels);
+  drawBottomAxis(context, t, style, axes, xGridPositions, xTickCount, xLabels);
   drawLeftAxis(context, t, style, axes, yTicks, yTickCount, yLabels);
 }
