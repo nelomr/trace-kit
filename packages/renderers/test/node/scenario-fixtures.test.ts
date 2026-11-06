@@ -258,6 +258,10 @@ interface FakeContext {
   fillText(text: string, x: number, y: number): void;
   setLineDash(segments: number[]): void;
   fill(path?: unknown): void;
+  save(): void;
+  restore(): void;
+  rect(x: number, y: number, w: number, h: number): void;
+  clip(): void;
 }
 
 /** Matches `test/node/axes-grid.test.ts`'s own fake-canvas pattern: this project runs under
@@ -279,6 +283,10 @@ function makeFakeSurface(): HTMLCanvasElement {
     fillText(): void {},
     setLineDash(): void {},
     fill(): void {},
+    save(): void {},
+    restore(): void {},
+    rect(): void {},
+    clip(): void {},
   };
   const canvas = { getContext: () => context };
   // eslint-disable-next-line no-restricted-syntax -- test double for a DOM host unavailable under `node`

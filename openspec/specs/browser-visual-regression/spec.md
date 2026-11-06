@@ -102,7 +102,9 @@ The `renderers` (Node, fake-`TraceDrawingContext`) and `renderers-dom` (`happy-d
 projects, and the call-sequence and DOM-shape assertions they carry, remain the projects
 responsible for those concerns. The browser-mode visual project MUST NOT duplicate or replace
 call-sequence assertions against a fake context, and MUST NOT be treated as a superset that makes
-the `renderers`/`renderers-dom` projects redundant.
+the `renderers`/`renderers-dom` projects redundant. Every assertion in the visual project MUST be
+one of: a `toMatchScreenshot` comparison, a structural cross-engine check, the WebGL2 availability
+smoke test, or a behaviour probe reading pixels of a real render.
 
 #### Scenario: Existing fake-context and DOM-shape tests keep running in pnpm run test
 - **GIVEN**: the existing Canvas2D fake-`TraceDrawingContext` call-sequence tests (e.g. the
@@ -116,7 +118,8 @@ the `renderers`/`renderers-dom` projects redundant.
 - **GIVEN**: the browser-mode visual project's test files
 - **WHEN**: their imports and assertions are inspected
 - **THEN**: none constructs or asserts against a fake `TraceDrawingContext`; every assertion in
-  that project is a `toMatchScreenshot`-shaped visual comparison
+  that project is a `toMatchScreenshot` comparison, a structural cross-engine check, the WebGL2
+  smoke test, or a behaviour probe reading pixels of a real render
 
 ### Requirement: The `visual` Project Hosts Both Engines' Pixel Suites With Disjoint Goldens
 The `visual` project MUST run the existing Canvas2D suite and the WebGL2 suite in the same browser
@@ -138,12 +141,26 @@ WebGL2 comparison MUST emit a diff artifact like any other.
 ### Requirement: WebGL2 Call-Sequence Tests Live in the Node Project, Not the Visual Project
 Assertions over the sequence of GL calls (uniform values, draw-call counts, create/delete balance,
 paint order) MUST run in the `renderers` (Node) project against `RecordingGl2Context`
-(`webgl2-golden-parity`). The `visual` project MUST NOT construct or assert against a fake GL or a
-fake 2D context; its WebGL2 assertions are `toMatchScreenshot` comparisons, structural cross-engine
-checks, the availability smoke test, and behaviour probes (`webgl2-behaviour.visual.test.ts`: pixel
-reads of a real render for diagonal anti-aliasing, blank gaps, Infinity reaching the plot edge,
-non-positive log samples, blank gutters, grid under the stacked GL layer, and a canvas with a prior
-`2d` context), which use neither goldens nor fakes. The "failing WebGL2 comparison writes a diff"
+(`webgl2-golden-parity`), and assertions over the sequence of 2D context calls (the plot clip's
+`save`/`rect`/`clip`/`restore`, clamped path coordinates, pen-lift call counts, decimator
+invocations) MUST run there against `RecordingContext`. The `visual` project MUST NOT construct or
+assert against a fake GL or a fake 2D context; its assertions are `toMatchScreenshot` comparisons,
+structural cross-engine checks, the availability smoke test, and behaviour probes that use neither
+goldens nor fakes:
+
+- WebGL2 probes (`webgl2-behaviour.visual.test.ts`): pixel reads of a real render for diagonal
+  anti-aliasing, blank gaps, Infinity reaching the plot edge, non-positive log samples, blank
+  gutters, grid under the stacked GL layer, and a canvas with a prior `2d` context;
+- Canvas2D probes: pixel reads of a real `Canvas2DRenderer` render for blank gutters with an
+  out-of-window payload, `±Infinity` reaching the plot's top and bottom bands, non-positive log
+  samples not bridged, and alternating infinities leaving no trace ink outside the plot rectangle
+  (`canvas2d-trace-rendering`);
+- paired probes rendering one test-local payload on both engines in the same page
+  (`webgl2-golden-parity`, "Paired Behaviour Probes Pin Clip, ±Infinity and Log Non-Positive
+  Parity").
+
+No probe MAY add or edit a scenario fixture, and no probe MAY call `toMatchScreenshot`, so a run
+with `--update` cannot write a golden from a probe. The "failing WebGL2 comparison writes a diff"
 scenario is verified once during implementation by a deliberately failing run, not by a permanent
 test.
 
@@ -156,3 +173,16 @@ test.
 - **GIVEN**: `pnpm run test`
 - **WHEN**: the WebGL2 call-sequence tests execute
 - **THEN**: they are reported under the `renderers` project
+
+#### Scenario: Canvas2D probes run in the visual project without goldens
+- **GIVEN**: the Canvas2D and paired behaviour probe files under `packages/renderers/test/visual/`
+- **WHEN**: they are inspected and run with `pnpm --filter @trace-kit/renderers test:visual`
+- **THEN**: they construct `Canvas2DRenderer` on a real canvas, read pixels with `getImageData`,
+  contain no `toMatchScreenshot` call, import no fake context, and leave the
+  `__screenshots__/` directory unchanged
+
+#### Scenario: Probe payloads are test-local
+- **GIVEN**: `SCENARIO_FIXTURES`, `PARITY_SCENARIO_FIXTURES` and `SVG_EXTENDED_SCENARIO_FIXTURES`
+  before and after this change
+- **WHEN**: their fixture ids are compared
+- **THEN**: they are identical, and no probe payload is exported from `@trace-kit/renderers/fixtures`

@@ -12,15 +12,8 @@
  * device pixels with a top-left origin and Y growing downwards, so the same figure comes out of
  * every engine.
  */
+import { GUARD_BAND_PX } from "../rules/guard-band.js";
 import { LOG10_2 } from "./precision.js";
-
-/**
- * Distance, in device pixels, projected coordinates may reach beyond the plot rectangle. Large
- * enough to exceed the plot height of any canvas a browser can allocate (Chromium caps a
- * dimension at 32,767), so a sample pushed far outside the view still leaves the visible region
- * on the correct side. The clamp also bounds huge finite values so a segment length stays finite.
- */
-export const GUARD_BAND_PX = 65536;
 
 /** Width of the anti-aliasing ramp at a stroke edge, in device pixels. */
 export const AA_FEATHER_PX = 1;

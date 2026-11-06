@@ -7,6 +7,8 @@ import {
   hasInkAround,
   inkLabels,
   insetPlotRect,
+  outOfPlotTraceInk,
+  traceInkInRect,
   outsideRectDifferences,
   outsideRectLumaDifferences,
   type Pixels,
@@ -206,5 +208,103 @@ describe("outsideRectLumaDifferences", () => {
       paint(b, 6, y, [220, 220, 220]);
     }
     expect(outsideRectLumaDifferences(a, b, rect, 1, AXIS_LUMA_DELTA)).toBeGreaterThan(0);
+  });
+});
+
+describe("outOfPlotTraceInk", () => {
+  // Grown rectangle: floor(30.4) - 3 = 27 to ceil(30.4 + 59.7) + 3 = 94 (exclusive) horizontally,
+  // 10 - 3 = 7 to 50 + 3 = 53 vertically.
+  const PLOT = { plotLeft: 30.4, plotTop: 10, plotWidth: 59.7, plotHeight: 40 };
+  const MARGIN = 3;
+  const TRACES: readonly Rgb[] = [RED, BLUE];
+
+  function count(img: Pixels, masks: readonly { left: number; top: number; width: number; height: number }[] = []) {
+    return outOfPlotTraceInk(img, PLOT, MARGIN, TRACES, masks, INK_DELTA);
+  }
+
+  it("does not count ink inside the grown rectangle, edges included", () => {
+    const img = image(120, 60);
+    paint(img, 27, 30, RED);
+    paint(img, 93, 30, RED);
+    paint(img, 60, 7, RED);
+    paint(img, 60, 52, RED);
+    paint(img, 60, 30, BLUE);
+    expect(count(img)).toBe(0);
+  });
+
+  it("counts ink one pixel outside the grown rectangle on every side", () => {
+    for (const [x, y] of [[26, 30], [94, 30], [60, 6], [60, 53]] as const) {
+      const img = image(120, 60);
+      paint(img, x, y, RED);
+      expect(count(img), `(${x}, ${y})`).toBe(1);
+    }
+  });
+
+  it("counts every pixel outside, once each", () => {
+    const img = image(120, 60);
+    for (let x = 0; x < 10; x += 1) paint(img, x, 2, BLUE);
+    expect(count(img)).toBe(10);
+  });
+
+  it("does not count ink inside a mask, and counts the rest of the same stroke", () => {
+    const img = image(120, 60);
+    for (let x = 0; x < 20; x += 1) paint(img, x, 20, RED);
+    expect(count(img, [{ left: 4, top: 15, width: 6, height: 10 }])).toBe(14);
+    expect(count(img, [{ left: 0, top: 15, width: 20, height: 10 }])).toBe(0);
+  });
+
+  it("does not count a colour farther than the ink delta from every trace colour", () => {
+    const img = image(120, 60);
+    paint(img, 2, 2, [RED[0] - INK_DELTA, 0, 0]); // exactly the delta: counted
+    paint(img, 3, 2, [RED[0] - INK_DELTA - 1, 0, 0]); // one over: not counted
+    paint(img, 4, 2, GRID);
+    paint(img, 5, 2, [138, 151, 168]); // a label colour
+    expect(count(img)).toBe(1);
+  });
+
+  it("attributes a pixel to any of the trace colours", () => {
+    const img = image(120, 60);
+    paint(img, 2, 2, BLUE);
+    paint(img, 3, 2, RED);
+    expect(count(img)).toBe(2);
+  });
+
+  it("still counts a 3-pixel stroke across the whole gutter that a mask covers in part", () => {
+    const img = image(120, 60);
+    for (let y = 28; y < 31; y += 1) for (let x = 0; x < 27; x += 1) paint(img, x, y, RED);
+    const mask = { left: 5, top: 20, width: 11, height: 20 };
+    expect(count(img, [mask])).toBe((27 - 11) * 3);
+    expect(count(img, [mask])).toBeGreaterThan(0);
+  });
+});
+
+describe("traceInkInRect", () => {
+  const AXIS: Rgb = [58, 71, 86];
+  const rect = { left: 10, top: 5, width: 6, height: 4 };
+
+  it("counts the pixels of the rectangle within the ink delta of a trace colour, edges included", () => {
+    const img = image(40, 20);
+    paint(img, 10, 5, RED);
+    paint(img, 15, 8, BLUE);
+    paint(img, 12, 6, [RED[0] - INK_DELTA, 0, 0]);
+    expect(traceInkInRect(img, rect, [RED, BLUE], INK_DELTA)).toBe(3);
+  });
+
+  it("ignores pixels outside the rectangle and pixels beyond the delta", () => {
+    const img = image(40, 20);
+    paint(img, 9, 5, RED);
+    paint(img, 16, 8, RED);
+    paint(img, 10, 4, RED);
+    paint(img, 10, 9, RED);
+    paint(img, 12, 6, [RED[0] - INK_DELTA - 1, 0, 0]);
+    expect(traceInkInRect(img, rect, [RED], INK_DELTA)).toBe(0);
+  });
+
+  it("does not take an axis-coloured or half-covered pixel for trace ink, unlike a nearest-colour label", () => {
+    const img = image(40, 20);
+    paint(img, 11, 6, AXIS);
+    paint(img, 12, 6, [(RED[0] + BG[0]) / 2, 0, 0]);
+    expect(inkLabels(img, rect, { background: BG, grid: GRID, traces: [RED] }, INK_DELTA).some((l) => l === 0)).toBe(true);
+    expect(traceInkInRect(img, rect, [RED], INK_DELTA)).toBe(0);
   });
 });

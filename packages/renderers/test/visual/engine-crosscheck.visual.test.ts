@@ -16,6 +16,7 @@ import {
   compareExtents,
   inkLabels,
   insetPlotRect,
+  outOfPlotTraceInk,
   outsideRectLumaDifferences,
   type Rect,
   type ColumnExtents,
@@ -24,7 +25,16 @@ import {
   type Pixels,
   type Rgb,
 } from "./support/ink-metric.js";
-import { AXIS_LUMA_DELTA, K_INSET, K_ROWS, P_MISSING, WEBGL2_SCREENSHOT_TOLERANCE } from "./support/webgl2-tolerances.js";
+import { canvasMeasureText, labelInkBoxes, labelMaskInputOf } from "./support/label-mask.js";
+import {
+  AXIS_LUMA_DELTA,
+  INK_DELTA,
+  K_INSET,
+  K_ROWS,
+  P_MISSING,
+  WEBGL2_SCREENSHOT_TOLERANCE,
+} from "./support/webgl2-tolerances.js";
+import { resolveTraceStyle } from "../../src/rules/trace-style.js";
 
 // No `toMatchScreenshot` here and no Canvas2D comparator: this suite compares where each engine
 // puts a trace's ink, so it tolerates the pixel-level differences between two rasterizers and
@@ -103,11 +113,8 @@ function ruleFor(info: TraceInfo, plotWidth: number): ComparisonRule {
     : "two-directional";
 }
 
-// Rendering two engines of a 200,000-sample fixture and reading both back can exceed the default
-// 5 s budget when the whole workspace test run is saturating the CPU.
-const BROWSER_TEST_TIMEOUT_MS = 30_000;
 
-describe("Canvas2D versus WebGL2, structurally", { timeout: BROWSER_TEST_TIMEOUT_MS }, () => {
+describe("Canvas2D versus WebGL2, structurally", () => {
   for (const fixture of SCENARIO_FIXTURES) {
     it(`${fixture.id}: every trace's ink extent agrees within the declared tolerances`, async () => {
       await ensureDefaultFont();
@@ -140,6 +147,60 @@ describe("Canvas2D versus WebGL2, structurally", { timeout: BROWSER_TEST_TIMEOUT
   });
 });
 
+/** Widest stroke of any trace of the fixture, CSS px. */
+function maxLineWidthCss(fixture: ScenarioFixture): number {
+  if (fixture.kind === "payload") return DEFAULT_FIGURE_STYLE.lineWidthCss;
+  return Math.max(
+    ...fixture.collection.entries.map((entry, i) => resolveTraceStyle(entry.style, i, DEFAULT_FIGURE_STYLE).lineWidthCss),
+  );
+}
+
+describe("no trace ink outside the plot", () => {
+  for (const fixture of SCENARIO_FIXTURES) {
+    it(`${fixture.id}: neither engine leaves ink within INK_DELTA of a trace colour outside the plot, tick labels aside`, async () => {
+      await ensureDefaultFont();
+      const rendered = renderBoth(fixture);
+      const colors = tracesOf(fixture).map((t) => t.color);
+      const margin = Math.ceil(maxLineWidthCss(fixture) * fixture.dpr);
+      const masks = labelInkBoxes(labelMaskInputOf(fixture), canvasMeasureText());
+      expect(masks.length, "label boxes").toBeGreaterThan(0);
+      const canvas2d = outOfPlotTraceInk(rendered.canvas2d, rendered, margin, colors, masks, INK_DELTA);
+      const webgl2 = outOfPlotTraceInk(rendered.webgl2, rendered, margin, colors, masks, INK_DELTA);
+      expect({ canvas2d, webgl2 }, `${fixture.id} out-of-plot ink pixels`).toEqual({ canvas2d: 0, webgl2: 0 });
+    });
+  }
+
+  it("resonance-peak: a 3-device-pixel stroke across the whole left gutter is counted", async () => {
+    await ensureDefaultFont();
+    const fixture = SCENARIO_FIXTURES.find((f) => f.id === "resonance-peak");
+    if (fixture === undefined) throw new Error("fixture resonance-peak missing");
+    const figure = mountCanvas2d(fixture);
+    try {
+      figure.renderer.render();
+      const t = figure.renderer.transform;
+      const color = tracesOf(fixture)[0]?.color;
+      if (color === undefined) throw new Error("resonance-peak has no trace colour");
+      const margin = Math.ceil(maxLineWidthCss(fixture) * fixture.dpr);
+      const growLeft = Math.floor(t.plotLeft) - margin;
+      const context = figure.canvas.getContext("2d");
+      if (context === null) throw new Error("no 2d context");
+      // Centred on a pixel row so the stroke covers exactly three rows, far from any tick label.
+      const y = Math.round(t.plotTop + t.plotHeight / 2) + 0.5;
+      context.strokeStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+      context.lineWidth = 3;
+      context.beginPath();
+      context.moveTo(0, y);
+      context.lineTo(growLeft, y);
+      context.stroke();
+      const masks = labelInkBoxes(labelMaskInputOf(fixture), canvasMeasureText());
+      const count = outOfPlotTraceInk(readPixels(figure.canvas), t, margin, [color], masks, INK_DELTA);
+      expect(count).toBeGreaterThan(0);
+    } finally {
+      figure.dispose();
+    }
+  });
+});
+
 function axesGridRender(): { rendered: Rendered; rect: Rect; margin: number } {
   const fixture = SCENARIO_FIXTURES.find((f) => f.id === "axes-grid");
   if (fixture === undefined) throw new Error("fixture axes-grid missing");
@@ -169,7 +230,7 @@ function shiftRight(source: ImageData, dx: number): Pixels {
   return { data, width: source.width, height: source.height };
 }
 
-describe("non-vacuity of the cross-check", { timeout: BROWSER_TEST_TIMEOUT_MS }, () => {
+describe("non-vacuity of the cross-check", () => {
   it("fails simple-trace when only the WebGL2 Y domain is shifted by 3 * K_ROWS rows", async () => {
     await ensureDefaultFont();
     const fixture = SCENARIO_FIXTURES.find((f) => f.id === "simple-trace");

@@ -45,7 +45,10 @@ function uploadPair(
 /**
  * Brings the slot's GPU copy up to date with `payload` under `selection` (`null` is the backend
  * default: the full payload). `plotWidth` only feeds the decimation target, and `markIsolated`
- * is the trace style's opt-in for isolated-sample markers.
+ * is the trace style's opt-in for isolated-sample markers. `yScaleKind` is the trace's Y axis kind:
+ * it decides which samples lift the pen (a log axis breaks on non-positive values), so it is
+ * required rather than defaulted to linear. It is fixed for the life of a trace set, which is why
+ * the upload key does not include it.
  */
 export function ensureTraceUploaded(
   gl: Gl2Context,
@@ -54,6 +57,7 @@ export function ensureTraceUploaded(
   plotWidth: number,
   selection: DecimationSelection | null,
   markIsolated: boolean,
+  yScaleKind: number,
 ): void {
   const n = payload.sampleCount;
 
@@ -122,7 +126,7 @@ export function ensureTraceUploaded(
   }
 
   if (!markIsolated || drawnCount === 0) return;
-  uploadMarkers(gl, slot, payload, mode === UPLOAD_DECIMATED ? drawnCount : 0, n);
+  uploadMarkers(gl, slot, payload, mode === UPLOAD_DECIMATED ? drawnCount : 0, n, yScaleKind);
 }
 
 /**
@@ -136,12 +140,21 @@ function uploadMarkers(
   payload: SpectrumDataPayload,
   decimatedCount: number,
   directCount: number,
+  yScaleKind: number,
 ): void {
-  const count = countIsolatedSegments(payload.x, payload.y, slot.indices, decimatedCount, directCount);
+  const count = countIsolatedSegments(payload.x, payload.y, slot.indices, decimatedCount, directCount, yScaleKind);
   if (count === 0) return;
 
   growMarkerScratch(slot, count);
-  collectIsolatedSampleIndices(payload.x, payload.y, slot.indices, decimatedCount, directCount, slot.markerIndices);
+  collectIsolatedSampleIndices(
+    payload.x,
+    payload.y,
+    slot.indices,
+    decimatedCount,
+    directCount,
+    yScaleKind,
+    slot.markerIndices,
+  );
   const px = payload.x;
   const py = payload.y;
   const markerIndices = slot.markerIndices;

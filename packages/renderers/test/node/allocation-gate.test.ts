@@ -1,5 +1,5 @@
 /** @vitest-environment node */
-import { createViewportTransform } from "@trace-kit/core";
+import { createViewportTransform, Y_SCALE_KIND_LOG } from "@trace-kit/core";
 import { describe, expect, it } from "vitest";
 import { buildTracePath } from "../../src/path/build-trace-path.js";
 import type { PolylineSink } from "../../src/path/polyline-sink.js";
@@ -135,6 +135,46 @@ describe("buildTracePath allocation gate", () => {
     }
     const events = await countGcEvents(() => {
       buildTracePath(sink, transform, x, gappedY, new Int32Array(0), 0, SAMPLE_COUNT);
+    });
+    expect(events).toBe(0);
+  }, 60_000);
+
+  it("reports 0 GC events for infinite samples (every 100th +Infinity, every 101st -Infinity) over the decimated stream", async () => {
+    const sink = new NoopSink();
+    const infiniteY = new Float32Array(SAMPLE_COUNT);
+    for (let i = 0; i < SAMPLE_COUNT; i += 1) {
+      infiniteY[i] = i % 100 === 0 ? Infinity : i % 101 === 0 ? -Infinity : Math.sin(i * 0.001);
+    }
+    const events = await countGcEvents(() => {
+      buildTracePath(sink, transform, x, infiniteY, indices, DECIMATED_COUNT, 0);
+    });
+    expect(events).toBe(0);
+  }, 60_000);
+
+  it("reports 0 GC events on a log axis with infinities and non-positive samples over the direct range", async () => {
+    const sink = new NoopSink();
+    const logTransform = createViewportTransform({
+      cssWidth: 1920,
+      cssHeight: 1080,
+      dpr: 1,
+      insetLeft: 0,
+      insetRight: 0,
+      insetTop: 0,
+      insetBottom: 0,
+      xDomainMin: 0,
+      xDomainMax: SAMPLE_COUNT,
+      yDomainMin: 0.01,
+      yDomainMax: 100,
+      xOrigin: 0,
+      yScaleKind: Y_SCALE_KIND_LOG,
+    });
+    const logY = new Float32Array(SAMPLE_COUNT);
+    for (let i = 0; i < SAMPLE_COUNT; i += 1) {
+      logY[i] =
+        i % 100 === 0 ? Infinity : i % 101 === 0 ? -Infinity : i % 103 === 0 ? 0 : 1 + Math.sin(i * 0.001) * 0.5;
+    }
+    const events = await countGcEvents(() => {
+      buildTracePath(sink, logTransform, x, logY, new Int32Array(0), 0, SAMPLE_COUNT);
     });
     expect(events).toBe(0);
   }, 60_000);

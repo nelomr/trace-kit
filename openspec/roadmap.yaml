@@ -24,6 +24,13 @@
 # own division of responsibility, so the fields are gone. THIS FILE OWNS THE ORDER. THE
 # DISPATCHER OWNS EACH CHANGE'S PHASE. Nothing is duplicated, so nothing can disagree.
 #
+# `capabilities` is a contract record, not phase state. It stays `not_yet_specified` until the
+# change is archived; `sdd-archive` then replaces it with the capabilities the archived delta
+# specs actually touched (`openspec/changes/archive/<date>-<name>/specs/<capability>/spec.md`,
+# kinds read from its `## ADDED|MODIFIED|REMOVED|RENAMED Requirements` headings). It is written
+# once, from the archived files, so it cannot drift from them. The "Intended capability surface"
+# comments on entries are planning notes from before the proposal and lose to that list.
+#
 # The archive-order rule (load-bearing, not advisory)
 #   `sdd-archive` merges a change's spec deltas into `openspec/specs/{capability}/spec.md`.
 #   A MODIFIED delta therefore has nothing to modify until the change that ADDED that
@@ -64,7 +71,7 @@ changes:
       - name: allocation-free-hot-path
         deltas: [ADDED]
       - name: benchmark-harness
-        deltas: [MODIFIED]
+        deltas: [ADDED, MODIFIED]
       - name: branded-buffers
         deltas: [ADDED]
       - name: decimation-lttb
@@ -82,7 +89,7 @@ changes:
       - core-decimation-math
     capabilities:
       - name: allocation-free-hot-path
-        deltas: [MODIFIED]
+        deltas: [ADDED, MODIFIED]
       - name: buffer-ownership-protocol
         deltas: [ADDED]
       - name: decimation-port
@@ -93,6 +100,8 @@ changes:
         deltas: [ADDED]
       - name: spectrum-data-payload
         deltas: [MODIFIED]
+      - name: streaming-contract
+        deltas: [ADDED]
       - name: transport-backpressure
         deltas: [ADDED]
 
@@ -117,16 +126,30 @@ changes:
       - name: playground-routing
         deltas: [ADDED]
       - name: test-harness
-        deltas: [MODIFIED, ADDED]
+        deltas: [ADDED, MODIFIED]
       - name: workspace-toolchain
-        deltas: [MODIFIED, ADDED]
+        deltas: [ADDED, MODIFIED]
 
   - order: 5
     name: renderers-canvas2d
     prerequisites: 
       - core-transport-contract
       - playground-shell
-    capabilities: not_yet_specified
+    capabilities:
+      - name: allocation-free-hot-path
+        deltas: [ADDED]
+      - name: canvas2d-axes-grid
+        deltas: [ADDED]
+      - name: canvas2d-trace-rendering
+        deltas: [ADDED]
+      - name: figure-renderer-contract
+        deltas: [ADDED]
+      - name: selectable-decimation
+        deltas: [ADDED]
+      - name: spectrum-data-payload
+        deltas: [ADDED]
+      - name: viewport-transform
+        deltas: [ADDED]
 
   # Inserted after the 16-change decomposition was written, which is why its `order` is
   # fractional rather than 6. `order` is a sort key, not an identity: renumbering 6-16 would
@@ -151,7 +174,19 @@ changes:
     name: browser-visual-regression-harness
     prerequisites: 
       - renderers-canvas2d
-    capabilities: not_yet_specified
+    capabilities:
+      - name: browser-visual-regression
+        deltas: [ADDED]
+      - name: ci-quality-gate
+        deltas: [ADDED]
+      - name: render-scenario-fixtures
+        deltas: [ADDED]
+      - name: test-harness
+        deltas: [ADDED]
+      - name: visual-golden-corpus
+        deltas: [ADDED]
+      - name: workspace-toolchain
+        deltas: [ADDED]
 
   # Inserted at revision 6. Same fractional-key rationale as 5.5: `order` is a sort key, not an
   # identity, and renumbering 6-16 would invalidate the prose references of the form "change N"
@@ -174,7 +209,17 @@ changes:
     name: core-scale-transforms
     prerequisites: 
       - browser-visual-regression-harness
-    capabilities: not_yet_specified
+    capabilities:
+      - name: canvas2d-axes-grid
+        deltas: [MODIFIED]
+      - name: multi-axis-viewport
+        deltas: [ADDED]
+      - name: scale-logarithmic-transform
+        deltas: [ADDED]
+      - name: viewport-transform
+        deltas: [MODIFIED]
+      - name: visual-golden-corpus
+        deltas: [ADDED, MODIFIED]
     # Intended capability surface (to be pinned by sdd-propose/sdd-spec):
     #   scale-logarithmic-transform ADDED    — base-10 decade projection, log-aware tick selection
     #   multi-axis-viewport         ADDED    — N independent Y domains sharing one X domain
@@ -209,7 +254,21 @@ changes:
     name: core-gap-and-multi-trace-model
     prerequisites: 
       - core-scale-transforms
-    capabilities: not_yet_specified
+    capabilities:
+      - name: canvas2d-trace-rendering
+        deltas: [MODIFIED]
+      - name: decimation-lttb
+        deltas: [ADDED, MODIFIED]
+      - name: decimation-min-max
+        deltas: [MODIFIED]
+      - name: gap-sentinel-semantics
+        deltas: [ADDED]
+      - name: multi-axis-viewport
+        deltas: [MODIFIED]
+      - name: trace-collection-payload
+        deltas: [ADDED]
+      - name: visual-golden-corpus
+        deltas: [ADDED, MODIFIED]
     # Intended capability surface (to be pinned by sdd-propose/sdd-spec):
     #   gap-sentinel-semantics    ADDED    — NaN is a break, not a value; never interpolated across
     #   decimation-lttb           MODIFIED — buckets split at gaps; gap survives decimation
@@ -224,7 +283,27 @@ changes:
       - renderers-canvas2d
       - core-scale-transforms
       - core-gap-and-multi-trace-model
-    capabilities: not_yet_specified
+    capabilities:
+      - name: canvas2d-axes-grid
+        deltas: [ADDED, MODIFIED]
+      - name: canvas2d-trace-rendering
+        deltas: [ADDED, MODIFIED]
+      - name: figure-scene-layout
+        deltas: [ADDED]
+      - name: package-build-pipeline
+        deltas: [ADDED]
+      - name: playground-routing
+        deltas: [ADDED]
+      - name: playground-svg-export-view
+        deltas: [ADDED]
+      - name: render-scenario-fixtures
+        deltas: [ADDED, MODIFIED]
+      - name: svg-golden-corpus
+        deltas: [ADDED]
+      - name: svg-vector-export
+        deltas: [ADDED]
+      - name: visual-golden-corpus
+        deltas: [ADDED]
     # Scope widened at design: also fixes the Canvas2D cross-backend divergences the exporter
     # exposed (overlapping Y-axis columns, axis lineWidth inherited from the last trace,
     # single-payload traceColor and isolated markers). Regenerates exactly three pixel goldens
@@ -243,7 +322,15 @@ changes:
     name: raw-data-viewport-export
     prerequisites: 
       - svg-vector-export
-    capabilities: not_yet_specified
+    capabilities:
+      - name: binary-export-contract
+        deltas: [ADDED]
+      - name: csv-export
+        deltas: [ADDED]
+      - name: playground-svg-export-view
+        deltas: [ADDED]
+      - name: viewport-window-resolution
+        deltas: [ADDED]
     # Intended capability surface:
     #   viewport-window-resolution ADDED — domain range -> source index span, pre-decimation
     #   csv-export                 ADDED — streamed, precision-preserving, multi-trace columns
@@ -256,7 +343,29 @@ changes:
       - browser-visual-regression-harness
       - svg-vector-export
       - core-gap-and-multi-trace-model
-    capabilities: not_yet_specified
+    capabilities:
+      - name: browser-visual-regression
+        deltas: [ADDED, MODIFIED]
+      - name: figure-renderer-contract
+        deltas: [ADDED, MODIFIED]
+      - name: package-build-pipeline
+        deltas: [ADDED]
+      - name: playground-engine-parity-view
+        deltas: [ADDED]
+      - name: playground-routing
+        deltas: [ADDED, MODIFIED]
+      - name: render-scenario-fixtures
+        deltas: [ADDED, MODIFIED]
+      - name: selectable-decimation
+        deltas: [MODIFIED, RENAMED]
+      - name: viewport-transform
+        deltas: [MODIFIED]
+      - name: webgl2-golden-parity
+        deltas: [ADDED]
+      - name: webgl2-plot-surface
+        deltas: [ADDED]
+      - name: webgl2-trace-rendering
+        deltas: [ADDED]
 
   # Inserted at revision 7.
   #
@@ -274,7 +383,27 @@ changes:
     prerequisites:
       - renderers-webgl2
       - raw-data-viewport-export
-    capabilities: not_yet_specified
+    capabilities:
+      - name: canvas2d-trace-rendering
+        deltas: [MODIFIED]
+      - name: figure-renderer-contract
+        deltas: [MODIFIED]
+      - name: figure-scene-layout
+        deltas: [MODIFIED, REMOVED]
+      - name: playground-svg-export-view
+        deltas: [MODIFIED]
+      - name: render-scenario-fixtures
+        deltas: [ADDED]
+      - name: svg-vector-export
+        deltas: [ADDED, MODIFIED]
+      - name: trace-collection-payload
+        deltas: [MODIFIED]
+      - name: viewport-transform
+        deltas: [ADDED, MODIFIED]
+      - name: webgl2-golden-parity
+        deltas: [MODIFIED]
+      - name: webgl2-trace-rendering
+        deltas: [MODIFIED]
     # Intended capability surface:
     #   viewport-transform         MODIFIED — one declared X-domain space shared by every consumer
     #   viewport-window-resolution MODIFIED — window bounds in that same space
@@ -292,7 +421,17 @@ changes:
     name: canvas2d-parity-fixes
     prerequisites:
       - renderers-webgl2
-    capabilities: not_yet_specified
+    capabilities:
+      - name: browser-visual-regression
+        deltas: [MODIFIED]
+      - name: canvas2d-trace-rendering
+        deltas: [ADDED, MODIFIED]
+      - name: svg-vector-export
+        deltas: [ADDED]
+      - name: webgl2-golden-parity
+        deltas: [ADDED, MODIFIED]
+      - name: webgl2-trace-rendering
+        deltas: [MODIFIED]
     # Intended capability surface:
     #   canvas2d-trace-rendering MODIFIED — clip to the plot rectangle; ±Infinity reaches the edge;
     #                                       single-payload decimation fallback matches the collection path

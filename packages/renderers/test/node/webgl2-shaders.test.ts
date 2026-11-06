@@ -1,4 +1,5 @@
 /** @vitest-environment node */
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,10 +9,12 @@ import {
   FLOAT32_EXPONENT_MASK,
   FLOAT32_MANTISSA_MASK,
 } from "../../src/webgl2/float-bits.js";
+import { GUARD_BAND_PX } from "../../src/rules/guard-band.js";
 import { LOG10_2 } from "../../src/webgl2/precision.js";
 import {
   AA_FEATHER_PX,
-  GUARD_BAND_PX,
+  SHARED_UNIFORMS_GLSL,
+  VERSION_AND_PRECISION,
   LINE_FRAGMENT_SHADER,
   LINE_VERTEX_SHADER,
   MARKER_FRAGMENT_SHADER,
@@ -30,6 +33,36 @@ const VERTEX = { LINE_VERTEX_SHADER, MARKER_VERTEX_SHADER };
 function squash(source: string): string {
   return source.replace(/\s+/g, " ");
 }
+
+describe("shader source text is byte-stable", () => {
+  const SHA256: Record<string, string> = {
+    VERSION_AND_PRECISION: "e893080efff14b49396b4f6d12fc2aaf2c1c99d809de71d79d5975c2a5707eb4",
+    SHARED_UNIFORMS_GLSL: "bb4b8db47cd124470e7561f9b9fe499d696f8fb96aabce5151e4e5723ce1ad71",
+    PROJECTION_GLSL: "e5dc2f1d282f7470e9377a18d5c024d3c584fdf99c6a78b37de290fa9d1318b3",
+    LINE_VERTEX_SHADER: "59602e7d5e35b5e4a6c064a22d5a44625bab93dcf16d189555428cb857f6f57b",
+    LINE_FRAGMENT_SHADER: "9a618e2644687c03342d2db24a631c7eec7ad0c9b51413f1e50b51a9775a1dfd",
+    MARKER_VERTEX_SHADER: "bf302482a60c76a550308172c9f7ae03493288f6f8ea8a51c1e38552f976814c",
+    MARKER_FRAGMENT_SHADER: "0b68431dda6c890c51c0684c381f065c21565d8fe2eecb1f620633f87f077b0f",
+  };
+  const SOURCES: Record<string, string> = {
+    VERSION_AND_PRECISION,
+    SHARED_UNIFORMS_GLSL,
+    PROJECTION_GLSL,
+    ...ALL,
+  };
+
+  it("declares the guard band as one exact GLSL constant line", () => {
+    expect(PROJECTION_GLSL).toContain("const float GUARD_BAND_PX = 65536.0;");
+    expect(PROJECTION_GLSL).toContain(
+      `const float GUARD_BAND_PX = ${GUARD_BAND_PX.toFixed(1)};`,
+    );
+  });
+
+  it.each(Object.keys(SHA256))("%s hashes to the recorded digest", (name) => {
+    const digest = createHash("sha256").update(SOURCES[name] ?? "").digest("hex");
+    expect(digest).toBe(SHA256[name]);
+  });
+});
 
 describe("shader preamble", () => {
   for (const [name, source] of Object.entries(ALL)) {

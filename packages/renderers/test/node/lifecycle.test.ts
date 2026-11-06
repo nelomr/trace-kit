@@ -48,6 +48,10 @@ function createFakeCanvas(): FakeCanvas {
     fill(): void {
       calls.push("fill");
     },
+    save(): void {},
+    restore(): void {},
+    rect(): void {},
+    clip(): void {},
   };
   return {
     width: 0,

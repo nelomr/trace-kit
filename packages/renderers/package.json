@@ -37,7 +37,7 @@
   },
   "scripts": {
     "build": "tsup && tsc -p tsconfig.svg-dts.json",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run --config ../../vitest.config.ts --project renderers --project renderers-dom",
     "test:update-svg-goldens": "TRACEKIT_UPDATE_SVG_GOLDENS=1 vitest run --config ../../vitest.config.ts --project renderers svg-golden",

@@ -8,7 +8,7 @@
 [![CI Status](https://github.com/nelomr/trace-kit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nelomr/trace-kit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Status: pre-alpha](https://img.shields.io/badge/Status-pre--alpha-orange.svg?style=flat-square)](#-project-status)
-[![Version: 0.0.0](https://img.shields.io/badge/Version-0.0.0_(unpublished)-lightgrey.svg?style=flat-square)](#-project-status)
+[![Version: pre-1.0](https://img.shields.io/badge/Version-pre--1.0_(unpublished)-lightgrey.svg?style=flat-square)](#-project-status)
 [![PRs - Not accepting yet](https://img.shields.io/badge/PRs-Not_accepting_yet-red.svg?style=flat-square)](CONTRIBUTING.md)
 
 ---
@@ -39,14 +39,14 @@
 >   dependency-deprecation checks) that runs and passes on `main`.
 >
 > **What does not exist yet:** `packages/vue`, `packages/react`, `apps/docs`, and automatic
-> engine switching. Every package is still unpublished (`0.0.0`, private). The Vue/React Quickstart
+> engine switching. Every package is still unpublished (pre-1.0 patch versions, private). The Vue/React Quickstart
 > examples below describe an API that does not exist yet; the install commands will not work.
 >
 > Development follows Spec-Driven Development; progress is tracked in
 > [`openspec/roadmap.yaml`](openspec/roadmap.yaml). As of this writing, roadmap steps 1 through
-> **7** (`renderers-webgl2` — WebGL2 figure renderer on stacked canvases) are archived and
-> complete. The next planned steps are **7.5** (`x-domain-space-reconciliation`), **7.6**
-> (`canvas2d-parity-fixes`), then **8** (`worker-streaming-transport`), not yet started.
+> **7.6** (`canvas2d-parity-fixes` — Canvas2D clipping, ±Infinity and log-axis parity with SVG
+> and WebGL2) are archived and complete. The next planned step is **8**
+> (`worker-streaming-transport`), not yet started.
 
 ---
 
@@ -272,9 +272,7 @@ renderer.render();
   restores each backend's own default. An explicit selection runs the same core decimators on both.
 * **A plot canvas is single-use:** a canvas that produced a `2d` context can never yield `webgl2`,
   and a disposed one has lost its context. Create fresh canvases to switch engine or remount.
-* **Recorded divergences from Canvas2D:** a trace `dash` style is ignored (the line is solid), traces
-  are scissored to the plot rectangle (Canvas2D does not clip), and a `±Infinity` Y sample reaches
-  the plot edge through a guard band where Canvas2D bridges the sample.
+* **Recorded divergence from Canvas2D:** a trace `dash` style is ignored (the line is solid).
 * The playground `/engine-parity` route draws any shared fixture on both engines side by side, with
   each engine's vertex count.
 

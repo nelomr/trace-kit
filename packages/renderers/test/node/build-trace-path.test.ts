@@ -1,9 +1,16 @@
 /** @vitest-environment node */
 import { readFileSync } from "node:fs";
-import { createViewportTransform, projectX, projectY } from "@trace-kit/core";
+import {
+  createViewportTransform,
+  projectX,
+  projectY,
+  Y_SCALE_KIND_LOG,
+  type ViewportTransform,
+} from "@trace-kit/core";
 import { describe, expect, it } from "vitest";
 import { buildTracePath } from "../../src/path/build-trace-path.js";
 import type { PolylineSink } from "../../src/path/polyline-sink.js";
+import { GUARD_BAND_PX } from "../../src/rules/guard-band.js";
 
 class CountingSink implements PolylineSink {
   moveToCalls = 0;
@@ -279,3 +286,176 @@ describe("buildTracePath with a non-zero origin", () => {
   });
 });
 
+
+interface SinkCall {
+  readonly kind: "moveTo" | "lineTo";
+  readonly x: number;
+  readonly y: number;
+}
+
+class CallLog implements PolylineSink {
+  readonly calls: SinkCall[] = [];
+
+  moveTo(x: number, y: number): void {
+    this.calls.push({ kind: "moveTo", x, y });
+  }
+
+  lineTo(x: number, y: number): void {
+    this.calls.push({ kind: "lineTo", x, y });
+  }
+
+  count(kind: SinkCall["kind"]): number {
+    return this.calls.filter((call) => call.kind === kind).length;
+  }
+
+  everyArgumentIsFinite(): boolean {
+    return this.calls.every((call) => Number.isFinite(call.x) && Number.isFinite(call.y));
+  }
+}
+
+// 450 x 330 CSS px at dpr 1, 50 px left and 30 px bottom inset: the plot is x 50..450, y 0..300.
+function referenceTransform(
+  yMin: number,
+  yMax: number,
+  options: { readonly xMax?: number; readonly log?: boolean } = {},
+): ViewportTransform {
+  return createViewportTransform({
+    cssWidth: 450,
+    cssHeight: 330,
+    dpr: 1,
+    insetLeft: 50,
+    insetRight: 0,
+    insetTop: 0,
+    insetBottom: 30,
+    xDomainMin: 0,
+    xDomainMax: options.xMax ?? 4,
+    yDomainMin: yMin,
+    yDomainMax: yMax,
+    xOrigin: 0,
+    ...(options.log === true ? { yScaleKind: Y_SCALE_KIND_LOG } : {}),
+  });
+}
+
+function walkDirect(t: ViewportTransform, xs: readonly number[], ys: readonly number[]): CallLog {
+  const sink = new CallLog();
+  buildTracePath(sink, t, Float32Array.from(xs), Float32Array.from(ys), new Int32Array(0), 0, xs.length);
+  return sink;
+}
+
+const TOP = -GUARD_BAND_PX;
+const BOTTOM = 300 + GUARD_BAND_PX;
+
+describe("buildTracePath draws infinities to the guard edge", () => {
+  const xs = [0, 1, 2, 3, 4];
+
+  it("draws +Infinity on a linear axis to the top guard edge without breaking the line", () => {
+    const sink = walkDirect(referenceTransform(0, 1), xs, [0.5, 0.5, Infinity, 0.5, 0.5]);
+    expect(sink.calls).toEqual([
+      { kind: "moveTo", x: 50, y: 150 },
+      { kind: "lineTo", x: 150, y: 150 },
+      { kind: "lineTo", x: 250, y: TOP },
+      { kind: "lineTo", x: 350, y: 150 },
+      { kind: "lineTo", x: 450, y: 150 },
+    ]);
+  });
+
+  it("draws -Infinity on a linear axis to the bottom guard edge", () => {
+    const sink = walkDirect(referenceTransform(0, 1), xs, [0.5, 0.5, -Infinity, 0.5, 0.5]);
+    expect(sink.calls[2]).toEqual({ kind: "lineTo", x: 250, y: BOTTOM });
+    expect(sink.count("moveTo")).toBe(1);
+    expect(sink.count("lineTo")).toBe(4);
+  });
+
+  it("sends +Infinity to the bottom edge on an inverted axis", () => {
+    const sink = walkDirect(referenceTransform(1, 0), xs, [0.5, 0.5, Infinity, 0.5, 0.5]);
+    expect(sink.calls[2]).toEqual({ kind: "lineTo", x: 250, y: BOTTOM });
+  });
+
+  it("keeps every coordinate finite on a zero-span axis", () => {
+    const sink = walkDirect(referenceTransform(0.5, 0.5), [0, 1, 2], [0.5, Infinity, -Infinity]);
+    expect(sink.calls.map((call) => call.y)).toEqual([300, TOP, BOTTOM]);
+  });
+
+  it("draws +Infinity on a log axis to the top guard edge", () => {
+    const sink = walkDirect(referenceTransform(1, 1000, { log: true }), [0, 1, 2], [10, Infinity, 100]);
+    expect(sink.calls).toEqual([
+      { kind: "moveTo", x: 50, y: 200 },
+      { kind: "lineTo", x: 150, y: TOP },
+      { kind: "lineTo", x: 250, y: 100 },
+    ]);
+  });
+
+  it("clamps huge finite coordinates into the guard band", () => {
+    const sink = walkDirect(referenceTransform(0, 1), [0, 1e30, 2], [0.5, 1e30, 0.5]);
+    expect(sink.calls[1]).toEqual({ kind: "lineTo", x: 450 + GUARD_BAND_PX, y: TOP });
+    expect(sink.everyArgumentIsFinite()).toBe(true);
+  });
+
+  it("leaves in-band coordinates identical to the plain projection", () => {
+    const linear = referenceTransform(0, 1);
+    const log = referenceTransform(1, 1000, { log: true });
+    const ys = [0.25, 0.5, 0.75, 0.1, 0.9];
+    const logYs = [1.5, 10, 100, 999, 3];
+    const linearWalk = walkDirect(linear, xs, ys);
+    const logWalk = walkDirect(log, xs, logYs);
+    for (let i = 0; i < xs.length; i += 1) {
+      expect(linearWalk.calls[i]?.x).toBe(projectX(linear, xs[i] ?? 0));
+      expect(linearWalk.calls[i]?.y).toBe(projectY(linear, Math.fround(ys[i] ?? 0)));
+      expect(logWalk.calls[i]?.y).toBe(projectY(log, Math.fround(logYs[i] ?? 0)));
+    }
+  });
+});
+
+describe("buildTracePath lifts the pen on a log axis for non-positive samples", () => {
+  const log = referenceTransform(1, 1000, { log: true, xMax: 2 });
+
+  it("does not bridge a zero between two positive samples", () => {
+    const sink = walkDirect(log, [0, 1, 2], [10, 0, 100]);
+    expect(sink.calls).toEqual([
+      { kind: "moveTo", x: 50, y: 200 },
+      { kind: "moveTo", x: 450, y: 100 },
+    ]);
+  });
+
+  it.each([
+    ["-Infinity", -Infinity],
+    ["a negative value", -5],
+  ])("does not bridge %s", (_name, bad) => {
+    const sink = walkDirect(log, [0, 1, 2], [10, bad, 100]);
+    expect(sink.count("moveTo")).toBe(2);
+    expect(sink.count("lineTo")).toBe(0);
+    expect(sink.everyArgumentIsFinite()).toBe(true);
+  });
+
+  it("draws the segments on either side of a non-positive run and never spans it", () => {
+    const wide = referenceTransform(1, 1000, { log: true, xMax: 5 });
+    const sink = walkDirect(wide, [0, 1, 2, 3, 4, 5], [10, 20, -5, 0, 30, 40]);
+    expect(sink.calls.map((call) => call.kind)).toEqual(["moveTo", "lineTo", "moveTo", "lineTo"]);
+    expect(sink.calls[1]?.x).toBe(projectX(wide, 1));
+    expect(sink.calls[2]?.x).toBe(projectX(wide, 4));
+  });
+
+  it("still draws zero and negative samples on a linear axis", () => {
+    const sink = walkDirect(referenceTransform(-1, 1), [0, 1, 2], [0.5, 0, -0.5]);
+    expect(sink.count("moveTo")).toBe(1);
+    expect(sink.count("lineTo")).toBe(2);
+  });
+
+  it("treats NaN next to a zero as one break", () => {
+    const wide = referenceTransform(1, 1000, { log: true, xMax: 4 });
+    const sink = walkDirect(wide, [0, 1, 2, 3, 4], [10, NaN, 0, 100, 200]);
+    expect(sink.calls.map((call) => call.kind)).toEqual(["moveTo", "moveTo", "lineTo"]);
+    expect(sink.calls[1]?.x).toBe(projectX(wide, 3));
+  });
+
+  it("applies the same break to a decimated index stream pointing at a zero sample", () => {
+    const wide = referenceTransform(1, 1000, { log: true, xMax: 3 });
+    const x = Float32Array.from([0, 1, 2, 3]);
+    const y = Float32Array.from([10, 0, 100, 20]);
+    const indices = Int32Array.from([0, 1, 2, 3]);
+    const sink = new CallLog();
+    buildTracePath(sink, wide, x, y, indices, indices.length, 0);
+    expect(sink.calls.map((call) => call.kind)).toEqual(["moveTo", "moveTo", "lineTo"]);
+    expect(sink.calls[1]?.x).toBe(projectX(wide, 2));
+  });
+});

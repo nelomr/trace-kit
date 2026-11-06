@@ -37,3 +37,9 @@ export const AXIS_LUMA_DELTA = 48;
 
 /** Smallest per-channel distance (0-255) from the background and grid colour that counts as ink. */
 export const INK_DELTA = 32;
+
+/** Device pixels a tick label's measured glyph box is grown by on every side before it is excluded
+ * from a trace-ink count. Glyph bounds are font metrics and say nothing about rasterization: one
+ * pixel covers grayscale coverage at the edge of a glyph, and the LCD filter of an opaque
+ * Canvas2D context spreads colour fringes by less than another. */
+export const LABEL_MASK_PAD_PX = 2;

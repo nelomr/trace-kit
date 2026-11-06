@@ -169,6 +169,10 @@ describe("Canvas2DRenderer decimation boundary and per-frame paint sequence", ()
     fillText(text: string, x: number, y: number): void;
     setLineDash(segments: number[]): void;
     fill(path?: unknown): void;
+    save(): void;
+    restore(): void;
+    rect(x: number, y: number, w: number, h: number): void;
+    clip(): void;
   }
 
   function createFakeContext(): FakeContext {
@@ -207,6 +211,10 @@ describe("Canvas2DRenderer decimation boundary and per-frame paint sequence", ()
       fill(): void {
         this.calls.push("fill");
       },
+      save(): void {},
+      restore(): void {},
+      rect(): void {},
+      clip(): void {},
     };
   }
 
@@ -475,11 +483,12 @@ describe("Canvas2DRenderer decimation boundary and per-frame paint sequence", ()
       );
       const source = readFileSync(filePath, "utf8");
       const hash = createHash("sha256").update(source).digest("hex");
-      // Recaptured for the gap-aware pen-state walk (one moveTo per finite segment, none across
-      // a break): the previous hash pinned the pre-gap-awareness unconditional-moveTo body. Any
-      // further edit to build-trace-path.ts changes this hash and fails the guard, same as before.
+      // Recaptured for the walk that draws infinities to the guard edge, clamps every vertex into
+      // the guard band and lifts the pen on a log-axis sample <= 0: the previous hash pinned the
+      // gap-only walk. Any further edit to build-trace-path.ts changes this hash and fails the
+      // guard, same as before.
       expect(hash).toBe(
-        "7c2cec8e5240d06697a9ce2f0f36093d02cb221b373dacc7180a6344d3bc74ad",
+        "a7a247c3001674df8a2d9f23813a193913907465a72692d35028d25f7474ad12",
       );
     });
   });

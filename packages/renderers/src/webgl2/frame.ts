@@ -140,7 +140,7 @@ export function drawGlFrame(frame: FrameState, slots: readonly TraceGpuSlot[], c
     if (slot === undefined || payload === undefined || t === undefined) continue;
     const markIsolated = (frame.markIsolated[i] ?? 1) === 1;
 
-    ensureTraceUploaded(gl, slot, payload, t.plotWidth, frame.selection, markIsolated);
+    ensureTraceUploaded(gl, slot, payload, t.plotWidth, frame.selection, markIsolated, t.yScaleKind);
     const drawLine = slot.vertexCount >= 2;
     const drawMarkers = markIsolated && slot.markerCount > 0;
     if (!drawLine && !drawMarkers) continue;

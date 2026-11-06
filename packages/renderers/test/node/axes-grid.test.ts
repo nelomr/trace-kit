@@ -61,6 +61,10 @@ interface FakeContext {
   fillText(text: string, x: number, y: number): void;
   setLineDash(segments: number[]): void;
   fill(path?: unknown): void;
+  save(): void;
+  restore(): void;
+  rect(x: number, y: number, w: number, h: number): void;
+  clip(): void;
 }
 
 function createFakeContext(): FakeContext {
@@ -99,6 +103,10 @@ function createFakeContext(): FakeContext {
     fill(): void {
       this.calls.push("fill");
     },
+    save(): void {},
+    restore(): void {},
+    rect(): void {},
+    clip(): void {},
   };
 }
 

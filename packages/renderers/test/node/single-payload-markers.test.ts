@@ -1,5 +1,12 @@
 /** @vitest-environment node */
-import { commitPayloadRevision, createSpectrumDataPayload, projectX, projectY } from "@trace-kit/core";
+import {
+  AXIS_SIDE_LEFT,
+  commitPayloadRevision,
+  createSpectrumDataPayload,
+  projectX,
+  projectY,
+  Y_SCALE_KIND_LOG,
+} from "@trace-kit/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Canvas2DRenderer } from "../../src/canvas2d/canvas2d-renderer.js";
 import { countIsolatedSegments } from "../../src/path/isolated-markers.js";
@@ -89,3 +96,36 @@ describe("single-payload isolated-sample markers", () => {
     expect(vi.mocked(countIsolatedSegments)).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("single-payload markers on a log axis", () => {
+  let restore: () => void;
+  beforeEach(() => {
+    restore = installRecordingPath2D();
+    vi.mocked(countIsolatedSegments).mockClear();
+  });
+  afterEach(() => {
+    restore();
+  });
+
+  it("marks the samples a non-positive neighbour isolates, counting once across 60 renders", () => {
+    const context = new RecordingContext();
+    const renderer = new Canvas2DRenderer({
+      surface: recordingSurface(context),
+      yAxes: [{ id: "y", scaleKind: Y_SCALE_KIND_LOG, domainMin: 1, domainMax: 1000, side: AXIS_SIDE_LEFT }],
+    });
+    renderer.resize(400, 200, 2);
+    renderer.setDomain(0, 2, 1, 1000);
+    renderer.setData(payloadOf([10, 0, 100]));
+    for (let frame = 0; frame < 60; frame += 1) renderer.render();
+
+    expect(vi.mocked(countIsolatedSegments)).toHaveBeenCalledTimes(1);
+    const markers = RecordingPath2D.created[1];
+    expect(markers?.ops.map((op) => op.name)).toEqual(["rect", "rect"]);
+    const t = renderer.transform;
+    const half = 3;
+    expect(markers?.ops[0]?.args).toEqual([projectX(t, 0) - half, projectY(t, 10) - half, 2 * half, 2 * half]);
+    expect(markers?.ops[1]?.args).toEqual([projectX(t, 2) - half, projectY(t, 100) - half, 2 * half, 2 * half]);
+    expect(context.calls.filter((c) => c.name === "fill")).toHaveLength(60);
+  });
+});
+

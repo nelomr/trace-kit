@@ -21,7 +21,7 @@ import {
 } from "../../src/webgl2/gl-context.js";
 import { drawGlFrame, FrameState, ROW_X_OFFSET_MIN, UNIFORM_ROW_STRIDE } from "../../src/webgl2/frame.js";
 import { createGlPrograms } from "../../src/webgl2/program.js";
-import { GUARD_BAND_PX } from "../../src/webgl2/shaders.js";
+import { GUARD_BAND_PX } from "../../src/rules/guard-band.js";
 import { splitFloat64ToHiLo } from "../../src/webgl2/precision.js";
 import { createTraceSlot, type TraceGpuSlot } from "../../src/webgl2/trace-slot.js";
 import { FakeUniformLocation, RecordingGl2Context } from "./support/recording-gl2-context.js";
@@ -370,6 +370,30 @@ describe("draw sequence", () => {
     expect(draws.filter((a) => a[3] === 9)).toHaveLength(3);
     expect(draws.filter((a) => a[3] === 1)).toHaveLength(1);
     expect(draws).toHaveLength(4);
+  });
+
+  it("draws a marker pass for the samples a log zero isolates, and none on a linear axis", () => {
+    const logGap = (i: number): number => [10, 0, 100][i] ?? NaN;
+    const log = transformFor({ yDomainMin: 1, yDomainMax: 1000, yScaleKind: Y_SCALE_KIND_LOG });
+    const linear = transformFor({ yDomainMin: 1, yDomainMax: 1000 });
+    const local = harness([
+      { payload: payloadOf(3, logGap), transform: log },
+      { payload: payloadOf(3, logGap), transform: linear },
+    ]);
+    drawGlFrame(local.frame, local.slots, 2);
+
+    // A marker draw is the instanced draw that follows `useProgram(marker)`; the line pass of the
+    // same trace also has two instances, so the instance count alone cannot tell them apart.
+    const markerProgram = local.frame.programs.marker;
+    const markerDraws: number[] = [];
+    let inMarkerProgram = false;
+    for (const call of local.gl.log) {
+      if (call.name === "gl.useProgram") inMarkerProgram = call.args[0] === markerProgram;
+      if (call.name === "gl.drawArraysInstanced" && inMarkerProgram) markerDraws.push(Number(call.args[3]));
+    }
+    expect(markerDraws).toEqual([2]);
+    expect(local.slots[0]?.markerCount).toBe(2);
+    expect(local.slots[1]?.markerCount).toBe(0);
   });
 
   it("draws no line pass for zero or one sample but still clears", () => {

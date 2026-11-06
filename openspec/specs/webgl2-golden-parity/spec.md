@@ -155,6 +155,20 @@ luminance (Rec. 709 weights, 0-255) by more than `AXIS_LUMA_DELTA`, a non-zero c
 above the largest difference between aligned renders and below the difference a one-device-pixel
 shift produces.
 
+Both engines MUST also confine trace ink to the plot rectangle. For every fixture and each engine,
+the number of pixels outside the plot rectangle grown by `ceil(lineWidthCss * dpr)` device pixels
+(the largest resolved `lineWidthCss` of the fixture's traces), and outside every label ink box,
+whose max-channel color distance from any resolved trace color of the fixture is at most
+`INK_DELTA` MUST be `0`. A *label ink box* is the bounding box of one tick label: the label's
+`measureText` bounds (`actualBoundingBoxLeft/Right/Ascent/Descent`, measured with the scaled font
+and the alignment the axis painters use) placed at the anchor the painters pass to `fillText`,
+grown by `LABEL_MASK_PAD_PX = 2` device pixels on every side and rounded outward to whole pixels.
+The anchors MUST be computed with the shared figure-layout module from the same inputs the
+renderer uses (no reimplemented layout arithmetic), so they equal the painters' `fillText`
+anchors. Tick marks, axis lines and gridlines are not masked.
+This out-of-plot check is two-directional for every trace, including one-directional and dashed
+ones, and MUST NOT loosen any existing tolerance.
+
 #### Scenario: Every fixture passes the structural check
 - **GIVEN**: all nine fixtures
 - **WHEN**: each is rendered on both engines and compared
@@ -193,6 +207,20 @@ shift produces.
 - **WHEN**: scanned for the constants
 - **THEN**: the cross-check does not import or reference the `0.1` / `0.001` Canvas2D comparator
   options
+
+#### Scenario: No fixture leaves trace ink outside the plot on either engine
+- **GIVEN**: all nine fixtures, `resonance-peak` included (its payload extends beyond its X domain)
+- **WHEN**: each is rendered on both engines and the out-of-plot check runs
+- **THEN**: the out-of-plot trace-ink count (pixels outside the grown plot rectangle and outside
+  every label ink box) is `0` for every fixture on both engines
+
+#### Scenario: The out-of-plot check is not vacuous
+- **GIVEN**: a Canvas2D render of `resonance-peak` onto which the test then strokes a 3-device-pixel
+  segment in the first trace color across the whole width of the left axis gutter (from column `0`
+  to the left edge of the grown plot rectangle), outside the grown plot rectangle, so part of it
+  lies outside every label ink box
+- **WHEN**: the out-of-plot check runs on that image
+- **THEN**: it reports a count greater than `0` and fails
 
 ### Requirement: The WebGL2 Suites Consume the Shared Parity Fixtures Unchanged
 The WebGL2 pixel suite, the cross-check and the fake-GL parity tests MUST take their inputs from
@@ -255,3 +283,46 @@ the `engine-controller` hysteresis band. The point-count ladder MUST include at 
 - **GIVEN**: `pnpm run test`
 - **WHEN**: its executed project and file list is inspected
 - **THEN**: the benchmark is absent
+
+### Requirement: Paired Behaviour Probes Pin Clip, ±Infinity and Log Non-Positive Parity
+The `visual` project MUST hold behaviour probes that render the same test-local payload on
+`Canvas2DRenderer` and on `WebGL2FigureRenderer` in the same page and read pixels from each, with no
+golden and no fake context. The payloads MUST be defined in the test, not added to the scenario
+fixtures. The probes MUST cover:
+
+- a linear-axis payload `[0.5, 0.5, +Infinity, 0.5, 0.5]` over `x = [0, 1, 2, 3, 4]` and domain
+  `[0, 4] x [0, 1]`, and the same with `-Infinity`;
+- a log-axis payload `[10, 0, 100]` over `x = [0, 1, 2]`, domain `[0, 2] x [1, 1000]`, rendered at
+  `dpr = 3` (at `dpr = 1` the left axis line overpaints half of the marker that straddles the plot
+  edge, so the marker read would depend on the axis line);
+- a 50-sample payload alternating `+Infinity` and `-Infinity`, domain `[0, 49] x [-1, 1]`.
+
+#### Scenario: +Infinity reaches the top band on both engines
+- **GIVEN**: the `+Infinity` payload rendered on both engines
+- **WHEN**: the plot's top row band (the rows from `ceil(plotTop)` to `ceil(plotTop) + 2`) is read
+  in the columns from `column(1)` to `column(3)` (`column(i)` being the device column of sample
+  `i`; the infinite sample goes to the guard edge at its own X, so both segments meeting there
+  cross the plot edge beside samples 1 and 3 and the column of sample 2 is geometrically empty)
+- **THEN**: both engines have trace ink there
+
+#### Scenario: -Infinity reaches the bottom band on both engines
+- **GIVEN**: the `-Infinity` payload rendered on both engines
+- **WHEN**: the plot's bottom row band (the three rows ending at `floor(plotTop + plotHeight) - 1`)
+  is read in the same columns, `column(1)` to `column(3)`
+- **THEN**: both engines have trace ink there
+
+#### Scenario: A log non-positive sample is bridged on neither engine
+- **GIVEN**: the log payload `[10, 0, 100]` rendered on both engines at `dpr = 3`
+- **WHEN**: the plot-interior columns from `column(0) + m` to `column(1) - m` and from
+  `column(1) + m` to `column(2) - m` are read, with `m = 2 * ceil(lineWidthCss * dpr) + 2`
+  keeping the marker squares out of the window
+- **THEN**: neither engine has trace ink in those columns, and both have ink at the marker
+  locations of samples `0` and `2`: the visible half of each edge marker, in the columns
+  `column(0) + 2` to `column(0) + k - 1` and `column(2) - k` to `column(2) - 1`, with
+  `k = ceil(lineWidthCss * dpr)`, within two rows of the projected Y of `10` and `100`
+
+#### Scenario: Alternating infinities stay inside the plot on both engines
+- **GIVEN**: the alternating-infinity payload rendered on both engines
+- **WHEN**: every pixel outside the plot rectangle grown by `ceil(lineWidthCss * dpr)` and outside
+  every label ink box is read
+- **THEN**: no pixel is within `INK_DELTA` of the trace color on either engine

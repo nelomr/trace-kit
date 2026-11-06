@@ -116,6 +116,12 @@ export default defineConfig({
           name: "visual",
           root: path.join(rootDir, "packages/renderers"),
           include: ["test/visual/**/*.test.ts"],
+          // Each case drives a real Chromium page (canvas setup, WebGL2 context, screenshot or
+          // pixel readback). Under `pnpm run test`, turbo runs every other package's suite
+          // concurrently and the browser is starved of CPU, so cases that take ~1-6 s alone
+          // have been observed to exceed the default timeout. The budget only bounds a hang;
+          // it does not loosen any pixel assertion.
+          testTimeout: 90_000,
           // No `environment` key: this project renders in a real browser (Chromium, via
           // Playwright) rather than in a simulated DOM. No `execArgv`/`pool` override either —
           // `--expose-gc` has nothing to instrument here; visual cases assert painted pixels,

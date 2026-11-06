@@ -28,6 +28,10 @@ class QuietContext implements OverlayDrawingContext {
   fillText(): void {}
   setLineDash(): void {}
   fill(): void {}
+  save(): void {}
+  restore(): void {}
+  rect(): void {}
+  clip(): void {}
 }
 
 function sweep(): SpectrumDataPayload {

@@ -7,6 +7,7 @@ import {
   type TraceStyle,
 } from "@trace-kit/core";
 import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { isolatedMarkerHalfSide } from "../../src/path/isolated-markers.js";
@@ -15,6 +16,7 @@ import {
   deriveDecimationTarget,
   resolveDecimationTarget,
 } from "../../src/rules/decimation.js";
+import { GUARD_BAND_PX } from "../../src/rules/guard-band.js";
 import { resolveTraceStyle } from "../../src/rules/trace-style.js";
 import { DEFAULT_FIGURE_STYLE, TRACE_PALETTE } from "../../src/style.js";
 
@@ -164,5 +166,58 @@ describe("backend neutrality of rules/ and path/", () => {
     if (file.startsWith("rules/")) {
       expect(source).not.toMatch(/\b(document|window|HTMLCanvasElement|OffscreenCanvas|Path2D)\b/);
     }
+  });
+});
+
+describe("GUARD_BAND_PX single source", () => {
+  const srcDir = fileURLToPath(new URL("../../src/", import.meta.url));
+  const GUARD_BAND_FILE = "rules/guard-band.ts";
+
+  function sourceFiles(dir: string): string[] {
+    const found: string[] = [];
+    for (const entry of readdirSync(path.join(srcDir, dir), { withFileTypes: true })) {
+      const relative = dir === "" ? entry.name : `${dir}/${entry.name}`;
+      if (entry.isDirectory()) found.push(...sourceFiles(relative));
+      else if (entry.name.endsWith(".ts")) found.push(relative);
+    }
+    return found;
+  }
+
+  const files = sourceFiles("");
+
+  it("is 65536 and survives a float32 round trip", () => {
+    expect(GUARD_BAND_PX).toBe(65536);
+    expect(Math.fround(GUARD_BAND_PX)).toBe(GUARD_BAND_PX);
+    expect(Number.isInteger(Math.log2(GUARD_BAND_PX))).toBe(true);
+  });
+
+  it("is declared exactly once, in the rules module", () => {
+    const declaring = files.filter((file) =>
+      /\b(export\s+)?const\s+GUARD_BAND_PX\b/.test(readFileSync(path.join(srcDir, file), "utf8")),
+    );
+    expect(declaring).toEqual([GUARD_BAND_FILE]);
+  });
+
+  it("writes the numeric literal in no other source file", () => {
+    const writing = files.filter((file) =>
+      /\b65536\b/.test(readFileSync(path.join(srcDir, file), "utf8")),
+    );
+    expect(writing).toEqual([GUARD_BAND_FILE]);
+  });
+
+  it("is not declared by any webgl2 module", () => {
+    for (const file of files.filter((f) => f.startsWith("webgl2/"))) {
+      expect(readFileSync(path.join(srcDir, file), "utf8")).not.toMatch(
+        /\bconst\s+GUARD_BAND_PX\b/,
+      );
+    }
+  });
+
+  it("imports no backend module and no browser global", () => {
+    const source = readFileSync(path.join(srcDir, GUARD_BAND_FILE), "utf8");
+    expect(source).not.toMatch(/from\s+["'][^"']*\/(canvas2d|svg|webgl2)\//);
+    expect(source).not.toMatch(
+      /\b(document|window|HTMLCanvasElement|OffscreenCanvas|Path2D|self|globalThis)\b/,
+    );
   });
 });

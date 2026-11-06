@@ -29,6 +29,17 @@ export interface TraceDrawingContext {
   /** Fills a `Path2D` with the context's current `fillStyle` — used for isolated-sample
    * markers, a separate `Path2D` from the stroked trace line. */
   fill(path: Path2D): void;
+  /** Pushes the drawing state (line dash, styles, clip). The renderer brackets the trace
+   * section in `save()`/`restore()` so a trace's dash and colors never reach the axes. */
+  save(): void;
+  /** Pops the state pushed by the matching `save()`, dropping the clip it installed. */
+  restore(): void;
+  /** Appends a rectangle to the context's current default path; allocates no `Path2D`. */
+  rect(x: number, y: number, w: number, h: number): void;
+  /** Intersects the clip region with the current default path. The trace section is clipped to
+   * the plot rectangle because a payload may extend past the visible window while the axes and
+   * their labels, drawn in the gutters, must stay unclipped. */
+  clip(): void;
 }
 
 /**

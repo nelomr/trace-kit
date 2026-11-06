@@ -6,12 +6,15 @@
  * is idempotent for a fixed payload revision and transform. The CTM is set to identity once per
  * `render()` and never scaled, translated or rotated: every coordinate handed to the drawing
  * context is already in device pixels, produced by `buildTracePath`/`projectX`/`projectY`.
+ *
+ * Paint order: background fill -> grid -> trace section clipped to the plot rectangle -> axes.
+ * A payload may extend past the visible window, so traces and isolated-sample markers are
+ * clipped to the plot rectangle, while the axes and their labels live in the gutters outside it
+ * and are painted afterwards, unclipped.
  */
 import {
   AXIS_SIDE_LEFT,
   allocateIndexBuffer,
-  lttb,
-  minMaxEnvelopeIndices,
   resolveTraceAxisIndices,
   Y_SCALE_KIND_LINEAR,
   type DecimationAlgorithm,
@@ -306,9 +309,6 @@ export class Canvas2DRenderer implements FigureRenderer {
     context.fillRect(0, 0, t.deviceWidth, t.deviceHeight);
 
     const layout = this.#layout;
-    // The dash pattern is context state that outlives a frame: the previous frame's last trace
-    // would otherwise dash this frame's gridlines. Only collection renders ever set a dash.
-    if (this.#traceCollection !== null) context.setLineDash(EMPTY_DASH);
     refreshFigureTicks(layout, this.#payload?.xUnit ?? "", this.#payload?.yUnit ?? "");
 
     // X gridlines are shared across every axis (one X domain) — painted once, at the layout's
@@ -328,6 +328,15 @@ export class Canvas2DRenderer implements FigureRenderer {
       );
     }
 
+    // A payload may extend past the visible window, so the trace section is clipped to the plot
+    // rectangle while the axes, drawn afterwards in the gutters, stay unclipped. `beginPath` is
+    // required: the gridline painters leave their last subpath in the context's default path,
+    // and `rect` would append to it. The default path is used (no `Path2D`) so the clip
+    // allocates nothing, and `restore` below also undoes every style and dash the traces set.
+    context.save();
+    context.beginPath();
+    context.rect(t.plotLeft, t.plotTop, t.plotWidth, t.plotHeight);
+    context.clip();
     if (this.#traceCollection !== null) {
       this.#renderTraces(context);
     } else {
@@ -370,8 +379,7 @@ export class Canvas2DRenderer implements FigureRenderer {
       }
     }
 
-    // Same leak, inside the frame: the last trace's dash must not carry onto the axis strokes.
-    if (this.#traceCollection !== null) context.setLineDash(EMPTY_DASH);
+    context.restore();
     drawBottomAxis(context, t, this.#deviceStyle, this.#axes, layout.xGridPositions, layout.xTickCount, layout.xLabels);
     for (let axisIndex = 0; axisIndex < layout.transforms.length; axisIndex += 1) {
       const axisTransform = layout.transforms[axisIndex];
@@ -489,26 +497,15 @@ export class Canvas2DRenderer implements FigureRenderer {
 
     if (payload.sampleCount <= emittedVertexCount) {
       this.#decimatedCount = 0;
-    } else if (algorithm === "lttb") {
-      this.#ensureIndexCapacity(emittedVertexCount);
-      this.#decimatedCount = lttb(
-        payload.x,
-        payload.y,
-        0,
-        payload.sampleCount,
-        this.#indices,
-        0,
-        parameter,
-      );
     } else {
       this.#ensureIndexCapacity(emittedVertexCount);
-      this.#decimatedCount = minMaxEnvelopeIndices(
+      this.#decimatedCount = decimateTraceIndices(
+        algorithm,
+        parameter,
+        payload.x,
         payload.y,
-        0,
         payload.sampleCount,
         this.#indices,
-        0,
-        parameter,
       );
     }
 
@@ -518,6 +515,7 @@ export class Canvas2DRenderer implements FigureRenderer {
       this.#indices,
       this.#decimatedCount,
       payload.sampleCount,
+      t.yScaleKind,
     );
 
     this.#memoRevision = payload.revision;
@@ -602,7 +600,14 @@ export class Canvas2DRenderer implements FigureRenderer {
     this.#traceIsolatedCount[i] =
       indices === undefined
         ? 0
-        : countIsolatedSegments(payload.x, payload.y, indices, decimatedCount, payload.sampleCount);
+        : countIsolatedSegments(
+            payload.x,
+            payload.y,
+            indices,
+            decimatedCount,
+            payload.sampleCount,
+            t.yScaleKind,
+          );
 
     this.#traceMemoRevision[i] = payload.revision;
     this.#traceMemoAlgorithm[i] = algorithm;

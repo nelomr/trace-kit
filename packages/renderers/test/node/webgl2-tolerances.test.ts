@@ -3,11 +3,14 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { DEFAULT_FIGURE_STYLE, TRACE_PALETTE } from "../../src/style.js";
+import type { Rgb } from "../visual/support/ink-metric.js";
 import {
   AXIS_LUMA_DELTA,
   INK_DELTA,
   K_INSET,
   K_ROWS,
+  LABEL_MASK_PAD_PX,
   P_COLUMNS,
   P_MISSING,
   WEBGL2_SCREENSHOT_TOLERANCE,
@@ -61,5 +64,55 @@ describe("WebGL2 tolerance constants", () => {
       expect(source, file).not.toMatch(/allowedMismatchedPixelRatio:\s*0\.002/);
       expect(source, file).not.toMatch(/\b(K_INSET|K_ROWS|P_COLUMNS|P_MISSING|INK_DELTA|AXIS_LUMA_DELTA)\s*=\s*[\d.]+/);
     }
+  });
+});
+
+function rgb(hex: string): Rgb {
+  const n = Number.parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/**
+ * Largest per-channel distance from `p` to the box `[min(bg, c), max(bg, c)]` of each channel: the
+ * set of every per-channel blend of the background and `c`, which is what grayscale and LCD
+ * anti-aliasing of text drawn in `c` can produce. Zero means `p` could be such a blend.
+ */
+function distanceToBlendBox(p: Rgb, bg: Rgb, c: Rgb): number {
+  let worst = 0;
+  for (let channel = 0; channel < 3; channel += 1) {
+    const lo = Math.min(bg[channel] ?? 0, c[channel] ?? 0);
+    const hi = Math.max(bg[channel] ?? 0, c[channel] ?? 0);
+    const value = p[channel] ?? 0;
+    worst = Math.max(worst, lo - value, value - hi, 0);
+  }
+  return worst;
+}
+
+describe("chrome colours stay separated from the trace colours", () => {
+  const bg = rgb(DEFAULT_FIGURE_STYLE.backgroundColor);
+  const chrome = [DEFAULT_FIGURE_STYLE.gridColor, DEFAULT_FIGURE_STYLE.axisColor, DEFAULT_FIGURE_STYLE.labelColor];
+  const traces = [...TRACE_PALETTE, DEFAULT_FIGURE_STYLE.traceColor];
+
+  it("keeps every trace colour farther than INK_DELTA from every blend of the background and a chrome colour", () => {
+    let minimum = Infinity;
+    for (const c of chrome) {
+      for (const p of traces) {
+        const distance = distanceToBlendBox(rgb(p), bg, rgb(c));
+        expect(distance, `${p} against ${c}`).toBeGreaterThan(INK_DELTA);
+        minimum = Math.min(minimum, distance);
+      }
+    }
+    // Today's closest pair: the label colour against `#7cd992` and `#c792ea`.
+    expect(minimum).toBe(66);
+  });
+
+  it("is not vacuous: a trace colour equal to a chrome colour is reported as ambiguous", () => {
+    const label = DEFAULT_FIGURE_STYLE.labelColor;
+    expect(distanceToBlendBox(rgb(label), bg, rgb(label))).toBeLessThanOrEqual(INK_DELTA);
+    expect(distanceToBlendBox(rgb(label), bg, rgb(label))).toBe(0);
+  });
+
+  it("declares the label mask padding once", () => {
+    expect(LABEL_MASK_PAD_PX).toBe(2);
   });
 });

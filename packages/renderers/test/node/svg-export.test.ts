@@ -14,6 +14,7 @@ import { Canvas2DRenderer } from "../../src/canvas2d/canvas2d-renderer.js";
 import { TRACEKIT_INTER_FAMILY } from "../../src/font/family.js";
 import { TRACEKIT_INTER_EMBEDDED_FONT } from "../../src/font/index.js";
 import { axisGutterCss } from "../../src/layout/figure-layout.js";
+import { GUARD_BAND_PX } from "../../src/rules/guard-band.js";
 import { TRACE_PALETTE, DEFAULT_AXIS_LAYOUT, DEFAULT_FIGURE_STYLE } from "../../src/style.js";
 import { exportToSvg } from "../../src/svg/index.js";
 import { formatSvgNumber } from "../../src/svg/svg-number.js";
@@ -38,6 +39,12 @@ import {
   pointCount,
 } from "./support/svg-helpers.js";
 import { assertWellFormedXml } from "./support/xml.js";
+
+// Pass-through spy: records every value the exporter formats while keeping the real output.
+vi.mock("../../src/svg/svg-number.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/svg/svg-number.js")>();
+  return { ...actual, formatSvgNumber: vi.fn(actual.formatSvgNumber) };
+});
 
 const f = formatSvgNumber;
 
@@ -345,6 +352,43 @@ describe("isolated-sample markers", () => {
     const svg = exportToSvg(payloadScene([4]));
     expect(paths(svg).every((p) => !p.d.includes("L"))).toBe(true);
     expect(elements(groupBody(svg, 'clip-path="url(#tracekit-plot-clip)"'), "rect").length).toBe(1);
+  });
+});
+
+describe("isolated-sample markers by axis kind", () => {
+  const logAxis = [{ id: "y", scaleKind: Y_SCALE_KIND_LOG, domainMin: 1, domainMax: 1000, side: 0 }];
+  const samples = [10, 0, 100];
+  const sceneFor = (axes: readonly YAxisRegistration[]) =>
+    payloadScene(samples, { domain: { xMin: 0, xMax: 2, yMin: 1, yMax: 1000 }, yAxes: axes, style: { lineWidthCss: 1 } });
+  const markerRects = (svg: string): string[] =>
+    elements(groupBody(svg, 'clip-path="url(#tracekit-plot-clip)"'), "rect");
+
+  it("exports one square per positive sample the log break isolates, at the projected coordinates", () => {
+    const scene = sceneFor(logAxis);
+    const rects = markerRects(exportToSvg(scene));
+    const t = layoutFor(scene).transforms[0];
+    if (t === undefined) throw new Error("no transform");
+    expect(rects.length).toBe(2);
+    // Side is twice the line width (1 css px) at dpr 1.
+    const side = 2;
+    for (const [rect, sample] of [
+      [rects[0] ?? "", 0],
+      [rects[1] ?? "", 2],
+    ] as const) {
+      expect(attr(rect, "width")).toBe(f(side));
+      expect(attr(rect, "x")).toBe(f(projectX(t, sample) - side / 2));
+      expect(attr(rect, "y")).toBe(f(projectY(t, samples[sample] ?? NaN) - side / 2));
+    }
+  });
+
+  it("exports no square for the same samples on a linear axis", () => {
+    expect(markerRects(exportToSvg(sceneFor([linearAxis("y", 1, 1000)])))).toEqual([]);
+  });
+
+  it("writes only finite marker coordinates", () => {
+    for (const rect of markerRects(exportToSvg(sceneFor(logAxis)))) {
+      for (const name of ["x", "y", "width", "height"]) expect(Number.isFinite(Number(attr(rect, name)))).toBe(true);
+    }
   });
 });
 
@@ -810,5 +854,82 @@ describe("determinism", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("infinite and log non-positive samples", () => {
+  const logAxis = [{ id: "y", scaleKind: Y_SCALE_KIND_LOG, domainMin: 1, domainMax: 1000, side: 0 }];
+  const logScene = (y: readonly number[]) =>
+    payloadScene(y, { domain: { xMin: 0, xMax: y.length - 1, yMin: 1, yMax: 1000 }, yAxes: logAxis });
+  const tracePath = (svg: string): string => paths(svg).find((p) => p.attrs.includes("fill=\"none\"") && p.attrs.includes("stroke-width"))?.d ?? "";
+  const pathYs = (d: string): number[] => [...d.matchAll(/[ML]-?[\d.]+ (-?[\d.]+)/g)].map((m) => Number(m[1]));
+  const pathXs = (d: string): number[] => [...d.matchAll(/[ML](-?[\d.]+) -?[\d.]+/g)].map((m) => Number(m[1]));
+  const transformOf = (scene: ReturnType<typeof payloadScene>) => {
+    const t = layoutFor(scene).transforms[0];
+    if (t === undefined) throw new Error("no transform");
+    return t;
+  };
+
+  it("writes a linear +Infinity vertex at the top guard edge and -Infinity at the bottom one", () => {
+    const up = payloadScene([5, 5, Infinity, 5, 5]);
+    const down = payloadScene([5, 5, -Infinity, 5, 5]);
+    const t = transformOf(up);
+    const upPath = tracePath(exportToSvg(up));
+    const downPath = tracePath(exportToSvg(down));
+    // One unbroken polyline: the infinite sample is a vertex, not a pen lift.
+    for (const d of [upPath, downPath]) {
+      expect(d.match(/M/g)).toHaveLength(1);
+      expect(d.match(/L/g)).toHaveLength(4);
+    }
+    // The edge vertex sits at its own sample's X (sample 2 of x = 0..4 is the plot's midpoint).
+    const midX = Number(f(t.plotLeft + t.plotWidth / 2));
+    expect(pathXs(upPath)[2]).toBe(midX);
+    expect(pathXs(downPath)[2]).toBe(midX);
+    expect(pathYs(upPath)[2]).toBe(Number(f(t.plotTop - GUARD_BAND_PX)));
+    expect(pathYs(downPath)[2]).toBe(Number(f(t.plotTop + t.plotHeight + GUARD_BAND_PX)));
+  });
+
+  it("does not bridge a log zero: two subpaths and no line between them", () => {
+    const d = tracePath(exportToSvg(logScene([10, 0, 100])));
+    expect(d.match(/M/g)?.length).toBe(2);
+    expect(d).not.toContain("L");
+  });
+
+  it("writes a log -Infinity exactly like a log zero", () => {
+    expect(exportToSvg(logScene([10, -Infinity, 100]))).toBe(exportToSvg(logScene([10, 0, 100])));
+  });
+
+  const assertFormattedInsideGuardRectangle = (scenes: readonly ReturnType<typeof payloadScene>[]): void => {
+    const format = vi.mocked(formatSvgNumber);
+    for (const scene of scenes) {
+      format.mockClear();
+      exportToSvg(scene);
+      const t = transformOf(scene);
+      // A marker square is anchored by its corner, half its side beyond the centre it sits on.
+      const low = Math.min(t.plotLeft, t.plotTop) - GUARD_BAND_PX - DEFAULT_FIGURE_STYLE.lineWidthCss;
+      const high = Math.max(t.plotLeft + t.plotWidth, t.plotTop + t.plotHeight) + GUARD_BAND_PX;
+      const inputs = format.mock.calls.map((call) => call[0]);
+      expect(inputs.length).toBeGreaterThan(0);
+      for (const value of inputs) {
+        expect(Number.isFinite(value)).toBe(true);
+        expect(value).toBeGreaterThanOrEqual(low);
+        expect(value).toBeLessThanOrEqual(high);
+      }
+    }
+  };
+
+  it("formats only finite values inside the guard rectangle for infinities and huge values in a path", () => {
+    assertFormattedInsideGuardRectangle([
+      payloadScene([5, Infinity, 5, -Infinity, 5]),
+      payloadScene([5, 1e30, 5, -1e30, 5]),
+      logScene([10, Infinity, 100, -Infinity, 0, -5, 10]),
+    ]);
+  });
+
+  it("formats only finite values inside the guard rectangle for an isolated infinite sample marker", () => {
+    assertFormattedInsideGuardRectangle([
+      payloadScene([NaN, Infinity, NaN, -Infinity, NaN]),
+      payloadScene([NaN, 1e30, NaN]),
+    ]);
   });
 });

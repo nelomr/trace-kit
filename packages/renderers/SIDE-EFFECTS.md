@@ -68,6 +68,7 @@ create GL objects, parse colors and grow scratch buffers, so they are exempt.
 | File | Top-level content | Side effect |
 |---|---|---|
 | `rules/decimation.ts` | a frozen selection literal, functions | none |
+| `rules/guard-band.ts` | one numeric `const` | none |
 | `rules/trace-style.ts` | a frozen empty dash array, one function | none |
 
 ## Font data

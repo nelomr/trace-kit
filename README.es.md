@@ -8,7 +8,7 @@
 [![CI Status](https://github.com/nelomr/trace-kit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nelomr/trace-kit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Status: pre-alpha](https://img.shields.io/badge/Status-pre--alpha-orange.svg?style=flat-square)](#-project-status)
-[![Version: 0.0.0](https://img.shields.io/badge/Version-0.0.0_(unpublished)-lightgrey.svg?style=flat-square)](#-project-status)
+[![Version: pre-1.0](https://img.shields.io/badge/Version-pre--1.0_(unpublished)-lightgrey.svg?style=flat-square)](#-project-status)
 [![PRs - Not accepting yet](https://img.shields.io/badge/PRs-Not_accepting_yet-red.svg?style=flat-square)](CONTRIBUTING.md)
 
 ---
@@ -41,16 +41,15 @@
 >   dependencias obsoletas) que se ejecuta y pasa en `main`.
 >
 > **Lo que todavía no existe:** `packages/vue`, `packages/react`, `apps/docs`, y la
-> conmutación automática de motor. Todos los paquetes siguen sin publicar (`0.0.0`, privados). Los ejemplos
+> conmutación automática de motor. Todos los paquetes siguen sin publicar (versiones patch previas a 1.0, privados). Los ejemplos
 > de Vue/React del inicio rápido de abajo describen una API que todavía no existe; los comandos
 > de instalación no funcionan.
 >
 > El desarrollo sigue Spec-Driven Development; el progreso se registra en
 > [`openspec/roadmap.yaml`](openspec/roadmap.yaml). A fecha de esta revisión, los pasos 1 a
-> **7** del roadmap (`renderers-webgl2` — renderizador WebGL2 sobre canvas apilados) están
-> archivados y completos. Los siguientes pasos previstos son **7.5** (`x-domain-space-reconciliation`),
-> **7.6** (`canvas2d-parity-fixes`) y después **8** (`worker-streaming-transport`), todavía no
-> iniciados.
+> **7.6** del roadmap (`canvas2d-parity-fixes` — recorte en Canvas2D y paridad de ±Infinity y
+> eje logarítmico con SVG y WebGL2) están archivados y completos. El siguiente paso previsto es
+> **8** (`worker-streaming-transport`), todavía no iniciado.
 
 ---
 
@@ -279,10 +278,8 @@ renderer.render();
   decimadores de core en ambos.
 * **El canvas del plot es de un solo uso:** un canvas que ya produjo un contexto `2d` nunca podrá dar
   `webgl2`, y uno liberado ha perdido su contexto. Crea canvas nuevos para cambiar de motor o remontar.
-* **Divergencias registradas respecto a Canvas2D:** el estilo `dash` de una traza se ignora (la línea
-  es continua), las trazas se recortan al rectángulo del plot (Canvas2D no recorta) y una muestra Y de
-  `±Infinity` llega al borde del plot mediante una banda de guarda, mientras que Canvas2D puentea la
-  muestra.
+* **Divergencia registrada respecto a Canvas2D:** el estilo `dash` de una traza se ignora (la línea
+  es continua).
 * La ruta `/engine-parity` del playground dibuja cualquier fixture compartido en ambos motores en
   paralelo, con el conteo de vértices de cada uno.
 

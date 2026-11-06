@@ -7,6 +7,16 @@
 export interface RecordedCall {
   readonly name: string;
   readonly args: readonly unknown[];
+  /** Line dash in effect when a `stroke` was issued; kept off `args`, which tests use to tell
+   * a trace stroke (one path argument) from a gridline or axis stroke. */
+  readonly lineDash?: readonly number[];
+}
+
+interface SavedState {
+  readonly lineDash: readonly number[];
+  readonly strokeStyle: string;
+  readonly lineWidth: number;
+  readonly fillStyle: string;
 }
 
 export class RecordingPath2D {
@@ -39,6 +49,13 @@ export class RecordingContext {
   #textAlign: CanvasTextAlign = "start";
   #textBaseline: CanvasTextBaseline = "alphabetic";
   lineJoin: CanvasLineJoin = "miter";
+  #lineDash: readonly number[] = [];
+  readonly #stack: SavedState[] = [];
+
+  /** The dash currently in effect, as `save`/`restore`/`setLineDash` leave it. */
+  get lineDash(): readonly number[] {
+    return this.#lineDash;
+  }
 
   get fillStyle(): string {
     return this.#fillStyle;
@@ -96,16 +113,48 @@ export class RecordingContext {
     this.calls.push({ name: "lineTo", args: [x, y] });
   }
   stroke(path?: unknown): void {
-    this.calls.push({ name: "stroke", args: path === undefined ? [] : [path] });
+    this.calls.push({
+      name: "stroke",
+      args: path === undefined ? [] : [path],
+      lineDash: this.#lineDash.slice(),
+    });
   }
   fillText(text: string, x: number, y: number): void {
     this.calls.push({ name: "fillText", args: [text, x, y] });
   }
   setLineDash(segments: number[]): void {
+    this.#lineDash = segments.slice();
     this.calls.push({ name: "setLineDash", args: [segments] });
   }
   fill(path?: unknown): void {
     this.calls.push({ name: "fill", args: path === undefined ? [] : [path] });
+  }
+  save(): void {
+    this.#stack.push({
+      lineDash: this.#lineDash,
+      strokeStyle: this.#strokeStyle,
+      lineWidth: this.#lineWidth,
+      fillStyle: this.#fillStyle,
+    });
+    this.calls.push({ name: "save", args: [] });
+  }
+  restore(): void {
+    // Like the DOM, a restore with nothing saved changes nothing, and a real restore reassigns
+    // the state silently: it is not a property write, so it is not recorded as one.
+    const saved = this.#stack.pop();
+    if (saved !== undefined) {
+      this.#lineDash = saved.lineDash;
+      this.#strokeStyle = saved.strokeStyle;
+      this.#lineWidth = saved.lineWidth;
+      this.#fillStyle = saved.fillStyle;
+    }
+    this.calls.push({ name: "restore", args: [] });
+  }
+  rect(x: number, y: number, w: number, h: number): void {
+    this.calls.push({ name: "rect", args: [x, y, w, h] });
+  }
+  clip(): void {
+    this.calls.push({ name: "clip", args: [] });
   }
 }
 

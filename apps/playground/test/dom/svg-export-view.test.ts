@@ -69,6 +69,10 @@ beforeEach(() => {
     setLineDash(): void {},
     fill(): void {},
     fillText(): void {},
+    save(): void {},
+    restore(): void {},
+    rect(): void {},
+    clip(): void {},
   };
   // eslint-disable-next-line no-restricted-syntax -- happy-dom has no 2D canvas backend
   HTMLCanvasElement.prototype.getContext = (() => context) as unknown as typeof originalGetContext;

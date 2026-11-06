@@ -224,7 +224,9 @@ function writeTrace(
   }
 
   if (!trace.style.markIsolatedSamples) return;
-  if (countIsolatedSegments(payload.x, payload.y, indices, decimatedCount, sampleCount) === 0) return;
+  if (countIsolatedSegments(payload.x, payload.y, indices, decimatedCount, sampleCount, t.yScaleKind) === 0) {
+    return;
+  }
   buildIsolatedMarkers(
     new SvgMarkerSink(writer, color),
     t,

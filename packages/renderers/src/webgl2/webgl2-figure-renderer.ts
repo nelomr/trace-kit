@@ -5,10 +5,8 @@
  * paint order (background, grid, trace, axes) with no per-frame GL-to-2D copy. Layout, gridlines,
  * axes, labels, style and decimation rules are the shared ones Canvas2D and the SVG exporter use.
  *
- * Known divergences from Canvas2D, all deliberate: a trace style's `dash` is ignored and the line
- * is drawn solid; traces are scissored to the plot rectangle, where Canvas2D does not clip; a
- * +-Infinity Y sample is clamped through a guard band to the plot edge, where Canvas2D bridges the
- * sample. With no decimation selected the full payload is drawn.
+ * Known divergence from Canvas2D, deliberate: a trace style's `dash` is ignored and the line is
+ * drawn solid. With no decimation selected the full payload is drawn.
  *
  * Construction, `setData`, `setTraces`, `setDomain`, `resize` and `setDecimation` never draw and
  * never touch GL: GPU objects are created on a trace's first upload inside `render()` and the

@@ -148,7 +148,10 @@ device coordinate to that guard band with min/max style operations, and draw the
 trace visibly reaches the plot edge. The guard band's finite bound MUST be at least the plot height
 beyond the plot edge. The handling MUST NOT depend on IEEE infinity or NaN arithmetic in the shader.
 On a log axis, `-Infinity` is non-positive and is collapsed like a gap (see the Y projection
-requirement).
+requirement). The guard band MUST be the shared `GUARD_BAND_PX` constant (`65536`) of the
+backend-neutral rules module (`canvas2d-trace-rendering`), interpolated into the shader source; the
+WebGL2 sources MUST NOT declare their own value. Canvas2D and `exportToSvg` apply the same edge
+mapping and clamp on the CPU, so the three engines place an infinite sample at the same guard edge.
 
 #### Scenario: The classifier does not treat Infinity as a gap
 - **GIVEN**: the CPU reference of the classifier
@@ -159,19 +162,31 @@ requirement).
 - **GIVEN**: a linear-axis payload `[0.5, 0.5, +Infinity, 0.5, 0.5]` with a visible Y domain of
   `[0, 1]`
 - **WHEN**: it is rendered
-- **THEN**: trace-colored pixels exist in the plot's top row band in the column of sample 2, and
-  no trace-colored pixel exists outside the plot rectangle
+- **THEN**: trace-colored pixels exist in the plot's top row band in the columns from `column(1)`
+  to `column(3)` (`column(i)` being the device column of sample `i`; the infinite sample is drawn
+  at the guard edge above its own X, so the two segments meeting there cross the plot's top edge
+  beside samples 1 and 3, and the column of sample 2 itself holds no ink), and no trace-colored
+  pixel exists outside the plot rectangle
+
+#### Scenario: The shader's guard band comes from the shared rules module
+- **GIVEN**: the projection GLSL source constant and the `webgl2/` sources
+- **WHEN**: the source text is inspected
+- **THEN**: the GLSL declares `const float GUARD_BAND_PX = 65536.0;`, `webgl2/shaders.ts` imports
+  `GUARD_BAND_PX` from `src/rules/` (a re-export for existing importers is allowed), and no
+  `webgl2/` file holds a TypeScript declaration of it or the literal `65536`
 
 ### Requirement: Isolated Samples Are Drawn by a Separate Marker Pass
 An isolated segment (the shared definition of `countIsolatedSegments`: a finite segment referencing
-exactly one distinct source index) MUST be painted as an axis-aligned filled square centred on the
+exactly one distinct source index, with the segment breaks of the shared walk, which on a log axis
+include a sample `<= 0`) MUST be painted as an axis-aligned filled square centred on the
 projected sample with side `2 * isolatedMarkerHalfSide(lineWidthCss, dpr)` (that is,
 `2 * lineWidthCss * dpr` device pixels) in the trace's resolved color, matching
 `canvas2d-trace-rendering`. The marker pass MUST be a draw call separate from, and issued after,
 that trace's line pass. It MUST be issued only for a trace whose resolved `markIsolatedSamples` is
 `true` (default `true`; a single payload always marks) and whose isolated-segment count is greater
-than zero. The isolated-segment count MUST be computed with the shared `countIsolatedSegments`
-walk once per upload (cold path), never per frame.
+than zero. The isolated-segment count and the isolated sample indices MUST be computed with the
+shared walk, given the scale kind of the trace's bound axis, once per upload (cold path), never per
+frame. The scale kind is fixed for the life of a trace set, so the upload key is unchanged.
 
 #### Scenario: An isolated sample yields a marker pass of side 2 * lineWidth * dpr
 - **GIVEN**: a trace below any decimation with `y = [NaN, 2, 3, NaN, 5, NaN, 2, 3]`, default style
@@ -195,6 +210,18 @@ walk once per upload (cold path), never per frame.
   60 times
 - **WHEN**: all 60 `render()` calls complete
 - **THEN**: the spy was called exactly once
+
+#### Scenario: Samples isolated by log non-positive neighbours get markers
+- **GIVEN**: a payload `y = [10, 0, 100]` on a log axis with domain `[1, 1000]`, on the recording
+  fake GL
+- **WHEN**: `render()` is called
+- **THEN**: exactly one marker-pass draw call with an instance count of `2` is recorded, and the
+  uploaded marker Y values are `10` and `100`
+
+#### Scenario: The same payload on a linear axis gets no marker
+- **GIVEN**: `y = [10, 0, 100]` on a linear axis
+- **WHEN**: `render()` is called on the recording fake GL
+- **THEN**: no marker-pass draw call is recorded
 
 ### Requirement: The Default Path Draws the Full Payload With No CPU Decimation
 When no `DecimationSelection` is in effect, `WebGL2FigureRenderer` MUST draw every sample in
@@ -344,9 +371,10 @@ The vertex shader MUST project Y with the same formulas as `projectY`: on a line
 `plotWidth`, `plotHeight`, `deviceWidth`, `deviceHeight`) MUST be taken from the trace's
 `ViewportTransform` as produced by the shared `FigureLayout`, never recomputed independently. A
 sample with `y <= 0` on a log axis MUST be treated as unrepresentable: the segment is collapsed
-like a gap (this mirrors `scale-logarithmic-transform`, where such a sample projects to a
-non-finite coordinate that `Path2D` consumers skip). The `y <= 0` test MUST use a comparison, not
-NaN detection.
+like a gap. `projectY` returns a non-finite coordinate for such a sample
+(`scale-logarithmic-transform`); Canvas2D and `exportToSvg` lift the pen at it in the shared path
+walker (`canvas2d-trace-rendering`, "A Non-Positive Sample on a Log Axis Lifts the Pen"), so no
+engine bridges it. The `y <= 0` test MUST use a comparison, not NaN detection.
 
 #### Scenario: Uniforms equal the transform fields on a log axis
 - **GIVEN**: a payload bound to a log axis (`yDomainMin = 1`, `yDomainMax = 1000`)
@@ -365,6 +393,7 @@ NaN detection.
 - **GIVEN**: a log-axis trace `[10, 0, 100]`
 - **WHEN**: `render()` runs in a real browser
 - **THEN**: neither the segment from index 0 to 1 nor from 1 to 2 paints a trace-colored pixel
+  in the columns strictly between the samples, away from their markers
 
 ### Requirement: Multi-Trace Collections Draw With Per-Trace Style, Axis and Origin, in Collection Order
 `setTraces(collection)` MUST be supported with the same semantics as Canvas2D: per-trace axis
@@ -424,8 +453,10 @@ applies `setLineDash`) MUST be recorded in the `WebGL2FigureRenderer` documentat
 The line and marker passes MUST be confined to the plot rectangle (`plotLeft`, `plotTop`,
 `plotWidth`, `plotHeight` of the trace's transform) by `scissor` with `SCISSOR_TEST` enabled, so
 that samples outside the visible X/Y window never paint the axis gutters. This matches the
-exported SVG (`clipPath` over the plot area) and is a deliberate difference from Canvas2D, which
-does not clip.
+exported SVG (`clipPath` over the plot area) and Canvas2D (a context clip to the same rectangle,
+`canvas2d-trace-rendering`). The scissor rectangle is widened to whole device pixels, while SVG and
+Canvas2D clip to the exact rectangle; the two differ by less than one device pixel, and only at a
+fractional `dpr`.
 
 #### Scenario: The scissor equals the plot rectangle in device pixels
 - **GIVEN**: a renderer resized to `800 x 600` CSS pixels at `dpr = 2`

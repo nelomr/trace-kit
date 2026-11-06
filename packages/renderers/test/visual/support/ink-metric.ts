@@ -266,3 +266,77 @@ export function outsideRectDifferences(a: Pixels, b: Pixels, rect: Rect, margin:
   }
   return differing;
 }
+
+/**
+ * Pixels outside the plot rectangle grown by `margin` on every side that lie outside every rect of
+ * `masks` and whose max-channel distance from some colour of `traceColors` is at most `inkDelta`.
+ *
+ * The plot edges are rounded outward (the layout's edges may be fractional), so a pixel the stroke
+ * of a correctly clipped trace could touch is never counted. Masks are the tick-label ink boxes,
+ * the only content outside the plot that can be anti-aliased into a colour near a trace's.
+ */
+export function outOfPlotTraceInk(
+  pixels: Pixels,
+  plot: PlotGeometry,
+  margin: number,
+  traceColors: readonly Rgb[],
+  masks: readonly Rect[],
+  inkDelta: number,
+): number {
+  const left = Math.floor(plot.plotLeft) - margin;
+  const top = Math.floor(plot.plotTop) - margin;
+  const right = Math.ceil(plot.plotLeft + plot.plotWidth) + margin;
+  const bottom = Math.ceil(plot.plotTop + plot.plotHeight) + margin;
+  let count = 0;
+  for (let y = 0; y < pixels.height; y += 1) {
+    const insideRows = y >= top && y < bottom;
+    for (let x = 0; x < pixels.width; x += 1) {
+      if (insideRows && x >= left && x < right) continue;
+      if (isMasked(masks, x, y)) continue;
+      const offset = (y * pixels.width + x) * 4;
+      for (const color of traceColors) {
+        if (channelDistance(pixels.data, offset, color) <= inkDelta) {
+          count += 1;
+          break;
+        }
+      }
+    }
+  }
+  return count;
+}
+
+function isMasked(masks: readonly Rect[], x: number, y: number): boolean {
+  for (const mask of masks) {
+    if (x >= mask.left && x < mask.left + mask.width && y >= mask.top && y < mask.top + mask.height) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Pixels of `rect` whose max-channel distance from some colour of `traceColors` is at most
+ * `inkDelta`. Unlike `inkLabels`, which attributes every pixel that is not background or grid to
+ * its nearest trace colour, this counts only pixels that really are (nearly) that colour: an axis
+ * line, a half-covered stroke edge or a label fringe is not trace ink.
+ */
+export function traceInkInRect(
+  pixels: Pixels,
+  rect: Rect,
+  traceColors: readonly Rgb[],
+  inkDelta: number,
+): number {
+  let count = 0;
+  for (let y = rect.top; y < rect.top + rect.height; y += 1) {
+    for (let x = rect.left; x < rect.left + rect.width; x += 1) {
+      const offset = (y * pixels.width + x) * 4;
+      for (const color of traceColors) {
+        if (channelDistance(pixels.data, offset, color) <= inkDelta) {
+          count += 1;
+          break;
+        }
+      }
+    }
+  }
+  return count;
+}

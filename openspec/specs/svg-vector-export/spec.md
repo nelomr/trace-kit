@@ -8,6 +8,13 @@
 > comparison by `svg-golden-corpus`; shared decimation/style/marker rules by the MODIFIED
 > `canvas2d-trace-rendering` delta.
 
+## Notation
+
+`G` is `GUARD_BAND_PX` (`65536`) from the shared rules module, here in CSS px (the transform's unit
+at `dpr = 1`). The guard rectangle, the edge mapping and the log pen-lift are those defined by the
+`canvas2d-trace-rendering` capability, applied by the shared `buildTracePath` and
+isolated-segment walk that `exportToSvg` already uses.
+
 ## ADDED Requirements
 
 ### Requirement: `exportToSvg` Is a Pure Function Returning a Standalone SVG Document String
@@ -455,3 +462,67 @@ produce the same document as it did when the domain was taken as offsets.
 - **GIVEN**: the committed `svg-golden-corpus` fixtures
 - **WHEN**: each is exported and compared with its golden
 - **THEN**: every document equals its golden byte for byte
+
+### Requirement: Trace Paths and Markers Use the Shared Edge Mapping, Guard-Band Clamp and Log Pen-Lift
+Every trace `<path>` and every marker `<rect>` MUST be built through the shared `buildTracePath` and
+isolated-segment walk, and therefore MUST follow the rules of the `canvas2d-trace-rendering`
+requirements "±Infinity Samples Reach the Plot Edge and Every Projected Coordinate Is Clamped to the
+Guard Band" and "A Non-Positive Sample on a Log Axis Lifts the Pen", evaluated on the trace's CSS-px
+transform:
+
+- a `+Infinity` sample is emitted at `plotTop - G` when the axis scale is `>= 0` and at
+  `plotTop + plotHeight + G` otherwise, and a linear-axis `-Infinity` at the opposite edge;
+- every other emitted coordinate is the projection clamped to the guard rectangle;
+- on a log axis a sample `<= 0` (including `-Infinity`) ends the current subpath like a `NaN`: no
+  `L` connects across it, and the next drawable sample starts with `M`.
+
+No non-finite coordinate MAY reach `formatSvgNumber` from a trace path or a marker: the `"0"`
+fallback of the formatter MUST NOT be what places any trace vertex or marker. Because `G` is far
+below the formatter's `1e9` magnitude clamp, every emitted coordinate is the formatted clamped value
+itself. Documents whose input has no `±Infinity`, no log non-positive sample and no projected
+coordinate outside the guard rectangle MUST be byte-identical to the documents produced before
+this change.
+
+#### Scenario: +Infinity is emitted at the top guard edge
+- **GIVEN**: a bare payload `y = [0.5, 0.5, +Infinity, 0.5, 0.5]`, `x = [0, 1, 2, 3, 4]`,
+  `xOrigin 0`, domain `[0, 4] x [0, 1]`, and the scene's plot area `(plotLeft, plotTop,
+  plotWidth, plotHeight)` from `figure-scene-layout`
+- **WHEN**: it is exported
+- **THEN**: the trace's `d` attribute has exactly one `M` and four `L` commands, and the third
+  point is `L<formatSvgNumber(plotLeft + plotWidth / 2)> <formatSvgNumber(plotTop - 65536)>`
+  (`-65536` under the current layout, where `plotTop` is `0`)
+
+#### Scenario: -Infinity on a linear axis goes down, not to the document top
+- **GIVEN**: the same scene with `y[2] = -Infinity`
+- **WHEN**: it is exported
+- **THEN**: the third point's Y is `formatSvgNumber(plotTop + plotHeight + 65536)`, not the `0`
+  that the formatter's non-finite fallback wrote before this change
+
+#### Scenario: A log non-positive sample splits the path
+- **GIVEN**: a bare payload `y = [10, 0, 100]` on a log axis with domain `[1, 1000]` and X domain
+  `[0, 2]`, markers enabled, `lineWidthCss = 1`
+- **WHEN**: it is exported
+- **THEN**: the trace's `d` attribute is exactly `M<x0> <y0> M<x2> <y2>` with no `L`, where `x0`,
+  `y0`, `x2`, `y2` are the formatted projections of samples `0` and `2`, and two marker `<rect>`
+  elements of `width="2"` and `height="2"` are centred on those two points
+
+#### Scenario: -Infinity on a log axis splits the path instead of reaching an edge
+- **GIVEN**: the log scene above with `y = [10, -Infinity, 100]`
+- **WHEN**: it is exported
+- **THEN**: the document is byte-identical to the one exported for `y = [10, 0, 100]`
+
+#### Scenario: No trace coordinate is produced by the non-finite fallback
+- **GIVEN**: scenes containing `±Infinity` on linear, inverted-linear and log axes, log
+  non-positive samples, and finite samples with `|y| = 1e30`
+- **WHEN**: each is exported with `formatSvgNumber` instrumented to record its inputs
+- **THEN**: every value it receives while writing trace paths and marker rects is finite and lies
+  inside the guard rectangle of the trace's transform, and no document contains `NaN` or
+  `Infinity`
+
+#### Scenario: The committed SVG goldens do not move
+- **GIVEN**: the committed `test/svg-goldens/*.svg` corpus (no fixture contains `±Infinity`, a log
+  non-positive value, or a coordinate beyond the guard rectangle; the largest off-plot coordinate is
+  `resonance-peak` at about `-2221` CSS px)
+- **WHEN**: `pnpm --filter @trace-kit/renderers test` runs without `TRACEKIT_UPDATE_SVG_GOLDENS`
+- **THEN**: the `svg-golden` test passes and `git status --porcelain` lists nothing under
+  `packages/renderers/test/svg-goldens/`

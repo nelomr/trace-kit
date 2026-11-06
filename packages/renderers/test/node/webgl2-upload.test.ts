@@ -4,11 +4,13 @@ import {
   asYBuffer,
   commitPayloadRevision,
   createSpectrumDataPayload,
+  Y_SCALE_KIND_LINEAR,
+  Y_SCALE_KIND_LOG,
   type DecimationSelection,
   type SpectrumDataPayload,
 } from "@trace-kit/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { collectIsolatedSampleIndices } from "../../src/path/isolated-markers.js";
+import { collectIsolatedSampleIndices, countIsolatedSegments } from "../../src/path/isolated-markers.js";
 import { decimateTraceIndices, resolveDecimationTarget } from "../../src/rules/decimation.js";
 import { GL_ARRAY_BUFFER, GL_DYNAMIC_DRAW, GL_FLOAT } from "../../src/webgl2/gl-context.js";
 import { createTraceSlot, releaseTraceSlot } from "../../src/webgl2/trace-slot.js";
@@ -37,6 +39,13 @@ vi.mock("@trace-kit/core", async (importOriginal) => {
   };
 });
 
+// Pass-through spy on the shared isolated-sample count: records the axis kind of every call while
+// keeping the real walk, so a test can pin how often and with which kind the upload counts.
+vi.mock("../../src/path/isolated-markers.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/path/isolated-markers.js")>();
+  return { ...actual, countIsolatedSegments: vi.fn(actual.countIsolatedSegments) };
+});
+
 function makePayload(n: number, fill?: (i: number) => number): SpectrumDataPayload {
   const payload = createSpectrumDataPayload({ capacity: Math.max(1, n), xOrigin: 0, xUnit: "nm", yUnit: "dBm" });
   for (let i = 0; i < n; i += 1) {
@@ -60,13 +69,14 @@ beforeEach(() => {
   decimatorCalls.lttb = 0;
   decimatorCalls.minMax = 0;
   decimatorCalls.minMaxEnvelope = 0;
+  vi.mocked(countIsolatedSegments).mockClear();
 });
 
 describe("full-resolution upload", () => {
   it("uploads x and y once per revision through the srcOffset/length overload, with no copy", () => {
     const payload = makePayload(1000);
     const slot = createTraceSlot();
-    ensureTraceUploaded(gl, slot, payload, 800, null, false);
+    ensureTraceUploaded(gl, slot, payload, 800, null, false, Y_SCALE_KIND_LINEAR);
 
     const uploads = gl.bufferUploads();
     expect(uploads).toHaveLength(2);
@@ -85,18 +95,18 @@ describe("full-resolution upload", () => {
   it("uploads once for sixty identical renders and again after a revision bump", () => {
     const payload = makePayload(500);
     const slot = createTraceSlot();
-    for (let i = 0; i < 60; i += 1) ensureTraceUploaded(gl, slot, payload, 800, null, false);
+    for (let i = 0; i < 60; i += 1) ensureTraceUploaded(gl, slot, payload, 800, null, false, Y_SCALE_KIND_LINEAR);
     expect(gl.bufferUploads()).toHaveLength(2);
 
     bump(payload, 500);
-    ensureTraceUploaded(gl, slot, payload, 800, null, false);
+    ensureTraceUploaded(gl, slot, payload, 800, null, false, Y_SCALE_KIND_LINEAR);
     expect(gl.bufferUploads()).toHaveLength(4);
   });
 
   it("skips the upload entirely for an empty payload, creating nothing", () => {
     const payload = makePayload(0);
     const slot = createTraceSlot();
-    ensureTraceUploaded(gl, slot, payload, 800, null, true);
+    ensureTraceUploaded(gl, slot, payload, 800, null, true, Y_SCALE_KIND_LINEAR);
 
     expect(gl.bufferUploads()).toHaveLength(0);
     expect(gl.created.buffer).toBe(0);
@@ -107,7 +117,7 @@ describe("full-resolution upload", () => {
   it("uploads NaN gap samples exactly as stored", () => {
     const payload = makePayload(20, (i) => (i % 5 === 2 ? NaN : i));
     const slot = createTraceSlot();
-    ensureTraceUploaded(gl, slot, payload, 800, null, false);
+    ensureTraceUploaded(gl, slot, payload, 800, null, false, Y_SCALE_KIND_LINEAR);
 
     const snapshot = gl.bufferUploads()[1]?.snapshot;
     expect(snapshot).toHaveLength(20);
@@ -119,7 +129,7 @@ describe("full-resolution upload", () => {
   it("invokes no decimator on a one-million-sample default path", () => {
     const payload = makePayload(1_000_000, (i) => i % 1000);
     const slot = createTraceSlot();
-    ensureTraceUploaded(gl, slot, payload, 800, null, false);
+    ensureTraceUploaded(gl, slot, payload, 800, null, false, Y_SCALE_KIND_LINEAR);
 
     expect(decimatorCalls).toEqual({ lttb: 0, minMax: 0, minMaxEnvelope: 0 });
     expect(gl.bufferUploads()[0]?.length).toBe(1_000_000);
@@ -133,7 +143,7 @@ describe("full-resolution upload", () => {
     sharedY.set(base.y.subarray(0, 64));
     const payload: SpectrumDataPayload = { ...base, x: asXBuffer(shared), y: asYBuffer(sharedY) };
     const slot = createTraceSlot();
-    ensureTraceUploaded(gl, slot, payload, 800, null, false);
+    ensureTraceUploaded(gl, slot, payload, 800, null, false, Y_SCALE_KIND_LINEAR);
 
     expect(gl.bufferUploads()[0]?.data).toBe(shared);
     expect(gl.bufferUploads()[1]?.data).toBe(sharedY);
@@ -145,7 +155,7 @@ describe("GPU object layout", () => {
     const payload = makePayload(100);
     const slot = createTraceSlot();
     expect(gl.created.buffer).toBe(0);
-    ensureTraceUploaded(gl, slot, payload, 800, null, false);
+    ensureTraceUploaded(gl, slot, payload, 800, null, false, Y_SCALE_KIND_LINEAR);
 
     expect(gl.created.buffer).toBe(2);
     expect(gl.created.vertexArray).toBe(1);
@@ -167,9 +177,9 @@ describe("GPU object layout", () => {
   it("creates the GPU objects once and releases every one of them", () => {
     const payload = makePayload(100, (i) => (i === 50 ? NaN : i % 2));
     const slot = createTraceSlot();
-    ensureTraceUploaded(gl, slot, payload, 800, null, true);
+    ensureTraceUploaded(gl, slot, payload, 800, null, true, Y_SCALE_KIND_LINEAR);
     bump(payload, 100);
-    ensureTraceUploaded(gl, slot, payload, 800, null, true);
+    ensureTraceUploaded(gl, slot, payload, 800, null, true, Y_SCALE_KIND_LINEAR);
     const createdBefore = { ...gl.created };
 
     releaseTraceSlot(gl, slot);
@@ -202,7 +212,7 @@ describe("explicit decimation selection", () => {
     it(`uploads the ${label} stream Canvas2D would draw, with -1 mapped to NaN`, () => {
       const payload = makePayload(5000, (i) => (i % 700 === 350 ? NaN : Math.sin(i / 11) * 5));
       const slot = createTraceSlot();
-      ensureTraceUploaded(gl, slot, payload, 800, selection, false);
+      ensureTraceUploaded(gl, slot, payload, 800, selection, false, Y_SCALE_KIND_LINEAR);
 
       const expected = expectedGather(payload, selection, 800);
       const [ux, uy] = gl.bufferUploads();
@@ -219,13 +229,13 @@ describe("explicit decimation selection", () => {
   it("bypasses to the full payload when the sample count does not exceed the emitted count", () => {
     const payload = makePayload(100);
     const slot = createTraceSlot();
-    ensureTraceUploaded(gl, slot, payload, 800, { algorithm: "lttb", threshold: 100 }, false);
+    ensureTraceUploaded(gl, slot, payload, 800, { algorithm: "lttb", threshold: 100 }, false, Y_SCALE_KIND_LINEAR);
     expect(gl.bufferUploads()[0]?.data).toBe(payload.x);
     expect(decimatorCalls.lttb).toBe(0);
 
     const second = makePayload(40);
     const secondSlot = createTraceSlot();
-    ensureTraceUploaded(gl, secondSlot, second, 800, { algorithm: "min-max", bucketCount: 20 }, false);
+    ensureTraceUploaded(gl, secondSlot, second, 800, { algorithm: "min-max", bucketCount: 20 }, false, Y_SCALE_KIND_LINEAR);
     expect(gl.bufferUploads()[2]?.data).toBe(second.x);
     expect(decimatorCalls.minMax).toBe(0);
   });
@@ -235,36 +245,36 @@ describe("explicit decimation selection", () => {
     const slot = createTraceSlot();
     const uploads = () => gl.bufferUploads().length;
 
-    ensureTraceUploaded(gl, slot, payload, 400, { algorithm: "lttb" }, false);
+    ensureTraceUploaded(gl, slot, payload, 400, { algorithm: "lttb" }, false, Y_SCALE_KIND_LINEAR);
     const first = uploads();
-    ensureTraceUploaded(gl, slot, payload, 400, { algorithm: "lttb" }, false);
+    ensureTraceUploaded(gl, slot, payload, 400, { algorithm: "lttb" }, false, Y_SCALE_KIND_LINEAR);
     expect(uploads()).toBe(first);
 
-    ensureTraceUploaded(gl, slot, payload, 800, { algorithm: "lttb" }, false);
+    ensureTraceUploaded(gl, slot, payload, 800, { algorithm: "lttb" }, false, Y_SCALE_KIND_LINEAR);
     expect(uploads()).toBeGreaterThan(first);
 
     const afterResize = uploads();
-    ensureTraceUploaded(gl, slot, payload, 800, { algorithm: "min-max" }, false);
+    ensureTraceUploaded(gl, slot, payload, 800, { algorithm: "min-max" }, false, Y_SCALE_KIND_LINEAR);
     expect(uploads()).toBeGreaterThan(afterResize);
 
     const afterAlgorithm = uploads();
-    ensureTraceUploaded(gl, slot, payload, 800, null, false);
+    ensureTraceUploaded(gl, slot, payload, 800, null, false, Y_SCALE_KIND_LINEAR);
     expect(uploads()).toBeGreaterThan(afterAlgorithm);
   });
 
   it("runs the selected decimator once per key and never on a repeat render", () => {
     const payload = makePayload(20_000);
     const slot = createTraceSlot();
-    for (let i = 0; i < 10; i += 1) ensureTraceUploaded(gl, slot, payload, 400, LTTB_100, false);
+    for (let i = 0; i < 10; i += 1) ensureTraceUploaded(gl, slot, payload, 400, LTTB_100, false, Y_SCALE_KIND_LINEAR);
     expect(decimatorCalls.lttb).toBe(1);
   });
 
   it("grows its scratch buffers and index buffer and never shrinks them", () => {
     const payload = makePayload(20_000);
     const slot = createTraceSlot();
-    ensureTraceUploaded(gl, slot, payload, 800, { algorithm: "lttb", threshold: 1000 }, false);
+    ensureTraceUploaded(gl, slot, payload, 800, { algorithm: "lttb", threshold: 1000 }, false, Y_SCALE_KIND_LINEAR);
     const sizes = [slot.scratchX.length, slot.scratchY.length, slot.indices.length];
-    ensureTraceUploaded(gl, slot, payload, 800, { algorithm: "lttb", threshold: 100 }, false);
+    ensureTraceUploaded(gl, slot, payload, 800, { algorithm: "lttb", threshold: 100 }, false, Y_SCALE_KIND_LINEAR);
     expect(slot.scratchX.length).toBeGreaterThanOrEqual(sizes[0] ?? 0);
     expect(slot.scratchY.length).toBeGreaterThanOrEqual(sizes[1] ?? 0);
     expect(slot.indices.length).toBeGreaterThanOrEqual(sizes[2] ?? 0);
@@ -279,10 +289,10 @@ describe("isolated-sample marker upload", () => {
   it("gathers marker positions from the isolated source samples, only when there are any", () => {
     const payload = makePayload(10, pattern);
     const slot = createTraceSlot();
-    ensureTraceUploaded(gl, slot, payload, 800, null, true);
+    ensureTraceUploaded(gl, slot, payload, 800, null, true, Y_SCALE_KIND_LINEAR);
 
     const expected = new Int32Array(10);
-    const count = collectIsolatedSampleIndices(payload.x, payload.y, new Int32Array(0), 0, 10, expected);
+    const count = collectIsolatedSampleIndices(payload.x, payload.y, new Int32Array(0), 0, 10, Y_SCALE_KIND_LINEAR, expected);
     expect(count).toBe(2);
     expect(slot.markerCount).toBe(2);
     const uploads = gl.bufferUploads();
@@ -296,13 +306,13 @@ describe("isolated-sample marker upload", () => {
   it("creates no marker objects for a gap-free trace or when the style opts out", () => {
     const smooth = makePayload(50);
     const slot = createTraceSlot();
-    ensureTraceUploaded(gl, slot, smooth, 800, null, true);
+    ensureTraceUploaded(gl, slot, smooth, 800, null, true, Y_SCALE_KIND_LINEAR);
     expect(slot.markerCount).toBe(0);
     expect(gl.created.buffer).toBe(2);
 
     const gapped = makePayload(10, pattern);
     const optedOut = createTraceSlot();
-    ensureTraceUploaded(gl, optedOut, gapped, 800, null, false);
+    ensureTraceUploaded(gl, optedOut, gapped, 800, null, false, Y_SCALE_KIND_LINEAR);
     expect(optedOut.markerCount).toBe(0);
     expect(gl.created.buffer).toBe(4);
   });
@@ -310,7 +320,63 @@ describe("isolated-sample marker upload", () => {
   it("recounts isolated samples once per key change, not per render", () => {
     const payload = makePayload(10, pattern);
     const slot = createTraceSlot();
-    for (let i = 0; i < 20; i += 1) ensureTraceUploaded(gl, slot, payload, 800, null, true);
+    for (let i = 0; i < 20; i += 1) ensureTraceUploaded(gl, slot, payload, 800, null, true, Y_SCALE_KIND_LINEAR);
     expect(gl.bufferUploads()).toHaveLength(4);
+  });
+});
+
+describe("isolated-sample marker upload by axis kind", () => {
+  // Sample 1 is a log zero: on a log axis it lifts the pen, isolating samples 0 and 2.
+  const logGap = (i: number): number => [10, 0, 100][i] ?? NaN;
+
+  it("uploads the two samples a log zero isolates, and none on a linear axis", () => {
+    const logSlot = createTraceSlot();
+    ensureTraceUploaded(gl, logSlot, makePayload(3, logGap), 800, null, true, Y_SCALE_KIND_LOG);
+    expect(logSlot.markerCount).toBe(2);
+    const uploads = gl.bufferUploads();
+    expect(uploads).toHaveLength(4);
+    expect(Array.from(uploads[2]?.snapshot ?? [])).toEqual([0, 2]);
+    expect(Array.from(uploads[3]?.snapshot ?? [])).toEqual([10, 100]);
+
+    const linearSlot = createTraceSlot();
+    ensureTraceUploaded(gl, linearSlot, makePayload(3, logGap), 800, null, true, Y_SCALE_KIND_LINEAR);
+    expect(linearSlot.markerCount).toBe(0);
+    expect(gl.bufferUploads()).toHaveLength(6);
+  });
+
+  it("counts once per upload with the trace's axis kind, and not on an unchanged render", () => {
+    const payload = makePayload(3, logGap);
+    const slot = createTraceSlot();
+    for (let i = 0; i < 30; i += 1) ensureTraceUploaded(gl, slot, payload, 800, null, true, Y_SCALE_KIND_LOG);
+    const calls = vi.mocked(countIsolatedSegments).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[5]).toBe(Y_SCALE_KIND_LOG);
+
+    bump(payload, 3);
+    ensureTraceUploaded(gl, slot, payload, 800, null, true, Y_SCALE_KIND_LOG);
+    expect(vi.mocked(countIsolatedSegments).mock.calls).toHaveLength(2);
+  });
+
+  it("counts and collects with the trace's axis kind in a decimated stream", () => {
+    // Alternating positive samples and log zeros: on a log axis the zeros lift the pen, so the
+    // upload must find isolated samples in the decimated stream and agree with an independent walk.
+    const payload = makePayload(5000, (i) => (i % 2 === 0 ? 10 + (i % 7) : 0));
+    const slot = createTraceSlot();
+    ensureTraceUploaded(gl, slot, payload, 800, LTTB_100, true, Y_SCALE_KIND_LOG);
+
+    expect(vi.mocked(countIsolatedSegments).mock.calls).toHaveLength(1);
+    expect(vi.mocked(countIsolatedSegments).mock.calls[0]?.[5]).toBe(Y_SCALE_KIND_LOG);
+    const out = new Int32Array(slot.vertexCount);
+    const expected = collectIsolatedSampleIndices(
+      payload.x,
+      payload.y,
+      slot.indices,
+      slot.vertexCount,
+      5000,
+      Y_SCALE_KIND_LOG,
+      out,
+    );
+    expect(expected).toBeGreaterThan(0);
+    expect(slot.markerCount).toBe(expected);
   });
 });

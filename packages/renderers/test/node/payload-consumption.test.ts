@@ -62,6 +62,10 @@ describe("renderer payload consumption (renderers never construct, mutate, or tr
       lineTo(): void;
       stroke(): void;
       fillText(): void;
+      save(): void;
+      restore(): void;
+      rect(): void;
+      clip(): void;
     } = {
       calls: [],
       fillStyle: "",
@@ -91,6 +95,10 @@ describe("renderer payload consumption (renderers never construct, mutate, or tr
       fillText(): void {
         this.calls.push("fillText");
       },
+      save(): void {},
+      restore(): void {},
+      rect(): void {},
+      clip(): void {},
     };
     const canvas = { getContext: () => context };
     // eslint-disable-next-line no-restricted-syntax -- test double for a DOM host unavailable under `node`

@@ -20,17 +20,24 @@ function render(fixture: ScenarioFixture): Harness {
   return h;
 }
 
+/** The scale kind of the axis a trace is drawn against: the named axis, else the first one. */
+function axisKindOf(fixture: ScenarioFixture, yAxisId?: string): number {
+  const axis = fixture.yAxes?.find((a) => yAxisId === undefined || a.id === yAxisId);
+  return axis?.scaleKind ?? Y_SCALE_KIND_LINEAR;
+}
+
 function expectedMarkerPasses(fixture: ScenarioFixture): number {
   const empty = new Int32Array(0);
   if (fixture.kind === "payload") {
     const p = fixture.payload;
-    return countIsolatedSegments(p.x, p.y, empty, 0, p.sampleCount) > 0 ? 1 : 0;
+    return countIsolatedSegments(p.x, p.y, empty, 0, p.sampleCount, axisKindOf(fixture)) > 0 ? 1 : 0;
   }
   let passes = 0;
   for (const entry of fixture.collection.entries) {
     const p = entry.payload;
     const marks = entry.style.markIsolatedSamples ?? true;
-    if (marks && countIsolatedSegments(p.x, p.y, empty, 0, p.sampleCount) > 0) passes += 1;
+    const kind = axisKindOf(fixture, entry.yAxisId);
+    if (marks && countIsolatedSegments(p.x, p.y, empty, 0, p.sampleCount, kind) > 0) passes += 1;
   }
   return passes;
 }

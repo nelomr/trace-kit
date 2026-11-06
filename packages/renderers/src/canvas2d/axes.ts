@@ -1,9 +1,11 @@
 /**
  * Paint routines for the axes and grid of `Canvas2DRenderer`, wired into `render()` in the fixed
- * order background fill -> `drawGrid` -> trace stroke -> `drawAxes`. Everything that is computed
- * rather than painted (plot-area insets, tick values, label strings) lives in `../layout/` and is
- * shared with the SVG exporter; the symbols below are re-exported only so existing imports keep
- * resolving.
+ * order background fill -> `drawGrid` -> trace section clipped to the plot rectangle -> `drawAxes`.
+ * The clip ends before the axes are painted: their lines and labels sit in the gutters outside
+ * the plot rectangle, and a payload extending past the visible window must not reach them.
+ * Everything that is computed rather than painted (plot-area insets, tick values, label strings)
+ * lives in `../layout/` and is shared with the SVG exporter; the symbols below are re-exported
+ * only so existing imports keep resolving.
  */
 import { projectY, type ViewportTransform } from "@trace-kit/core";
 import type { AxisLayout, FigureStyle } from "../style.js";

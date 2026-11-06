@@ -33,6 +33,10 @@ function typeLevelFixture(): void {
     fillText(): void {},
     setLineDash(): void {},
     fill(): void {},
+    save(): void {},
+    restore(): void {},
+    rect(): void {},
+    clip(): void {},
   };
   void s1;
   void s2;
