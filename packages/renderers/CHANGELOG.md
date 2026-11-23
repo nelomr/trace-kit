@@ -1,5 +1,12 @@
 # @trace-kit/renderers
 
+## 0.0.8
+
+### Patch Changes
+
+- Updated dependencies [[`c764e9c`](https://github.com/nelomr/trace-kit/commit/c764e9cc427367a52353e441637b3910fa0b7d61)]:
+  - @trace-kit/core@0.0.12
+
 ## 0.0.7
 
 ### Patch Changes
