@@ -84,6 +84,27 @@ describe("no banned allocation construct inside submit/poll/readStats", () => {
     return text.slice(braceStart, i + 1);
   }
 
+  function extractFunctionBody(text: string, fnName: string): string {
+    const signaturePattern = new RegExp(`function\\s+${fnName}\\s*\\([\\s\\S]*?\\)[^{]*\\{`);
+    const match = signaturePattern.exec(text);
+    expect(match, `expected to find function ${fnName}`).not.toBeNull();
+    const braceStart = text.indexOf("{", match!.index);
+    let depth = 0;
+    let i = braceStart;
+    for (; i < text.length; i += 1) {
+      if (text[i] === "{") depth += 1;
+      else if (text[i] === "}") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    return text.slice(braceStart, i + 1);
+  }
+
+  function stripComments(text: string): string {
+    return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  }
+
   function countBannedConstructs(text: string): number {
     const patterns = [
       /\{\s*[a-zA-Z_]+\s*:/g, // object literal
@@ -98,12 +119,69 @@ describe("no banned allocation construct inside submit/poll/readStats", () => {
   const VIOLATION_FIXTURE =
     "submit(lease) { const obj = { a: 1 }; const s = obj.field.subarray(0, 1); return { ...obj, s }; }";
 
-  it("reports zero banned constructs across submit/poll/readStats; the gate is proven live", () => {
+  it("reports zero banned constructs across buffer-pool submit/poll/readStats; the gate is proven live", () => {
     let total = 0;
     for (const name of hotPathMethods) {
       total += countBannedConstructs(extractMethodBody(source, name));
     }
     expect(total).toBe(0);
     expect(countBannedConstructs(VIOLATION_FIXTURE)).toBeGreaterThan(0);
+  });
+
+  it("reports zero banned constructs across worker-port submit/poll and sab-channel enqueue/drain hot paths", () => {
+    const workerPortSource = readFileSync(path.join(transportDir, "worker-port.ts"), "utf8");
+    const sabChannelSource = readFileSync(path.join(transportDir, "sab-channel.ts"), "utf8");
+
+    const workerHotMethods = ["submit", "poll"];
+    for (const name of workerHotMethods) {
+      const body = stripComments(extractMethodBody(workerPortSource, name));
+      expect(countBannedConstructs(body), `worker-port.ts:${name}`).toBe(0);
+    }
+
+    const sabHotFunctions = ["enqueueSabJob", "drainSabResponses", "drainSabRequests"];
+    for (const name of sabHotFunctions) {
+      const body = stripComments(extractFunctionBody(sabChannelSource, name));
+      expect(countBannedConstructs(body), `sab-channel.ts:${name}`).toBe(0);
+    }
+
+    const drainViolation =
+      "function drainSabResponses(ch) { const res = { lease: 1 }; return ch.ctrl.subarray(0, 1); }";
+    expect(countBannedConstructs(drainViolation)).toBeGreaterThan(0);
+  });
+
+  it("asserts zero Atomics.wait references in host-side transport modules and host SAB functions", () => {
+    const hostModules = [
+      "worker-port.ts",
+      "buffer-pool.ts",
+      "sync-port.ts",
+      "capabilities.ts",
+      "ownership.ts",
+      "backpressure.ts",
+      "decimation-port.ts",
+      "streaming-contract.ts",
+      "materialize.ts",
+      "worker-channel.ts",
+    ];
+    for (const fileName of hostModules) {
+      const code = stripComments(readFileSync(path.join(transportDir, fileName), "utf8"));
+      expect(/\bAtomics\.wait\b/.test(code), `${fileName} must not call Atomics.wait`).toBe(false);
+    }
+
+    const sabChannelSource = readFileSync(path.join(transportDir, "sab-channel.ts"), "utf8");
+    const hostSabFunctions = [
+      "createSabChannel",
+      "enqueueSabJob",
+      "drainSabResponses",
+      "signalSabShutdown",
+    ];
+    for (const fnName of hostSabFunctions) {
+      const body = stripComments(extractFunctionBody(sabChannelSource, fnName));
+      expect(/\bAtomics\.wait\b/.test(body), `sab-channel.ts:${fnName} must not call Atomics.wait`).toBe(
+        false,
+      );
+    }
+
+    // Live control: verify the pattern matches a real Atomics.wait call
+    expect(/\bAtomics\.wait\b/.test("Atomics.wait(ctrl, 16, 0, 50);")).toBe(true);
   });
 });

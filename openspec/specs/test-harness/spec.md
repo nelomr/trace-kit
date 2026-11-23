@@ -2,9 +2,10 @@
 
 > Changes: `workspace-test-harness-bootstrap` (initial), `playground-shell` (added the
 > DOM-capable second Vitest project entry), `browser-visual-regression-harness` (added the
-> browser-mode fifth Vitest project entry).
+> browser-mode fifth Vitest project entry), `worker-streaming-transport` (added the
+> `core-worker-transfer` and `core-worker-shared` Playwright Chromium worker projects).
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Real Vitest Wiring
 A root Vitest configuration MUST exist, every package MUST declare a `test` script that
@@ -148,3 +149,56 @@ before this change.
 - **GIVEN**: all five `test.projects` entries after this change
 - **WHEN**: each is checked for the presence of an `environment` field
 - **THEN**: exactly one (the new browser-mode entry) has none; the other four each declare one
+
+### Requirement: Real-Browser Worker Test Projects Verify `Transfer` and `Shared` Backings
+`vitest.config.ts`'s `test.projects` array MUST add two Playwright Chromium browser-mode projects
+rooted at `packages/core` (using absolute config-relative paths):
+1. **`core-worker-transfer` (non-isolated worker project)**: default Vite dev server with **no**
+   COOP/COEP headers (`crossOriginIsolated === false`), proving real browser `new Worker(...)`
+   execution auto-selects `BufferBacking.Transfer`, detaches/returns buffers cleanly, recovers from
+   worker errors/timeouts, and hands materialized `Retained` payloads to renderers without
+   detachment.
+2. **`core-worker-shared` (cross-origin-isolated worker project)**: dedicated test-only Vite
+   server plugin setting `Cross-Origin-Opener-Policy: same-origin` and
+   `Cross-Origin-Embedder-Policy: require-corp` strictly on this test project, proving
+   `crossOriginIsolated === true`, automatic `BufferBacking.Shared` selection, real Chromium
+   `SharedArrayBuffer` + `Atomics` SPSC worker round trips, and clean non-hanging `dispose()`.
+
+The COOP/COEP headers MUST be scoped strictly to `core-worker-shared` and MUST NOT be added to
+`apps/playground/vite.config.ts`, any consumer template, or any other project.
+
+#### Scenario: Non-isolated Chromium project verifies Transfer backing with real Web Worker
+- **GIVEN**: the `core-worker-transfer` Playwright Chromium project in `vitest.config.ts`
+- **WHEN**: the browser transfer test suite runs
+- **THEN**: `globalThis.crossOriginIsolated === false`, `createWorkerDecimationPort` auto-selects
+  `BufferBacking.Transfer`, real browser `Worker` round trips settle bit-exact outputs, and
+  `dispose()` completes cleanly
+
+#### Scenario: Isolated Chromium project verifies Shared backing with real Web Worker
+- **GIVEN**: the `core-worker-shared` Playwright Chromium project in `vitest.config.ts`
+- **WHEN**: the browser shared-memory test suite runs
+- **THEN**: `globalThis.crossOriginIsolated === true`, `createWorkerDecimationPort` auto-selects
+  `BufferBacking.Shared`, real browser `Worker` `SharedArrayBuffer` + `Atomics` round trips settle
+  bit-exact outputs with `0` view re-mints, and `dispose()` terminates without hanging
+
+#### Scenario: COOP/COEP headers never leak into playground or non-isolated projects
+- **GIVEN**: `apps/playground/vite.config.ts` and the non-isolated browser projects in
+  `vitest.config.ts`
+- **WHEN**: their Vite server configurations are inspected
+- **THEN**: neither configures `Cross-Origin-Opener-Policy` or `Cross-Origin-Embedder-Policy`
+
+### Requirement: Pre-Existing Vitest Projects Remain Unchanged
+Adding `core-worker-transfer` and `core-worker-shared` MUST NOT alter the `environment`, `root`,
+`pool`, `execArgv`, or screenshot comparison configuration of any pre-existing project (`core`,
+`playground`, `renderers`, `renderers-dom`, `visual`, `engine-bench`). In particular, `core` MUST
+remain `environment: "node"` with `pool: "forks"` and
+`execArgv: ["--expose-gc", "--no-concurrent-recompilation"]`, and MUST exclude `test/browser/**`
+so browser-only worker specs execute only under `core-worker-transfer` and `core-worker-shared`.
+
+#### Scenario: Existing projects retain identical configuration and clean file partitioning
+- **GIVEN**: `vitest.config.ts` after adding `core-worker-transfer` and `core-worker-shared`
+- **WHEN**: the six pre-existing project entries are compared against their pre-change settings and
+  the `core` Node project runs
+- **THEN**: `core`, `playground`, `renderers`, `renderers-dom`, `visual`, and `engine-bench` keep
+  their exact pre-change settings (with `core` excluding `test/browser/**`), and browser-only
+  worker specs execute only under `core-worker-transfer` and `core-worker-shared`

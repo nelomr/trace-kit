@@ -1,6 +1,6 @@
 # Capability: playground-app
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: apps/playground Is a Workspace-Protocol Vite + TypeScript App
 `apps/playground` MUST be a Vite + TypeScript application consuming `@trace-kit/core` via the
@@ -39,33 +39,25 @@ The playground MUST NOT use `any` in any form banned by CLAUDE.md rule 1 (`: any
   Ban" requirement already asserts for `packages/*`
 
 ### Requirement: The Playground Does Not Depend On Out-of-Scope Package or Module Surfaces
-`apps/playground` MUST NOT declare a `package.json` dependency on `@trace-kit/renderers`,
-`@trace-kit/vue` or `@trace-kit/react` (owned by changes 5, 10 and 11 respectively, none of which
-this change depends on or creates), and MUST NOT import from `@trace-kit/core`'s
-`transport/*` export surface (`DecimationPort`, `Lease`, `SettlementSink`,
-`RawSampleRing`, `SyncDecimationPortConfig` and related transport types/functions — owned by
-change 3, which this change explicitly does not depend on per the proposal's stated dependency
-graph). `apps/playground` MUST NOT construct a `Worker` — change 8 owns worker construction, and
-the `/core-math` view runs its algorithms synchronously on the main thread.
+`apps/playground` MUST NOT declare a `package.json` dependency on `@trace-kit/vue` or
+`@trace-kit/react` (owned by Changes 10 and 11 respectively, which do not exist yet).
+`apps/playground` MAY import `@trace-kit/core` transport and streaming exports (including
+`@trace-kit/core/worker`) and MAY construct browser module `Worker` instances inside its streaming
+transport showcase view (`apps/playground/src/views/streaming-transport/`), while keeping
+`/core-math` and other non-transport views free of unrequested worker construction.
 
-#### Scenario: No dependency on an unowned package is declared
-- **GIVEN**: `apps/playground/package.json`'s `dependencies` and `devDependencies` at the end of
-  this change
-- **WHEN**: the keys are checked against `@trace-kit/renderers`, `@trace-kit/vue` and
+#### Scenario: No dependency on unowned framework adapter packages is declared
+- **GIVEN**: `apps/playground/package.json`'s `dependencies` and `devDependencies`
+- **WHEN**: the keys are checked against `@trace-kit/vue` and `@trace-kit/react`
+- **THEN**: neither appears
+
+#### Scenario: Streaming transport view is permitted to import transport exports and construct a Worker
+- **GIVEN**: `apps/playground/src/views/streaming-transport/` importing `createWorkerDecimationPort`,
+  streaming primitives, and `@trace-kit/core/worker`, and constructing a module `Worker`
+- **WHEN**: the playground scope guard test (`apps/playground/test/node/no-transport-imports.test.ts`)
+  and `pnpm exec turbo run typecheck --filter=@trace-kit/playground` run
+- **THEN**: both pass while continuing to reject any dependency on `@trace-kit/vue` or
   `@trace-kit/react`
-- **THEN**: none of the three appears
-
-#### Scenario: No source file imports from @trace-kit/core's transport surface
-- **GIVEN**: the `apps/playground/src` tree at the end of this change
-- **WHEN**: a source-level check inspects every `import` statement resolving to
-  `@trace-kit/core` and the set of named imports each one requests
-- **THEN**: no imported name is one exported from `@trace-kit/core`'s `transport/*` module group
-  (as listed in `packages/core/src/index.ts`'s transport export block)
-
-#### Scenario: No source file constructs a Worker
-- **GIVEN**: the `apps/playground/src` tree at the end of this change
-- **WHEN**: a source-level check searches for `new Worker(` anywhere under the tree
-- **THEN**: no such construction is found
 
 ### Requirement: Playground Builds and Typechecks as a CI Gate
 `apps/playground` MUST declare `build` and `typecheck` scripts, and CI MUST run them, so a

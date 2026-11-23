@@ -7,6 +7,7 @@
  */
 import { lttb } from "../decimation/lttb.js";
 import { minMaxEnvelope } from "../decimation/min-max.js";
+import { minMaxEnvelopeIndices } from "../decimation/min-max-indices.js";
 import type { TransportStatsView } from "./backpressure.js";
 import { type BufferPool, type BufferPoolConfig, createBufferPool } from "./buffer-pool.js";
 import {
@@ -94,6 +95,8 @@ export function createSyncDecimationPort(
       let outCount = 0;
       if (kind === DecimationKind.Lttb) {
         outCount = lttb(x, y, 0, sampleCount, indices, 0, bucketCount);
+      } else if (kind === DecimationKind.MinMaxEnvelopeIndices) {
+        outCount = minMaxEnvelopeIndices(y, 0, sampleCount, indices, 0, bucketCount);
       } else {
         outCount = minMaxEnvelope(y, 0, sampleCount, out, 0, bucketCount);
       }

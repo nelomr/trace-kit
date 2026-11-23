@@ -12,7 +12,7 @@
 > narrative and its own numbered list item 7 is recorded here and in `spectrum-data-payload`'s
 > spec rather than silently resolved by transcription.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Banned Constructs in Every Hot Path
 Every hot path in the workspace (numeric decimation loops, and — unweakened — the transport
@@ -201,6 +201,64 @@ established by `canvas2d-trace-rendering` extends unchanged, over the identical 
 - **WHEN**: the file is inspected after `selectable-decimation` lands
 - **THEN**: it contains no conditional branch on `DecimationAlgorithm` and no second scratch-buffer
   type; both algorithms are consumed through the one existing `(Int32Array indices, count)` shape
+
+### Requirement: Hot-Path Allocation Bans Extend to Streaming and Worker Transport Hot Paths
+The repository's hot-path allocation ban rules (forbidding object/array literals, tuple returns,
+`for...of` over typed arrays, spread/rest/`arguments`, `.map`/`.filter`/`.slice`/`.subarray`,
+per-call closures, template strings, hot-path `Error` construction, generators, and `async` inside
+hot loops) MUST extend across the Change 8 hot paths:
+- `eslint.config.js`'s strict hot-path rule block MUST cover
+  `packages/core/src/transport/streaming-contract.ts` and
+  `packages/core/src/transport/materialize.ts`.
+- `packages/core/test/transport/hot-path-gate.test.ts` MUST additionally scan the steady-state hot
+  methods of `worker-port.ts` (`submit`, `poll`) and `sab-channel.ts` (`enqueueSabJob`,
+  `drainSabResponses`, `drainSabRequests`) for banned constructs and assert zero `Atomics.wait`
+  references in host-side modules.
+
+#### Scenario: ESLint and hot-path gate reject banned constructs in streaming and transport hot paths
+- **GIVEN**: a fixture matching the ESLint hot-path scope (`streaming-contract.ts` /
+  `materialize.ts`) containing `.subarray(...)` or an object literal inside a loop, and a fixture
+  for the transport hot-method gate containing a banned construct inside `submit` or `drainSabResponses`
+- **WHEN**: ESLint and `packages/core/test/transport/hot-path-gate.test.ts` run
+- **THEN**: both gates fail on their respective fixtures while the committed `streaming-contract.ts`,
+  `materialize.ts`, `worker-port.ts`, and `sab-channel.ts` pass with zero violations
+
+### Requirement: Zero-GC Gate Covers Streaming Kernels and `Shared`-Backing Worker Round Trips
+Under `--expose-gc --no-concurrent-recompilation`, a `PerformanceObserver({ entryTypes: ['gc'] })`
+gate — paired in the same test run with a deliberately allocating control variant that records
+`> 0` GC events — MUST observe exactly `0` GC events across warmed-up steady-state runs of:
+1. `ingestBatch` (`1_000` batches of `256` samples into `RawSampleRing` + `BucketAccumulator`).
+2. `rebuildDomain` and Tier-1 `applyDomainChange` (`1_000` invocations into preallocated arrays).
+3. `materializeBucketsToPayload` (`1_000` materializations into a preallocated `Retained`
+   `SpectrumDataPayload`).
+4. `createWorkerDecimationPort` operating in `BufferBacking.Shared` mode over real Node
+   `worker_threads` (`1_000` round trips), together with an exact view re-mint count of `0`.
+
+#### Scenario: Streaming kernels and Shared worker round trips record zero GC events against a live control
+- **GIVEN**: warmed-up runs of `ingestBatch`, `rebuildDomain`, `materializeBucketsToPayload`, and
+  `Shared`-backing `createWorkerDecimationPort` under `--expose-gc --no-concurrent-recompilation`,
+  plus an allocating control in the same test run
+- **WHEN**: `PerformanceObserver({ entryTypes: ['gc'] })` counts GC events over each measured window
+- **THEN**: every one of the four real paths records exactly `0` GC events, the `Shared` worker
+  path records exactly `0` view re-mints, and the allocating control records `> 0` GC events
+
+### Requirement: Payload-Size View Re-Mint Invariance Applies to Worker `Transfer`-Mode Round Trips
+For `createWorkerDecimationPort` operating in `BufferBacking.Transfer` mode over real worker
+threads, the deterministic per-settlement view re-mint count MUST equal:
+- exactly `3` for `DecimationKind.MinMaxEnvelope` (`x`, `y`, `out`),
+- exactly `3` for `DecimationKind.MinMaxEnvelopeIndices` (`x`, `y`, `indices`),
+- exactly `4` for `DecimationKind.Lttb` (`x`, `y`, `out`, `indices`).
+
+Per-settlement view re-mint counts MUST be strictly equal (zero tolerance) between
+`deltaSamples = 4_096` and `deltaSamples = 262_144` (64x payload range, P5 invariance).
+
+#### Scenario: Worker Transfer round trips preserve exact 3-or-4 view re-mints across a 64x payload range
+- **GIVEN**: `createWorkerDecimationPort` in `BufferBacking.Transfer` mode over real Node
+  `worker_threads` driven at `deltaSamples = 4_096` and `deltaSamples = 262_144`
+- **WHEN**: per-settlement view re-mint counts are measured for `MinMaxEnvelope`,
+  `MinMaxEnvelopeIndices`, and `Lttb` at both payload sizes
+- **THEN**: the counts are exactly `3`, `3`, and `4` at `4_096` and exactly `3`, `3`, and `4` at
+  `262_144`, matching with zero tolerance
 
 ## Contradiction Resolution (closed upstream)
 

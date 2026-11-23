@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { minMaxEnvelopeIndices } from "../../src/decimation/min-max-indices.js";
 import { createSyncDecimationPort } from "../../src/transport/sync-port.js";
 import { DecimationKind, PortMode } from "../../src/transport/decimation-port.js";
 import { SATURATED } from "../../src/transport/ownership.js";
 import { StatCounter, createTransportStatsView } from "../../src/transport/backpressure.js";
+import { MAX_BUCKETS } from "../../src/transport/streaming-contract.js";
 
 const REQUIRED_MEMBERS = [
   "mode",
@@ -119,6 +121,74 @@ describe("createSyncDecimationPort", () => {
       },
     });
     expect(outCount).toBe(4);
+  });
+
+  it("runs a MinMaxEnvelopeIndices request matching minMaxEnvelopeIndices bit-for-bit, including MAX_BUCKETS", () => {
+    const port = createSyncDecimationPort({
+      poolPairs: 1,
+      transitCapacitySamples: MAX_BUCKETS * 2,
+    });
+    expect(DecimationKind.MinMaxEnvelopeIndices).toBe(2);
+
+    const sampleCount = MAX_BUCKETS * 2;
+    const expectedIndices = new Int32Array(MAX_BUCKETS * 2);
+
+    const lease1 = port.acquire();
+    if (lease1 === SATURATED) throw new Error("unreachable");
+    const y1 = port.viewY(lease1);
+    for (let i = 0; i < sampleCount; i += 1) {
+      y1[i] = Math.sin(i * 0.013) + Math.cos(i * 0.007);
+    }
+    const directCount = minMaxEnvelopeIndices(
+      y1,
+      0,
+      sampleCount,
+      expectedIndices,
+      0,
+      MAX_BUCKETS,
+    );
+
+    expect(port.viewIndices(lease1).length).toBe(MAX_BUCKETS * 2);
+    port.setKind(lease1, DecimationKind.MinMaxEnvelopeIndices);
+    port.setSampleCount(lease1, sampleCount);
+    port.setBucketCount(lease1, MAX_BUCKETS);
+    port.submit(lease1);
+
+    let outCount = 0;
+    const actualIndices = new Int32Array(MAX_BUCKETS * 2);
+    port.poll({
+      onSettled(settled, count) {
+        outCount = count;
+        const indicesView = port.viewIndices(settled);
+        expect(indicesView.length).toBe(MAX_BUCKETS * 2);
+        for (let i = 0; i < count; i += 1) {
+          actualIndices[i] = indicesView[i]!;
+        }
+        port.release(settled);
+      },
+    });
+
+    expect(outCount).toBe(directCount);
+    expect(outCount).toBe(MAX_BUCKETS * 2);
+    expect(actualIndices).toEqual(expectedIndices);
+
+    // Fixed capacity invariant: viewIndices.length stays MAX_BUCKETS * 2 even for bucketCount = 1.
+    const lease2 = port.acquire();
+    if (lease2 === SATURATED) throw new Error("unreachable");
+    port.setKind(lease2, DecimationKind.MinMaxEnvelopeIndices);
+    port.setSampleCount(lease2, 16);
+    port.setBucketCount(lease2, 1);
+    port.submit(lease2);
+    let outCount2 = 0;
+    port.poll({
+      onSettled(settled, count) {
+        outCount2 = count;
+        expect(port.viewIndices(settled).length).toBe(MAX_BUCKETS * 2);
+        port.release(settled);
+      },
+    });
+    expect(outCount2).toBe(2);
+    expect(outCount2).not.toBe(outCount);
   });
 
   it("readStats reports a clean run with zero ownership violations", () => {

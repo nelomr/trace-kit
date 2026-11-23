@@ -13,13 +13,24 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/worker.js",
+      "require": "./dist/worker.cjs"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "import": "./dist/node/index.js",
+      "require": "./dist/node/index.cjs"
     }
   },
   "scripts": {
-    "build": "tsup",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "build": "tsup && tsc -p tsconfig.dts.json",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run --config ../../vitest.config.ts --project core",
+    "test:browser": "vitest run --config ../../vitest.config.ts --project core-worker-transfer --project core-worker-shared",
     "lint": "eslint .",
     "bench": "tsx bench/index.ts",
     "bench:deopt": "tsx bench/index.ts --trace-deopt",
@@ -27,12 +38,14 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "typescript": "catalog:",
-    "vitest": "catalog:",
-    "tsup": "catalog:",
+    "@vitest/browser-playwright": "catalog:",
     "eslint": "catalog:",
-    "typescript-eslint": "catalog:",
+    "fast-check": "catalog:",
+    "playwright": "catalog:",
+    "tsup": "catalog:",
     "tsx": "catalog:",
-    "fast-check": "catalog:"
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:",
+    "vitest": "catalog:"
   }
 }

@@ -441,7 +441,35 @@ changes:
     prerequisites: 
       - core-transport-contract
       - renderers-webgl2
-    capabilities: not_yet_specified
+    capabilities:
+      - name: allocation-free-hot-path
+        deltas: [ADDED]
+      - name: buffer-ownership-protocol
+        deltas: [ADDED, MODIFIED]
+      - name: decimation-port
+        deltas: [ADDED, MODIFIED]
+      - name: node-worker-threads-adapter
+        deltas: [ADDED]
+      - name: package-build-pipeline
+        deltas: [ADDED]
+      - name: playground-app
+        deltas: [MODIFIED]
+      - name: playground-routing
+        deltas: [ADDED, MODIFIED]
+      - name: playground-streaming-transport-view
+        deltas: [ADDED]
+      - name: shared-array-buffer-capability
+        deltas: [ADDED, MODIFIED]
+      - name: shared-memory-spsc-transport
+        deltas: [ADDED]
+      - name: streaming-contract
+        deltas: [ADDED, MODIFIED, REMOVED, RENAMED]
+      - name: test-harness
+        deltas: [ADDED]
+      - name: transport-backpressure
+        deltas: [ADDED, MODIFIED]
+      - name: worker-decimation-port
+        deltas: [ADDED]
 
   - order: 9
     name: engine-controller

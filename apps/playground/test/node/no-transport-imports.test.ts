@@ -4,17 +4,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const TRANSPORT_EXPORTS = [
-  "DecimationPort",
-  "Lease",
-  "SettlementSink",
-  "RawSampleRing",
-  "SyncDecimationPortConfig",
-  "collectTransferList",
-  "createSyncDecimationPort",
-  "detectTransportCapabilities",
-];
-
 function collectTsFiles(dir: string): string[] {
   const entries = readdirSync(dir, { withFileTypes: true });
   const files: string[] = [];
@@ -29,33 +18,65 @@ function collectTsFiles(dir: string): string[] {
   return files;
 }
 
-describe("no @trace-kit/core transport-surface import, no Worker construction", () => {
+describe("playground worker & transport import scope boundaries", () => {
   const dir = path.dirname(fileURLToPath(import.meta.url));
   const srcDir = path.join(dir, "../../src");
+  const streamingViewDir = path.join(srcDir, "views/streaming-transport");
   const files = collectTsFiles(srcDir);
 
-  it("imports no name from @trace-kit/core's transport export block", () => {
+  function isInsideStreamingView(filePath: string): boolean {
+    const rel = path.relative(streamingViewDir, filePath);
+    return rel.length > 0 && !rel.startsWith("..") && !path.isAbsolute(rel);
+  }
+
+  it("permits new Worker(...) strictly inside views/streaming-transport/ and keeps non-transport views free of worker construction", () => {
+    const outsideOffenders: string[] = [];
+    const streamingWorkers: string[] = [];
+    for (const file of files) {
+      const source = readFileSync(file, "utf8");
+      if (/new Worker\(/.test(source)) {
+        if (isInsideStreamingView(file)) {
+          streamingWorkers.push(file);
+        } else {
+          outsideOffenders.push(file);
+        }
+      }
+    }
+    expect(outsideOffenders).toEqual([]);
+    expect(streamingWorkers.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("permits @trace-kit/core/worker imports strictly inside views/streaming-transport/", () => {
+    const outsideOffenders: string[] = [];
+    const streamingImports: string[] = [];
+    for (const file of files) {
+      const source = readFileSync(file, "utf8");
+      if (/from\s+["']@trace-kit\/core\/worker["']/.test(source)) {
+        if (isInsideStreamingView(file)) {
+          streamingImports.push(file);
+        } else {
+          outsideOffenders.push(file);
+        }
+      }
+    }
+    expect(outsideOffenders).toEqual([]);
+    expect(streamingImports.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("never imports @trace-kit/core/node inside browser playground sources", () => {
     const offenders: string[] = [];
     for (const file of files) {
       const source = readFileSync(file, "utf8");
-      const match = /import\s*\{([^}]*)\}\s*from\s*["']@trace-kit\/core["']/.exec(source);
-      if (!match) continue;
-      const importedNames = match[1]?.split(",").map((n) => n.trim().split(/\s+as\s+/)[0]) ?? [];
-      if (importedNames.some((name) => TRANSPORT_EXPORTS.includes(name ?? ""))) {
+      if (/from\s+["']@trace-kit\/core\/node["']/.test(source)) {
         offenders.push(file);
       }
     }
     expect(offenders).toEqual([]);
   });
 
-  it("constructs no Worker anywhere under the tree", () => {
-    const offenders: string[] = [];
-    for (const file of files) {
-      const source = readFileSync(file, "utf8");
-      if (/new Worker\(/.test(source)) {
-        offenders.push(file);
-      }
-    }
-    expect(offenders).toEqual([]);
+  it("does not configure COOP/COEP headers in apps/playground/vite.config.ts", () => {
+    const viteConfig = readFileSync(path.join(dir, "../../vite.config.ts"), "utf8");
+    expect(viteConfig).not.toMatch(/Cross-Origin-Opener-Policy/i);
+    expect(viteConfig).not.toMatch(/Cross-Origin-Embedder-Policy/i);
   });
 });

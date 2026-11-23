@@ -7,17 +7,18 @@
 import type { Lease, Saturated } from "./ownership.js";
 import type { TransportStatsView } from "./backpressure.js";
 
-export const enum DecimationKind {
+export enum DecimationKind {
   MinMaxEnvelope = 0,
   Lttb = 1,
+  MinMaxEnvelopeIndices = 2,
 }
 
-export const enum PortMode {
+export enum PortMode {
   Synchronous = 0,
   Asynchronous = 1,
 }
 
-export const enum FailureReason {
+export enum FailureReason {
   WorkerError = 0,
   MessageError = 1,
   Timeout = 2,

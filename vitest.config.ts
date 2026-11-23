@@ -29,6 +29,7 @@ export default defineConfig({
           root: path.join(rootDir, "packages/core"),
           environment: "node",
           include: ["test/**/*.test.ts"],
+          exclude: ["test/browser/**"],
           setupFiles: ["test/setup/fast-check.ts"],
           // `--expose-gc` is a V8 flag: `NODE_OPTIONS` rejects V8 flags outright, and the
           // default `threads` pool's `worker_threads` rejects them in `execArgv`
@@ -195,6 +196,61 @@ export default defineConfig({
                     },
                   })
                 : playwright(),
+            instances: [{ browser: "chromium" }],
+          },
+        },
+      },
+      {
+        extends: true,
+        worker: {
+          format: "es",
+        },
+        test: {
+          name: "core-worker-transfer",
+          root: path.join(rootDir, "packages/core"),
+          include: ["test/browser/worker-transfer.browser.test.ts"],
+          testTimeout: 30_000,
+          browser: {
+            enabled: true,
+            headless: true,
+            provider: playwright(),
+            instances: [{ browser: "chromium" }],
+          },
+        },
+      },
+      {
+        extends: true,
+        worker: {
+          format: "es",
+        },
+        server: {
+          headers: {
+            "Cross-Origin-Opener-Policy": "same-origin",
+            "Cross-Origin-Embedder-Policy": "require-corp",
+          },
+        },
+        plugins: [
+          {
+            name: "trace-kit-test-only-coop-coep",
+            enforce: "pre",
+            configureServer(server) {
+              server.middlewares.use((_req, res, next) => {
+                res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+                res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+                next();
+              });
+            },
+          },
+        ],
+        test: {
+          name: "core-worker-shared",
+          root: path.join(rootDir, "packages/core"),
+          include: ["test/browser/worker-shared.browser.test.ts"],
+          testTimeout: 30_000,
+          browser: {
+            enabled: true,
+            headless: true,
+            provider: playwright(),
             instances: [{ browser: "chromium" }],
           },
         },

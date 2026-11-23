@@ -5,10 +5,13 @@ import { describe, expect, it } from "vitest";
 import {
   BUCKET_OVERSAMPLE_DEFAULT,
   MAX_BUCKETS,
+  applyDomainChange,
   computeBucketCount,
   createBucketAccumulator,
   createRawSampleRing,
+  ingestBatch,
   ingestSample,
+  projectTier3,
   rebuildDomain,
   rotateBucketOrigin,
   selectTier,
@@ -295,21 +298,35 @@ describe("streaming-contract — revision is a bucket-layout generation, never a
     expect(statesRevisionPolicy("/** revision is monotonic. */")).toBe(false);
   });
 
-  it("leaves revision untouched by the deferred ingest and rebuild entry points", () => {
+  it("leaves revision untouched by ingest and tier 3, and bumps by 1 on tier 1 and tier 2", () => {
     const ring = createRawSampleRing(1024);
-    const accumulator = createBucketAccumulator(4);
-    accumulator.revision = 7;
+    const accumulator = createBucketAccumulator(8);
+    accumulator.domainMin = 0;
+    accumulator.invBucketWidth = 1;
+    expect(accumulator.revision).toBe(0);
 
-    expect(() => ingestSample(ring, 0, 0)).toThrow(/change 8/);
-    expect(accumulator.revision).toBe(7);
+    ingestSample(ring, 0.5, 1.0, accumulator);
+    expect(accumulator.revision).toBe(0);
 
-    expect(() => rebuildDomain(accumulator, ring, 0, 1)).toThrow(/change 8/);
-    expect(accumulator.revision).toBe(7);
+    const target = {
+      min: new Float32Array(8),
+      max: new Float32Array(8),
+      count: new Int32Array(8),
+    };
+    projectTier3(accumulator, 0, 2, 8, target, ring);
+    expect(accumulator.revision).toBe(0);
 
-    // The field is observably writable, so the readings above come from a real invariant rather
-    // than an accidentally-frozen object.
-    accumulator.revision = 8;
-    expect(accumulator.revision).toBe(8);
+    const t1 = applyDomainChange(accumulator, ring, {
+      requestedDomainMin: 1,
+      requestedInvBucketWidth: 1,
+      inGesture: false,
+    });
+    expect(t1.tier).toBe(1);
+    expect(accumulator.revision).toBe(1);
+
+    const t2 = rebuildDomain(accumulator, ring, 0, 2);
+    expect(t2.tier).toBe(2);
+    expect(accumulator.revision).toBe(2);
   });
 });
 
@@ -384,45 +401,34 @@ describe("streaming-contract — MAX_BUCKETS and BUCKET_OVERSAMPLE_DEFAULT are e
   });
 });
 
-describe("streaming-contract — this change freezes types and invariants only", () => {
-  it("every declared rebuild and ingest entry point throws and leaves state byte-for-byte unchanged", () => {
+describe("streaming-contract — live ingest and rebuild entry points operate in place", () => {
+  it("ingestSample and rebuildDomain execute without throwing and reuse preallocated arrays", () => {
     const ring = createRawSampleRing(8);
     const accumulator = createBucketAccumulator(4);
-    accumulator.min.set([1, 2, 3, 4]);
-    accumulator.max.set([5, 6, 7, 8]);
-    accumulator.count.set([1, 1, 1, 1]);
-    accumulator.bucketOrigin = 1;
-    accumulator.revision = 3;
+    const minRef = accumulator.min;
+    const maxRef = accumulator.max;
+    const countRef = accumulator.count;
 
-    const minBefore = Array.from(accumulator.min);
-    const maxBefore = Array.from(accumulator.max);
-    const countBefore = Array.from(accumulator.count);
+    ingestSample(ring, 0.5, 2.0);
+    ingestSample(ring, 1.5, 5.0);
+    const result = rebuildDomain(accumulator, ring, 0, 1);
 
-    expect(() => ingestSample(ring, 1, 2)).toThrow(/change 8/);
-    expect(() => rebuildDomain(accumulator, ring, 0, 1)).toThrow(/change 8/);
-
-    expect(Array.from(accumulator.min)).toEqual(minBefore);
-    expect(Array.from(accumulator.max)).toEqual(maxBefore);
-    expect(Array.from(accumulator.count)).toEqual(countBefore);
-    expect(accumulator.bucketOrigin).toBe(1);
-    expect(accumulator.revision).toBe(3);
-  });
-
-  it("the module performs no indexed write or fill call against min/max/count/x/y", () => {
-    function countBufferWrites(text: string): number {
-      const patterns = [
-        /\b(min|max|count|x|y)\[[^\]]+\]\s*=(?!=)/g,
-        /\b(min|max|count|x|y)\.fill\(/g,
-      ];
-      return patterns.reduce((total, pattern) => total + (text.match(pattern) ?? []).length, 0);
-    }
-    const WRITE_FIXTURE = "min[i] = 1; max[i] = 2; count.fill(0);";
-    expect(countBufferWrites(source)).toBe(0);
-    expect(countBufferWrites(WRITE_FIXTURE)).toBe(3);
+    expect(result).toEqual({ tier: 2, partialHistory: false });
+    expect(accumulator.min).toBe(minRef);
+    expect(accumulator.max).toBe(maxRef);
+    expect(accumulator.count).toBe(countRef);
+    expect(accumulator.bucketOrigin).toBe(0);
+    expect(accumulator.revision).toBe(1);
+    expect(accumulator.count[0]).toBe(1);
+    expect(accumulator.min[0]).toBe(2.0);
+    expect(accumulator.max[0]).toBe(2.0);
+    expect(accumulator.count[1]).toBe(1);
+    expect(accumulator.min[1]).toBe(5.0);
+    expect(accumulator.max[1]).toBe(5.0);
   });
 });
 
-describe("streaming-contract — allocation-free ingest is a frozen invariant, structurally guarded here", () => {
+describe("streaming-contract — allocation-free incremental ingest is structurally guarded", () => {
   /**
    * Extracts the body of a named function declaration by locating its opening brace and walking
    * forward to the matching closing brace, so the scan below applies only to the functions that
@@ -455,7 +461,15 @@ describe("streaming-contract — allocation-free ingest is a frozen invariant, s
     return patterns.reduce((total, pattern) => total + (text.match(pattern) ?? []).length, 0);
   }
 
-  const hotPathFunctions = ["selectTier", "rotateBucketOrigin", "ingestSample", "rebuildDomain"];
+  const hotPathFunctions = [
+    "selectTier",
+    "rotateBucketOrigin",
+    "ingestSample",
+    "ingestBatch",
+    "rebuildDomain",
+    "applyDomainChange",
+    "projectTier3",
+  ];
   const VIOLATION_FIXTURE =
     "function hot() { const obj = { a: 1 }; const arr = [1, 2]; const s = arr.subarray(0, 1); const f = () => { return obj; }; return { ...obj, s, f }; }";
 
@@ -468,19 +482,7 @@ describe("streaming-contract — allocation-free ingest is a frozen invariant, s
     expect(countBannedConstructs(VIOLATION_FIXTURE)).toBeGreaterThan(0);
   });
 
-  it("binds the per-sample cost and no-allocation obligation to the implementing change, not as a measurement taken here", () => {
-    function statesObligation(text: string): boolean {
-      return (
-        /O\(new samples\)/.test(text) &&
-        /no allocation|allocation-free/i.test(text) &&
-        /not measured|is not claimed as measured/i.test(text)
-      );
-    }
-    expect(statesObligation(source)).toBe(true);
-
-    const verifyReport = readVerifyReport();
-    if (verifyReport !== undefined) {
-      expect(verifyReport).not.toMatch(/measured allocation.*ingest|GC-event result for ingest/i);
-    }
+  it("exposes ingestBatch as a callable function", () => {
+    expect(typeof ingestBatch).toBe("function");
   });
 });

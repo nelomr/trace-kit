@@ -20,6 +20,8 @@ does. The audit cannot silently go stale in either direction.
 | File | Side-effect-free? | Notes |
 |---|---|---|
 | `src/index.ts` | Yes | Pure public re-export barrel — every binding is `export … from './…js'`. No code runs at module-evaluation time. |
+| `src/worker.ts` | Yes | Pure `@trace-kit/core/worker` subpath re-export barrel — exports worker handler functions, wire types, `DecimationKind`, and decimation kernels only. No code runs at module-evaluation time. |
+| `src/node/index.ts` | Yes | Isolated `@trace-kit/core/node` adapter exporting `adaptNodeWorker`, `createNodeWorkerFactory`, `createNodeParentPortEndpoint`, and `attachNodeDecimationWorker` only; no worker is spawned at import time. |
 | `src/version.ts` | Yes | Declares and exports the `VERSION` constant only. No side effect at module scope. |
 | `src/buffers/brand.ts` | Yes | `declare const … : unique symbol` brand tags plus pure functions (assert/narrow/allocate). No code runs at module-evaluation time. |
 | `src/decimation/min-max.ts` | Yes | Exports the `minMaxEnvelope` function only. No code runs at module-evaluation time. |
@@ -35,7 +37,12 @@ does. The audit cannot silently go stale in either direction.
 | `src/transport/decimation-port.ts` | Yes | Exports the `DecimationPort` interface family and enums only. No code runs at module-evaluation time. |
 | `src/transport/buffer-pool.ts` | Yes | Exports the `createBufferPool` factory and its types only; all state lives inside the factory's closure, constructed on call. No code runs at module-evaluation time. |
 | `src/transport/sync-port.ts` | Yes | Exports the `createSyncDecimationPort` factory only. No code runs at module-evaluation time. |
-| `src/transport/streaming-contract.ts` | Yes | Exports frozen types, constants and pure factory/selection functions only. No code runs at module-evaluation time. |
+| `src/transport/streaming-contract.ts` | Yes | Exports streaming types, constants, pure factories, and allocation-free incremental ingest/invalidation functions; module-level `TierResult` constants are immutable literals only. No side effect runs at module-evaluation time. |
+| `src/transport/materialize.ts` | Yes | Exports allocation-free `materializeBucketsToPayload` and `materializeTier3ToPayload` functions only. No code runs at module-evaluation time. |
+| `src/transport/worker-channel.ts` | Yes | Exports DOM-free structural worker contracts and wire-protocol discriminated union types only; emits zero runtime code. |
+| `src/transport/sab-channel.ts` | Yes | Exports numeric layout constants and SPSC SAB channel functions only; all `SharedArrayBuffer` allocations happen inside `createSabChannel` on call. No side effect runs at module-evaluation time. |
+| `src/transport/worker-handler.ts` | Yes | Exports pure `handleDecimationMessage`, `createDecimationWorkerHandler`, `attachDecimationWorker`, and `attachCurrentDecimationWorker` functions only; never registers listeners or accesses globals at module scope. |
+| `src/transport/worker-port.ts` | Yes | Exports the `createWorkerDecimationPort` factory and its config type only; the module-level `DISPOSE_MESSAGE` object is a static immutable literal. All worker and pool state is constructed inside the factory on call. |
 | `src/transport/index.ts` | Yes | Pure public re-export barrel for the transport surface — every binding is `export … from './…js'`. No code runs at module-evaluation time. |
 | `src/viewport/transform.ts` | Yes | Exports the `ViewportTransform`/`CreateViewportTransformOptions` types and the `createViewportTransform`/`projectX`/`projectY`/`unprojectX`/`unprojectY`/`isInsidePlotArea`/`transformMatchesPayload` functions only. No code runs at module-evaluation time. |
 | `src/viewport/ticks.ts` | Yes | Exports the `selectTicks`/`selectLogTicks` functions only; the module-level `NICE_STEPS` array is a frozen-by-convention constant read, never mutated. No code runs at module-evaluation time beyond that literal's construction. |

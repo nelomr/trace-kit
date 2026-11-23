@@ -3,7 +3,7 @@
 > Change: `core-transport-contract`. New capability. Encodes design.md §D7 and confirmed
 > decision 4.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: SharedArrayBuffer Is an Internal-Only Backing Enum
 `SharedArrayBuffer` support MUST be represented internally as a `BufferBacking` enum
@@ -42,10 +42,40 @@ absent from the global environment.
 
 ### Requirement: Runtime Detection Selects the Backing, With an Override for Benchmarking Only
 The `BufferBacking` value MUST be selected from the result of `detectTransportCapabilities()`
-evaluated at port-construction time: `Shared` only when `SharedArrayBuffer` is available, and
-`Transfer` otherwise. `Transfer` MUST be the backing whenever detection is negative or
-ambiguous. An explicit backing override MAY exist for benchmarking, but it MUST NOT be a required
-configuration field and MUST NOT appear in any documented consumer example.
+evaluated at port-construction time, with realm-aware gating so a non-isolated browser realm never
+attempts an illegal cross-worker `SharedArrayBuffer` transfer:
+- In a **browser realm** (where `"crossOriginIsolated" in globalThis` is `true` or
+  `capabilities.workerConstructor === true`), `selectBufferBacking` MUST select
+  `BufferBacking.Shared` **only** when `capabilities.sharedMemory === true`,
+  `capabilities.crossOriginIsolated === true`, AND `typeof Atomics !== "undefined"`; otherwise it
+  MUST select `BufferBacking.Transfer`.
+- In a **Node realm** (where `"crossOriginIsolated" in globalThis` is `false` and
+  `capabilities.workerConstructor === false`), `selectBufferBacking` MUST select
+  `BufferBacking.Shared` when `capabilities.sharedMemory === true` AND
+  `typeof Atomics !== "undefined"`; otherwise it MUST select `BufferBacking.Transfer`.
+- Whenever detection is negative or ambiguous, `selectBufferBacking` MUST select
+  `BufferBacking.Transfer`. An explicit backing override MAY exist for benchmarking/testing only,
+  MUST NOT be a required configuration field, and MUST NOT appear in any documented consumer
+  example.
+
+#### Scenario: Non-isolated browser realm with SharedArrayBuffer defined still selects Transfer
+- **GIVEN**: a realm where `SharedArrayBuffer` and `Atomics` exist, `"crossOriginIsolated" in
+  globalThis` is `true`, and `globalThis.crossOriginIsolated === false`
+- **WHEN**: `selectBufferBacking(detectTransportCapabilities())` is evaluated
+- **THEN**: it returns `BufferBacking.Transfer`
+
+#### Scenario: Cross-origin-isolated browser realm selects Shared
+- **GIVEN**: a Playwright Chromium page served with test-only COOP/COEP headers where
+  `crossOriginIsolated === true`, `typeof SharedArrayBuffer !== "undefined"`, and
+  `typeof Atomics !== "undefined"`
+- **WHEN**: `selectBufferBacking(detectTransportCapabilities())` is evaluated
+- **THEN**: it returns `BufferBacking.Shared`
+
+#### Scenario: Node realm selects Shared when SharedArrayBuffer and Atomics are present
+- **GIVEN**: a plain Node environment where `"crossOriginIsolated" in globalThis` is `false` and
+  `SharedArrayBuffer` and `Atomics` are available
+- **WHEN**: `selectBufferBacking(detectTransportCapabilities())` is evaluated
+- **THEN**: it returns `BufferBacking.Shared`
 
 #### Scenario: Detection negative selects Transfer backing
 - **GIVEN**: a port constructed in an environment with `globalThis.SharedArrayBuffer` deleted
@@ -53,13 +83,11 @@ configuration field and MUST NOT appear in any documented consumer example.
 - **THEN**: it is `BufferBacking.Transfer`, and the port operates normally
 
 #### Scenario: The backing is not a required configuration field
-- **GIVEN**: the port configuration type
-- **WHEN**: a fixture constructs a port supplying no backing-related field at all
-- **THEN**: `tsc --noEmit` reports no error for that fixture
-- **AND**: a control fixture in the same typecheck run, which omits a field that *is* required by
-  the port configuration type, MUST produce a `tsc --noEmit` error — so the clean result above
-  discriminates an optional field from a typecheck that reports nothing because the
-  configuration type is unconstrained or the fixture was not compiled
+- **GIVEN**: the port configuration types (`SyncDecimationPortConfig`,
+  `WorkerDecimationPortConfig`)
+- **WHEN**: a fixture constructs each port supplying no backing-related field at all
+- **THEN**: `tsc --noEmit` reports no error for those fixtures, while a control fixture omitting a
+  required field (`workerFactory` on `WorkerDecimationPortConfig`) produces a `tsc --noEmit` error
 
 ### Requirement: COOP/COEP Is Never Documented as a Requirement
 No committed documentation, example, or template in this change may instruct a consumer to serve
@@ -73,3 +101,17 @@ deployment targets.
   `crossOriginIsolated` presented as a prerequisite
 - **THEN**: no occurrence presents cross-origin isolation as required; any occurrence describes
   it only as an optional, detected fast path
+
+### Requirement: Init-Time `DataCloneError` Defensive Fallback to Transfer
+If `createWorkerDecimationPort` initially selects `BufferBacking.Shared` and posting the one-time
+`init-sab` handshake message throws a `DataCloneError` (or any structured-clone error rejecting
+`SharedArrayBuffer` transfer), the port MUST catch the error, fall back cleanly to
+`BufferBacking.Transfer` with plain `ArrayBuffer`-backed slots, and complete construction without
+throwing.
+
+#### Scenario: Structured-clone error on init-sab downgrades to Transfer without failing construction
+- **GIVEN**: a `WorkerLike` whose `postMessage` throws a `DOMException(..., "DataCloneError")` (or
+  clone `Error`) on the `init-sab` message carrying a `SharedArrayBuffer`
+- **WHEN**: `createWorkerDecimationPort` is constructed and driven through a full round trip
+- **THEN**: construction succeeds without throwing, the port's internal backing switches to
+  `BufferBacking.Transfer`, and the round trip settles cleanly over transferable `ArrayBuffer`s

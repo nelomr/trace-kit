@@ -2,7 +2,11 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { detectTransportCapabilities } from "../../src/transport/capabilities.js";
+import {
+  BufferBacking,
+  detectTransportCapabilities,
+  selectBufferBacking,
+} from "../../src/transport/capabilities.js";
 import { createBufferPool } from "../../src/transport/buffer-pool.js";
 import { createSyncDecimationPort } from "../../src/transport/sync-port.js";
 import { DecimationKind } from "../../src/transport/decimation-port.js";
@@ -162,9 +166,124 @@ describe("BufferBacking selection", () => {
     try {
       delete globalWithSab.SharedArrayBuffer;
       const pool = createBufferPool({ poolPairs: 1 });
-      expect(pool.__debugBacking()).toBe(0); // BufferBacking.Transfer
+      expect(pool.__debugBacking()).toBe(BufferBacking.Transfer);
     } finally {
       globalWithSab.SharedArrayBuffer = original;
+    }
+  });
+
+  it("selects Transfer in a non-isolated browser realm even when SharedArrayBuffer and Atomics exist", () => {
+    const g = globalThis as {
+      crossOriginIsolated?: boolean;
+      Worker?: unknown;
+      SharedArrayBuffer?: unknown;
+      Atomics?: unknown;
+    };
+    const hadCoi = "crossOriginIsolated" in g;
+    const originalCoi = g.crossOriginIsolated;
+    const hadWorker = "Worker" in g;
+    const originalWorker = g.Worker;
+    try {
+      g.crossOriginIsolated = false;
+      expect(
+        selectBufferBacking({
+          sharedMemory: true,
+          workerConstructor: false,
+          crossOriginIsolated: false,
+        }),
+      ).toBe(BufferBacking.Transfer);
+
+      expect(selectBufferBacking(detectTransportCapabilities())).toBe(
+        BufferBacking.Transfer,
+      );
+
+      // Browser realm identified via workerConstructor === true even without crossOriginIsolated global
+      delete g.crossOriginIsolated;
+      expect(
+        selectBufferBacking({
+          sharedMemory: true,
+          workerConstructor: true,
+          crossOriginIsolated: false,
+        }),
+      ).toBe(BufferBacking.Transfer);
+    } finally {
+      if (hadCoi) g.crossOriginIsolated = originalCoi;
+      else delete g.crossOriginIsolated;
+      if (hadWorker) g.Worker = originalWorker;
+      else delete g.Worker;
+    }
+  });
+
+  it("selects Shared in a cross-origin-isolated browser realm when SharedArrayBuffer and Atomics exist", () => {
+    const g = globalThis as { crossOriginIsolated?: boolean };
+    const hadCoi = "crossOriginIsolated" in g;
+    const originalCoi = g.crossOriginIsolated;
+    try {
+      g.crossOriginIsolated = true;
+      expect(
+        selectBufferBacking({
+          sharedMemory: true,
+          workerConstructor: true,
+          crossOriginIsolated: true,
+        }),
+      ).toBe(BufferBacking.Shared);
+      expect(selectBufferBacking(detectTransportCapabilities())).toBe(
+        BufferBacking.Shared,
+      );
+    } finally {
+      if (hadCoi) g.crossOriginIsolated = originalCoi;
+      else delete g.crossOriginIsolated;
+    }
+  });
+
+  it("selects Shared in a plain Node realm when SharedArrayBuffer and Atomics are present", () => {
+    const g = globalThis as {
+      crossOriginIsolated?: boolean;
+      Worker?: unknown;
+    };
+    const hadCoi = "crossOriginIsolated" in g;
+    const originalCoi = g.crossOriginIsolated;
+    const hadWorker = "Worker" in g;
+    const originalWorker = g.Worker;
+    try {
+      delete g.crossOriginIsolated;
+      delete g.Worker;
+      expect("crossOriginIsolated" in g).toBe(false);
+      const caps = detectTransportCapabilities();
+      expect(caps.sharedMemory).toBe(true);
+      expect(caps.workerConstructor).toBe(false);
+      expect(caps.crossOriginIsolated).toBe(false);
+      expect(selectBufferBacking(caps)).toBe(BufferBacking.Shared);
+    } finally {
+      if (hadCoi) g.crossOriginIsolated = originalCoi;
+      else delete g.crossOriginIsolated;
+      if (hadWorker) g.Worker = originalWorker;
+      else delete g.Worker;
+    }
+  });
+
+  it("selects Transfer when Atomics or SharedArrayBuffer is missing", () => {
+    const g = globalThis as { Atomics?: unknown };
+    const originalAtomics = g.Atomics;
+    try {
+      expect(
+        selectBufferBacking({
+          sharedMemory: false,
+          workerConstructor: false,
+          crossOriginIsolated: true,
+        }),
+      ).toBe(BufferBacking.Transfer);
+
+      delete g.Atomics;
+      expect(
+        selectBufferBacking({
+          sharedMemory: true,
+          workerConstructor: false,
+          crossOriginIsolated: true,
+        }),
+      ).toBe(BufferBacking.Transfer);
+    } finally {
+      g.Atomics = originalAtomics;
     }
   });
 });

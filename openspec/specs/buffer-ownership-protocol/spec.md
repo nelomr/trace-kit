@@ -2,7 +2,7 @@
 
 > Change: `core-transport-contract`. New capability. Encodes design.md §D1, §D2, §D5.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Five-State Per-Slot Ownership Machine Over an Opaque Lease
 Each transit slot MUST be tracked as a five-state machine (`Free`, `Acquired`, `InFlight`,
@@ -73,7 +73,7 @@ unrelated new allocation from the caller's perspective.
   `bucketCount` of `1` and then `8192`
 - **WHEN**: `viewX(lease).length`, `viewOut(lease).length`, and `viewIndices(lease).length` are
   read after each request
-- **THEN**: they are exactly `65_536`, `16_384`, and `8_192` in both cases, unchanged by
+- **THEN**: they are exactly `65_536`, `16_384`, and `16_384` in both cases, unchanged by
   `bucketCount`
 - **AND**: the `outCount` reported to the settlement sink differs between the two requests, so the
   unchanged lengths are read from a run where the request demonstrably varied
@@ -88,22 +88,33 @@ unrelated new allocation from the caller's perspective.
   identity tracker rather than from one that never recorded anything
 
 ### Requirement: Failure-Path-Only Re-Minting
-Buffers MUST be re-minted only on the failure path (`onerror`, `onmessageerror`, or deadline
-timeout) where the responder has died holding them. Steady-state operation MUST NOT re-mint.
+Buffers MUST be re-minted only on the failure path (`onerror`, `onmessageerror`, explicit
+`reportResponderFailure`, or deadline timeout) where the responder has died or hung holding them.
+Steady-state operation MUST NOT re-mint. Direct `createBufferPool(config)` invocations (without
+internal `BufferPoolInternalOptions`) MUST allocate and re-mint plain `ArrayBuffer` views by
+default so standalone pools and `createSyncDecimationPort` remain unaffected by `SharedArrayBuffer`
+availability. When `createWorkerDecimationPort` supplies internal `BufferPoolInternalOptions`
+(`backing`, `allocateSlotViews`, `onResponderFailure`), failure-path recovery (`remintEventCount <
+maxRemintEvents`) MUST allocate fresh backing matching the active `BufferBacking`: fresh
+`ArrayBuffer`s in `BufferBacking.Transfer` mode, or fresh `SharedArrayBuffer` backing in
+`BufferBacking.Shared` mode so no zombie thread can alias a newly recovered slot.
 
 #### Scenario: No re-minting occurs during a clean run
 - **GIVEN**: 3,600 round trips with a healthy responder and no injected failure
 - **WHEN**: `stats.counters[StatCounter.RemintEvents]` is read after the run
 - **THEN**: it equals `0`
-- **AND**: the injected-failure scenario below runs in the same test file against the same
-  counter and observes a non-zero value, so this `0` is a discrimination rather than a reading
-  from a counter that is never incremented
+- **AND**: an injected-failure test in the same suite observes a non-zero `RemintEvents`, proving
+  the counter is live
 
-#### Scenario: Re-minting occurs only after an injected failure
-- **GIVEN**: one injected responder failure via `reportResponderFailure`
-- **WHEN**: the pool recovers
-- **THEN**: `stats.counters[StatCounter.RemintEvents]` equals exactly `poolPairs`, and no
-  re-minting occurred before the injected failure
+#### Scenario: Direct createBufferPool allocates ArrayBuffers while Shared worker port re-mints SharedArrayBuffers
+- **GIVEN**: a direct `createBufferPool({ poolPairs: 2 })` in Node, a `Transfer`-backed worker
+  port, and a `Shared`-backed worker port, each subjected to one injected responder failure while
+  slots are `InFlight`
+- **WHEN**: each recovers
+- **THEN**: the direct pool's views remain `ArrayBuffer`-backed before and after failure; the
+  `Transfer` port re-mints distinct `ArrayBuffer` views; the `Shared` port re-mints distinct
+  `SharedArrayBuffer` views; and in each case `RemintEvents` increments by the count of failed
+  slots
 
 ### Requirement: Explicit Buffer-Consumption Contract on the Public API
 The public transport API MUST state, in its type-level shape and its documentation, that
@@ -142,9 +153,11 @@ The pool MUST default to `poolPairs = 3`, clamped to `[1, 8]`, and MUST size tra
 capacity via `transitCapacitySamples` (default `65_536`) independent of total dataset size. A
 bulk load exceeding transit capacity MUST be chunked across successive leases rather
 than growing the pool. Per-slot element capacities MUST be fixed at construction as
-`viewX`/`viewY` = `transitCapacitySamples`, `viewOut` = `MAX_BUCKETS * 2` (two values per bucket
-for a min/max envelope), and `viewIndices` = `MAX_BUCKETS` (at most one index per emitted point),
-so the pool's footprint is a constant of the configuration with no term mentioning the dataset.
+`viewX`/`viewY` = `transitCapacitySamples`, `viewOut` = `MAX_BUCKETS * 2` (`16,384` floats: two
+values per bucket for a min/max envelope), and `viewIndices` = `MAX_BUCKETS * 2` (`16,384` ints:
+supporting up to `MAX_BUCKETS` min/max index pairs for `DecimationKind.MinMaxEnvelopeIndices` on
+4K viewports as well as `Lttb`), so the pool's footprint is a constant of the configuration with
+no term mentioning the dataset.
 
 #### Scenario: Pool memory footprint does not scale with dataset size
 - **GIVEN**: a payload of `1_000_000` samples and a payload of `10_000_000` samples, both driven
@@ -152,6 +165,13 @@ so the pool's footprint is a constant of the configuration with no term mentioni
 - **WHEN**: the pool's total allocated transit bytes are measured after each load completes
 - **THEN**: the pool's allocated transit byte count is identical in both cases (determined by
   `transitCapacitySamples`, not by the dataset size)
+
+#### Scenario: viewIndices supports MAX_BUCKETS MinMaxEnvelopeIndices output without overflow
+- **GIVEN**: a port configured at default capacities and a request with
+  `DecimationKind.MinMaxEnvelopeIndices` and `bucketCount = MAX_BUCKETS` (`8_192`)
+- **WHEN**: `viewIndices(lease).length` is inspected and the request settles
+- **THEN**: `viewIndices(lease).length === MAX_BUCKETS * 2` (`16_384`), and the request completes
+  without throwing a `RangeError`
 
 #### Scenario: A bulk load exceeding transit capacity is chunked
 - **GIVEN**: `transitCapacitySamples = 65_536` and a bulk load of `200_000` samples driven through
@@ -161,3 +181,46 @@ so the pool's footprint is a constant of the configuration with no term mentioni
 - **THEN**: it is dispatched across exactly `4` successive lease acquisitions —
   `ceil(200_000 / 65_536) = 4`, a deterministic count with no tolerance — and the pool's allocated
   transit byte count is exactly equal before and after
+
+### Requirement: Kind-Specific Partial View Replacement in `BufferPool`
+`BufferPool`'s internal `ReplacementViews` contract passed to `settle(lease, outCount,
+replacement?)` MUST allow partial view replacement (`x`, `y`, `out?`, `indices?`) so only views
+backed by actually transferred `ArrayBuffer`s are replaced on settlement:
+- `DecimationKind.MinMaxEnvelope`: replaces `x`, `y`, `out` (3 views); preserves existing
+  `viewIndices` reference (`===`).
+- `DecimationKind.MinMaxEnvelopeIndices`: replaces `x`, `y`, `indices` (3 views); preserves
+  existing `viewOut` reference (`===`).
+- `DecimationKind.Lttb`: replaces `x`, `y`, `out`, `indices` (4 views).
+
+#### Scenario: Partial replacement preserves untransferred views without re-minting
+- **GIVEN**: a `BufferPool` slot whose pre-submit `viewIndices` and `viewOut` references are
+  recorded
+- **WHEN**: `settle` is invoked with `{ x, y, out }` (omitting `indices`) for `MinMaxEnvelope`, and
+  in a subsequent cycle with `{ x, y, indices }` (omitting `out`) for `MinMaxEnvelopeIndices`
+- **THEN**: `viewIndices` remains strictly reference-identical (`===`) across the `MinMaxEnvelope`
+  cycle, and `viewOut` remains strictly reference-identical (`===`) across the
+  `MinMaxEnvelopeIndices` cycle
+
+### Requirement: Live Tracking of `LeasesOutstanding` and `OldestInFlightMs`
+`BufferPool` MUST maintain `StatCounter.LeasesOutstanding` and `StatGauge.OldestInFlightMs`
+accurately across the slot lifecycle:
+- `LeasesOutstanding` MUST equal the exact number of slots currently in `Acquired`, `InFlight`, or
+  `Settled` state (incremented on successful `acquire()`, decremented on valid `release()`,
+  decremented for failed slots in `failSlots()`, and reset to `0` on `dispose()`).
+- `OldestInFlightMs` MUST be updated during `sweepDeadlines()` and `readStats(out)` to the elapsed
+  milliseconds (`max(0, now() - min(dispatchTimestamps[slot]))`) across all slots currently in
+  `SlotState.InFlight`, or `0` when zero slots are `InFlight` or after `dispose()`.
+
+#### Scenario: LeasesOutstanding tracks acquire, submit, release, failure, and dispose accurately
+- **GIVEN**: a fresh pool with `poolPairs = 3`
+- **WHEN**: two leases are acquired, one is submitted and settled, one is released, then the
+  remaining in-flight lease fails via `reportResponderFailure`, and finally `dispose()` is called
+- **THEN**: `LeasesOutstanding` reads `0` initially, `2` after both acquires, `1` after releasing
+  one, `0` after the in-flight slot fails/recovers, and `0` after `dispose()`
+
+#### Scenario: OldestInFlightMs reflects the oldest InFlight dispatch age and resets to 0 when idle
+- **GIVEN**: a pool with an injected clock starting at `t = 100`
+- **WHEN**: slot `0` is submitted at `t = 100`, slot `1` is submitted at `t = 140`, `readStats` is
+  called at `t = 250`, slot `0` settles and releases, and `readStats` is called at `t = 300`, then
+  slot `1` settles and releases and `readStats` is called at `t = 320`
+- **THEN**: `OldestInFlightMs` reads `150` at `t = 250`, `160` at `t = 300`, and `0` at `t = 320`

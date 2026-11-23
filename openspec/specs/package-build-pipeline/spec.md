@@ -1,6 +1,6 @@
 # Capability: package-build-pipeline
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Dual ESM/CJS Build via tsup
 Every publishable package MUST build with `tsup` producing both an ESM and a CJS output, MUST
@@ -127,3 +127,46 @@ The `./webgl2` bundle MUST NOT import the `./font` entry or the `./svg` entry.
 - **GIVEN**: the built `./webgl2` ESM output and its chunks
 - **WHEN**: they are searched for the embedded font data URL and `exportToSvg`
 - **THEN**: neither appears
+
+### Requirement: `@trace-kit/core` Exposes `./worker` and `./node` Subpaths Built by tsup
+`packages/core/tsup.config.ts` MUST build three separate entry points — `src/index.ts`,
+`src/worker.ts`, and `src/node/index.ts` — each emitting ESM (`.js`), CJS (`.cjs`), TypeScript
+declarations (`.d.ts`), declaration maps (`.d.ts.map`), and sourcemaps. `packages/core/package.json`
+`exports` MUST declare `"./worker"` and `"./node"` alongside `"."`, each with `types`, `import`,
+and `require` conditions pointing at its built artifacts under `./dist/`. `packages/core/package.json`
+MUST retain `"sideEffects": false`.
+
+#### Scenario: Core subpaths resolve under both ESM and CJS with emitted declarations
+- **GIVEN**: the built `@trace-kit/core` package (`pnpm exec turbo run build --filter=@trace-kit/core`)
+- **WHEN**: Node evaluates both `import(...)` and `require(...)` for `@trace-kit/core`,
+  `@trace-kit/core/worker`, and `@trace-kit/core/node`, and `packages/core/dist/` is listed
+- **THEN**: all three subpaths resolve in both module formats exposing their documented exports
+  (`createWorkerDecimationPort` on `.`; `handleDecimationMessage`, `createDecimationWorkerHandler`,
+  `attachDecimationWorker`, and `attachCurrentDecimationWorker` on `./worker`; `adaptNodeWorker`,
+  `createNodeWorkerFactory`, `createNodeParentPortEndpoint`, and `attachNodeDecimationWorker` on
+  `./node`), and each entry has `.js`, `.cjs`, `.d.ts`, and `.d.ts.map` artifacts
+
+### Requirement: `node:worker_threads` Is Isolated to `@trace-kit/core/node`
+`packages/core/tsup.config.ts` MUST mark `node:worker_threads` as external. Neither the built root
+`.` artifacts nor the built `./worker` artifacts (and their shared chunks, if any) may import or
+reference `node:worker_threads` or any other `node:*` builtin. The `./worker` bundle MUST NOT pull
+unrelated viewport, CSV export, or SVG modules.
+
+#### Scenario: Root and worker build outputs contain zero Node builtin references
+- **GIVEN**: the built ESM and CJS outputs for `.` and `./worker` under `packages/core/dist/`
+- **WHEN**: a build-output inspection test scans `.` and `./worker` outputs for `node:worker_threads`
+  and `node:` specifiers, and scans `./worker` for viewport/export symbols (`exportToCsv`)
+- **THEN**: zero matches appear in `.` and `./worker` for `node:worker_threads` or `node:`, and
+  zero matches appear in `./worker` for `exportToCsv`
+
+### Requirement: `packages/core/SIDE_EFFECTS_AUDIT.md` Covers Every New Core Module
+`packages/core/SIDE_EFFECTS_AUDIT.md` MUST maintain exact bidirectional set equality with all
+source files matching `packages/core/src/**/*.ts` (including every new transport, streaming,
+`src/worker.ts`, and `src/node/index.ts` module), documenting that none performs an import-time
+side effect.
+
+#### Scenario: Bidirectional side-effects audit test passes with all new Change 8 files
+- **GIVEN**: `packages/core/src/**/*.ts` and `packages/core/SIDE_EFFECTS_AUDIT.md` after Change 8
+- **WHEN**: `packages/core/test/side-effects-audit.test.ts` runs
+- **THEN**: the file set listed in `SIDE_EFFECTS_AUDIT.md` equals the exact set of `.ts` files
+  under `packages/core/src/` with zero missing and zero extraneous entries

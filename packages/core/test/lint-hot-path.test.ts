@@ -110,10 +110,12 @@ async function lintInline(source: string, relativePath: string) {
   return results.flatMap((result) => result.messages);
 }
 
-describe("lint-hot-path glob covers the export and window modules", () => {
+describe("lint-hot-path glob covers the export, window, and streaming hot-path modules", () => {
   for (const relativePath of [
     "packages/core/src/export/__hot-path-fixture-proof__.ts",
     "packages/core/src/viewport/window.ts",
+    "packages/core/src/transport/streaming-contract.ts",
+    "packages/core/src/transport/materialize.ts",
   ]) {
     it(
       `trips every loop-allocation selector at ${relativePath}`,
@@ -128,6 +130,37 @@ describe("lint-hot-path glob covers the export and window modules", () => {
           );
           expect(hit, `${relativePath}:${line} ${fragment}`).toBeDefined();
         }
+      },
+      LINT_TIMEOUT_MS,
+    );
+  }
+
+  for (const relativePath of [
+    "packages/core/src/transport/streaming-contract.ts",
+    "packages/core/src/transport/materialize.ts",
+  ]) {
+    it(
+      `rejects .subarray inside a loop at ${relativePath}`,
+      async () => {
+        const subarrayBody = [
+          "export function proof(values: Float32Array, count: number): number {",
+          "  let total = 0;",
+          "  for (let i = 0; i < count; i += 1) {",
+          "    const view = values.subarray(i, i + 1);",
+          "    total += view[0] ?? 0;",
+          "  }",
+          "  return total;",
+          "}",
+          "",
+        ].join("\n");
+        const messages = await lintInline(subarrayBody, relativePath);
+        const hit = messages.find(
+          (message) =>
+            message.ruleId === "no-restricted-syntax" &&
+            message.line === 4 &&
+            message.message.includes("allocates a new view or object"),
+        );
+        expect(hit, `${relativePath}:4 subarray`).toBeDefined();
       },
       LINT_TIMEOUT_MS,
     );

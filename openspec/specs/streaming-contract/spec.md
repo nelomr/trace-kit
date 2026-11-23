@@ -1,23 +1,11 @@
 # Capability: streaming-contract
 
-> Change: `core-transport-contract`. New capability. Encodes design.md §D6 — the frozen data
-> structures and invalidation policy for incremental streaming decimation, plus the file
-> manifest's constraint on `packages/core/src/transport/streaming-contract.ts`: *types and
-> invariants frozen here, implementation in change 8*.
->
-> §D6 opens by correcting the proposal: the incremental decimation **implementation** is deferred
-> to change 8 (`worker-streaming-transport`), but its **contract cannot be**, because the
-> retained/transit split (§D5) and the transit pool capacity (§D2) are both derived from the fact
-> that only a delta travels. This capability freezes that contract and nothing more. It is the
-> same boundary the proposal's non-goal states; this delta does not move it.
->
-> Consequently every requirement below is asserted **statically** — by a type fixture compiled
-> under `tsc --noEmit`, or by a source-level gate over `streaming-contract.ts` — because no
-> runtime ingest, rotation, or rebuild behaviour exists in this change to observe. Each gate that
-> asserts an absence is paired with a fixture in the same run that drives the same gate to a
-> non-zero result, per the control pattern established by `ownership-prototype-gate` P3/P10.
+> Changes: `core-transport-contract` (frozen types, invariants, and factories),
+> `worker-streaming-transport` (live `O(new samples)` incremental ingest, Tier-1/2/3 domain
+> invalidation, `NaN` gap poisoning via `count[s] = -1`, `xOrigin` offset-space alignment, and
+> zero-allocation materialization into `Retained` `SpectrumDataPayload`).
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: `RawSampleRing` Is a Frozen Public Structural Contract
 `@trace-kit/core` MUST export an interface `RawSampleRing` from
@@ -122,94 +110,119 @@ sample sequence represented, comparable against `ring.totalWritten - ring.capaci
   assignment to be legal and the `Float32Array` assignment to be an actual type error
 
 ### Requirement: `count[s] === 0` Is the Sole Normative "No Data" Signal
-The contract MUST state normatively that a bucket with `count[s] === 0` carries **no data**, and
-that such a bucket MUST NEVER be populated with an interpolated, extrapolated, carried-forward, or
-otherwise fabricated value. Consumers MUST treat `count[s] === 0` as a **gap** and MUST NOT draw a
-connecting segment across it. This is why `count` is part of the frozen contract rather than an
-implementation detail (design.md §D6, "History underrun"), and it is the direct mitigation for the
-design's risk entry "History underrun silently rendering as interpolated data". No other field,
-sentinel value, or `NaN` convention may be introduced as an alternative no-data signal; in
-particular `min[s]`/`max[s]` for an empty bucket carry no defined meaning and MUST NOT be read.
+`BucketAccumulator.count` MUST remain the sole normative emptiness and gap signal within the
+frozen nine-member `BucketAccumulator` layout:
+- `count[s] === 0` MUST mean **no data / empty bucket** (no sample fell into slot `s`, including
+  buckets uncovered by history underrun).
+- `count[s] < 0` (specifically `count[s] = -1`, sticky until the bucket is cleared on rotation or
+  rebuilt) MUST mean **gap-poisoned bucket** (at least one `NaN` sample fell into slot `s`),
+  honoring Change 5.7 `gap-sentinel-semantics` so no rendered segment ever bridges a source `NaN`.
+- `count[s] > 0` MUST mean **populated finite bucket** holding valid `min[s]` and `max[s]`
+  extrema.
 
-#### Scenario: The contract exposes no competing no-data sentinel
-- **GIVEN**: a source-level gate over `streaming-contract.ts` looking for any declared sentinel
-  constant or `NaN`-based emptiness convention on `min` or `max`, plus a fixture in the same gate
-  invocation that declares such a sentinel
-- **WHEN**: the gate runs over both
-- **THEN**: the count of matches in `streaming-contract.ts` is exactly `0`
-- **AND**: the count of matches in the fixture is greater than `0`, proving the gate is live
+Consumers MUST treat every bucket with `count[s] <= 0` as a **gap** and MUST NEVER interpolate,
+extrapolate, carry forward, or fabricate values across it. No tenth field and no competing `NaN`
+emptiness sentinel on `min`/`max` may be introduced; `min[s]`/`max[s]` carry no defined meaning
+whenever `count[s] <= 0` and MUST NOT be read. `RawSampleRing.y` MUST still store every ingested
+`NaN` faithfully so a subsequent Tier-2 zoom-in exposes the exact gap position at higher resolution.
 
-#### Scenario: The gap rule is stated as a consumer obligation in the published type documentation
-- **GIVEN**: the doc comment attached to `BucketAccumulator.count` in `streaming-contract.ts`, and
-  the emitted `.d.ts` for the transport barrel
-- **WHEN**: a documentation gate reads both
-- **THEN**: both state that `0` means no data and that an empty bucket renders as a gap and is
-  never interpolated
-- **AND**: the gate fails when run against a fixture whose doc comment describes `count` only as a
-  sample tally, proving it checks the obligation and not merely the presence of a comment
+#### Scenario: Ingesting a NaN sample poisons the bucket without bridging across the gap
+- **GIVEN**: a `RawSampleRing` and `BucketAccumulator` covering `[0, 10)` with `bucketCount = 10`
+- **WHEN**: samples `(0.2, 1.0)`, `(0.5, NaN)`, and `(0.8, 2.0)` are ingested into bucket `0`, and
+  sample `(2.5, 4.0)` is ingested into bucket `2`
+- **THEN**: bucket `0` has `count[s0] === -1` (gap-poisoned), bucket `1` has `count[s1] === 0`
+  (empty), bucket `2` has `count[s2] === 1` with `min[s2] === 4.0` and `max[s2] === 4.0`, and
+  `ring.y[1]` is `NaN`
+
+#### Scenario: Zooming in via Tier-2 rebuild resolves a sub-bucket gap cleanly
+- **GIVEN**: the ring above containing `(0.2, 1.0)`, `(0.5, NaN)`, `(0.8, 2.0)`
+- **WHEN**: `rebuildDomain` runs over `[0, 1)` with `bucketCount = 10`
+- **THEN**: bucket `2` (`[0.2, 0.3)`) has `count > 0` (`min = max = 1.0`), bucket `5`
+  (`[0.5, 0.6)`) has `count === -1`, bucket `8` (`[0.8, 0.9)`) has `count > 0`
+  (`min = max = 2.0`), and all untouched buckets have `count === 0`
+
+#### Scenario: Frozen nine-member layout has no competing emptiness sentinel
+- **GIVEN**: a type check on `keyof BucketAccumulator` and a source-level gate over
+  `streaming-contract.ts`
+- **WHEN**: compiled with `tsc --noEmit` and checked
+- **THEN**: `BucketAccumulator` has exactly the nine frozen members, and `min`/`max` are never
+  compared to `NaN` to detect emptiness
 
 ### Requirement: `partialHistory` Is Declared on the Tier Result, Not on the Accumulator
-The contract MUST declare a `partialHistory` boolean carrying: the requested domain reaches
-earlier than `ring.totalWritten - ring.capacity`, so the ring no longer holds the samples for part
-of the requested span. When it is `true`, the uncovered buckets are left with `count === 0` and
-are therefore gaps under the requirement above; it MUST NOT be interpreted as a general error, a
-failure of the accumulator, or a reason to substitute values. `partialHistory` MUST be a distinct
-signal from `count[s] === 0`: the flag says *why* a span is empty, the counts say *which* buckets
-are.
+`partialHistory` MUST remain declared on `TierResult` (`Tier1Result`, `Tier2Result`, `Tier3Result`)
+and MUST NOT be added to `BucketAccumulator`. Both `applyDomainChange` (Tier 1 / Tier 2 / Tier 3)
+and `rebuildDomain` MUST compute and return `partialHistory` accurately at runtime:
+- `partialHistory` MUST be `true` when the ring has overwritten samples (`ring.totalWritten >
+  ring.capacity`) and the requested domain's lower bound (`domainMin`) reaches earlier than the
+  oldest resident sample still in the ring (sequence `ring.totalWritten - ring.capacity`), leaving
+  the uncovered span with `count[s] === 0`.
+- `partialHistory` MUST be `false` when no history has been overwritten or when the oldest resident
+  sample lies at or before the requested `domainMin`.
 
-`partialHistory` MUST be declared on the **tier result**, and MUST NOT be a member of
-`BucketAccumulator`, whose member set is frozen at exactly the nine members above (design.md §D6,
-"`partialHistory` lives on the tier result, not on `BucketAccumulator`"). Coverage is a property
-of a rebuild evaluated against a requested domain, not a standing property of the accumulator; the
-accumulator's own coverage is `coveredFromSeq`, and a second derived copy alongside it could
-disagree with it.
+#### Scenario: History underrun sets partialHistory to true and leaves uncovered buckets at count 0
+- **GIVEN**: a `RawSampleRing` of `capacity = 64` that has ingested `128` monotonically spaced
+  samples at `x = 0..127` (so sequences `0..63` were overwritten and resident samples cover `64..127`)
+- **WHEN**: `rebuildDomain` (or `applyDomainChange`) is requested for domain `[0, 128)`
+- **THEN**: the returned result has `partialHistory === true`, every bucket covering `[0, 64)` has
+  `count[s] === 0`, and buckets covering `[64, 128)` carry the exact resident min/max extrema
 
-#### Scenario: The flag is boolean, on the tier result, and documented against the underrun condition
-- **GIVEN**: a type fixture reading `partialHistory` from a tier result into a `boolean`-typed
-  binding, a second fixture reading `partialHistory` from a `BucketAccumulator` value under a
-  `// @ts-expect-error`, and the doc comment attached to the declaration
-- **WHEN**: both fixtures are compiled with `tsc --noEmit` and a documentation gate reads the
-  comment
-- **THEN**: compilation succeeds with zero diagnostics, which requires the tier-result read to be
-  legal and the accumulator read to be an actual "property does not exist" error — an
-  implementation that added `partialHistory` as a tenth accumulator member fails on the unused
-  `@ts-expect-error`
-- **AND**: the comment states the `totalWritten - capacity` underrun condition and states that
-  uncovered buckets are left at `count === 0` rather than filled
+#### Scenario: In-history domain reports partialHistory as false
+- **GIVEN**: the same ring with resident samples covering `64..127`
+- **WHEN**: `rebuildDomain` is requested for domain `[64, 128)`
+- **THEN**: the returned result has `partialHistory === false`
 
-#### Scenario: The flag does not substitute for the per-bucket signal
-- **GIVEN**: a type fixture attempting to determine bucket emptiness from `partialHistory` alone,
-  against the contract's declared tier-selection and coverage signatures
-- **WHEN**: the fixture is compiled with `tsc --noEmit`
-- **THEN**: no declared function in `streaming-contract.ts` returns per-bucket emptiness derived
-  from `partialHistory`, and per-bucket emptiness is reachable only through `count`
+### Requirement: Tier-1/2/3 Domain-Change Invalidation Executes Incrementally
+`@trace-kit/core` MUST implement all three domain-change invalidation tiers over `RawSampleRing`
+and `BucketAccumulator` without allocating arrays or per-sample objects on the hot path:
+- **Tier 1 (Aligned Pan via `applyDomainChange(accumulator, ring, request, stats?)` /
+  `rotateBucketOrigin`)**: When `selectTier` selects tier `1` with signed integer shift `k`
+  (`k !== 0`, `|k| < bucketCount`), the system MUST rotate `accumulator.bucketOrigin` into
+  `[0, bucketCount)` in both positive and negative directions, adopt the requested `domainMin`
+  verbatim, clear **only** the `|k|` newly exposed bucket slots (`count[s] = 0`), scan **only**
+  resident ring samples falling within the newly exposed X span to populate those `|k|` buckets,
+  increment `accumulator.revision` by `1`, update `coveredFromSeq`, and increment
+  `stats.counters[StatCounter.DomainShifts]` by `1` when `stats` is provided. The resulting bucket
+  contents MUST be exact-equal to a full Tier-2 rebuild over the same domain.
+- **Tier 2 (Settled Zoom or Non-Aligned Pan via `rebuildDomain(accumulator, ring, domainMin,
+  invBucketWidth, stats?)` / `applyDomainChange`)**: Clear all `bucketCount` slots in place
+  (`count.fill(0)` into the same preallocated typed arrays), set `bucketOrigin = 0`, adopt the
+  requested `domainMin` and `invBucketWidth`, fold every resident ring sample within the domain
+  into its bucket, update `coveredFromSeq`, increment `accumulator.revision` by `1`, increment
+  `stats.counters[StatCounter.DomainRebuilds]` by `1` when `stats` is provided, and report
+  `partialHistory`.
+- **Tier 3 (Continuous Gesture in Progress via `projectTier3(accumulator, requestedDomainMin,
+  requestedInvBucketWidth, targetBucketCount, out: Tier3ProjectionTarget, ring?)` /
+  `applyDomainChange`)**: MUST NOT mutate `accumulator.min`, `accumulator.max`, `accumulator.count`,
+  `accumulator.bucketOrigin`, `accumulator.domainMin`, `accumulator.invBucketWidth`, or
+  `accumulator.revision`. `projectTier3` MUST project the existing accumulator's buckets into the
+  caller-provided preallocated `Tier3ProjectionTarget` (`min`, `max`, `count`) for the requested
+  domain by merging or re-indexing existing buckets, preserving every gap (`count[s] <= 0`) and
+  guaranteeing the bounding invariant `outMin <= y <= outMax` for every finite sample covered
+  without fabricating, interpolating, or extrapolating any value.
 
-### Requirement: Tier-1/2/3 Invalidation Is Frozen as a Signature Surface Only
-The contract MUST declare the three-tier domain-change invalidation policy of design.md §D6 as a
-**typed selection surface**: a discriminated tier result covering tier 1 (aligned pan — zoom
-unchanged and the new `domainMin` differs by an exact integer multiple `k` of the bucket width;
-carries `k`), tier 2 (zoom change or non-aligned pan with the gesture settled — full rebuild into
-the same preallocated arrays), and tier 3 (continuous gesture in progress — render from the
-existing accumulator, no rebuild). The tier-**selection** function signature MUST be declared. The
-rebuild **bodies** MUST NOT be implemented in this change. The contract MUST additionally state
-the fidelity guarantee §D6 makes: a merged or re-indexed min/max bucket still bounds every sample
-it contains, so tier 3 degrades *resolution*, never *correctness*, and fabricates no value.
+#### Scenario: Tier-1 aligned pan matches a full Tier-2 rebuild bit-for-bit in both directions
+- **GIVEN**: a `fast-check` property test generating random `RawSampleRing` histories (including
+  wrap-around and `NaN` gaps), non-power-of-two `bucketCount`, and positive or negative aligned
+  shifts `k` with `1 <= |k| < bucketCount`
+- **WHEN**: one accumulator applies Tier-1 aligned pan via `applyDomainChange` and a twin
+  accumulator runs a full `rebuildDomain` on the target domain
+- **THEN**: for every logical bucket `b` in `[0, bucketCount)`, both accumulators produce identical
+  `count`, and whenever `count > 0`, identical `min` and `max`
 
-#### Scenario: The tier result is a discriminated union with exactly three variants
-- **GIVEN**: a type fixture exhaustively switching on the tier discriminant with no `default`
-  branch and a `never`-typed exhaustiveness check, plus a companion fixture handling only two of
-  the variants
-- **WHEN**: both are compiled with `tsc --noEmit`
-- **THEN**: the three-branch fixture compiles with zero diagnostics
-- **AND**: the two-branch fixture fails the `never` assignment, proving the exhaustiveness check
-  is live rather than trivially satisfied
+#### Scenario: Tier-2 rebuild reuses the exact preallocated typed arrays
+- **GIVEN**: a `BucketAccumulator` whose `min`, `max`, and `count` array references are captured
+  beforehand
+- **WHEN**: `rebuildDomain` executes across multiple domain changes
+- **THEN**: `accumulator.min`, `accumulator.max`, and `accumulator.count` remain strictly
+  reference-identical (`===`) to the pre-rebuild instances, and `bucketOrigin === 0`
 
-#### Scenario: Tier 1 carries the integer shift and tier 3 carries no rebuild output
-- **GIVEN**: a type fixture reading `k` from the tier-1 variant into a `number` binding, and under
-  a `// @ts-expect-error` reading `k` from the tier-3 variant
-- **WHEN**: the fixture is compiled with `tsc --noEmit`
-- **THEN**: compilation succeeds with zero diagnostics, which requires `k` to exist on tier 1 and
-  to be absent from tier 3
+#### Scenario: Tier-3 projection never mutates the accumulator
+- **GIVEN**: a populated `BucketAccumulator` at `revision === 3` with a snapshot of all its arrays
+  and scalar fields
+- **WHEN**: `projectTier3` evaluates at zoom factors `0.25x`, `1x`, `4x`, and `16x` and panned
+  offsets
+- **THEN**: every array element and every scalar field on `accumulator` (including `revision === 3`)
+  is byte-for-byte unchanged
 
 ### Requirement: The Circular Bucket Wrap Is a Conditional Subtraction Over an Unconstrained `bucketCount`
 The contract MUST state normatively that the accumulator's circular index is computed as a
@@ -316,69 +329,34 @@ accumulate unchecked.
   at some larger value or absent
 
 ### Requirement: `revision` Is a Bucket-Layout Generation, Never a Per-Sample Counter
-The contract MUST define `BucketAccumulator.revision` normatively as a **bucket-layout
-generation**: it starts at `0`, is monotonically non-decreasing, is never reset, and increments by
-exactly `1` when and only when the mapping from bucket index to domain changes — on a completed
-tier-1 rotation and on a completed tier-2 rebuild. It MUST NOT increment on ingest and MUST NOT
-increment on tier 3, which mutates nothing. The contract MUST record the reason (design.md §D6,
-§D5): `revision` exists for dirty-checking and GL-restore re-upload detection by integer compare,
-and a counter that moves per ingested sample answers "is anything different?" with "yes" on every
-read, making the compare worthless; content freshness is carried at the right granularity by
-`SpectrumDataPayload.revision`.
+`BucketAccumulator.revision` MUST start at `0`, MUST be monotonically non-decreasing, MUST never be
+reset, and MUST increment by exactly `1` on a completed Tier-1 rotation and on a completed Tier-2
+rebuild. It MUST NOT increment during `ingestSample`, `ingestBatch`, or Tier-3 `projectTier3`.
 
-#### Scenario: The declared policy names the two bumping events and excludes ingest and tier 3
-- **GIVEN**: the doc comment on `BucketAccumulator.revision` and the emitted `.d.ts` for the
-  transport barrel
-- **WHEN**: a documentation gate reads both
-- **THEN**: both state that `revision` increments by exactly `1` on a completed tier-1 rotation and
-  on a completed tier-2 rebuild, and that it does not increment on ingest or on tier 3
-- **AND**: the gate fails against a fixture comment stating only that `revision` is monotonic,
-  proving it checks the increment policy rather than the word "monotonic"
-
-#### Scenario: The deferred entry points leave `revision` untouched
-- **GIVEN**: the declared ingest entry point and the declared tier-3 evaluation entry point,
-  each invoked once with otherwise valid arguments on an accumulator at `revision === 7`
-- **WHEN**: each invocation throws its deferred-to-change-8 error and `revision` is read
-- **THEN**: `revision` is still exactly `7` after each
-- **AND**: in the same run, an accumulator whose `revision` is incremented directly reads back
-  exactly `8`, so the unchanged reading above comes from a field that is observably writable
+#### Scenario: Ingest and Tier-3 leave revision unchanged while Tier-1 and Tier-2 each bump by 1
+- **GIVEN**: a fresh `BucketAccumulator` initialized at `revision === 0`
+- **WHEN**: `1_000` samples are ingested via `ingestSample` and `ingestBatch`, then `projectTier3`
+  runs, then one Tier-1 aligned pan runs, then one Tier-2 rebuild runs
+- **THEN**: `revision` is `0` after ingest, `0` after `projectTier3`, `1` after the Tier-1 pan,
+  and `2` after the Tier-2 rebuild
 
 ### Requirement: The Tier-3 2x Zoom Boundary Is a Documented Characteristic With No Gate
-The contract MUST state that the `bucketOversample` boundary (default `2`) marks a **continuous**
-degradation in resolution and carries **no pass/fail gate**, and MUST state why: nothing changes
-state at the boundary for an assertion to anchor on, so a threshold there would be a gate on a
-continuous quantity of exactly the kind confirmed decision 3 rules out, and the only alternative
-observable — perceived blockiness — has no deterministic work-count expression. The literal `2`
-MUST appear only as a default value and in documentation, never in a gating comparison.
+`BUCKET_OVERSAMPLE_DEFAULT = 2` MUST remain a default value and documented characteristic only,
+never a gating comparison operand. At every zoom factor — including `0.1x`, `0.5x`, `1x`, `2x`,
+`4x`, `8x`, and `16x` — `projectTier3` MUST satisfy the runtime bounding invariant: for every
+finite sample `(x, y)` resident in the accumulator's covered buckets falling within a projected
+output bucket's X span (and not gap-poisoned), the projected output satisfies `outMin <= y <=
+outMax`, no value is fabricated for empty or gap buckets, and no comparison gates behavior on the
+literal `2`.
 
-What the contract MUST assert instead is the bounding property the design's Risks table already
-takes as its position: a merged or re-indexed min/max bucket still bounds every sample it
-contains (`min <= y <= max` for every sample in the bucket's span, at every zoom factor including
-well beyond 2x), no value is interpolated, extrapolated, or fabricated, and the gesture-end tier-2
-rebuild is **mandatory rather than best-effort**. Because no tier-3 body ships in this change, the
-bounding property is frozen as documented normative text binding change 8 and MUST NOT be claimed
-as measured here.
-
-#### Scenario: `bucketOversample` appears as a default and never as a gating comparison
-- **GIVEN**: a source-level gate over `streaming-contract.ts` classifying every occurrence of
-  `bucketOversample` and of `BUCKET_OVERSAMPLE_DEFAULT` as either a default-value initialiser or a
-  comparison operand, plus a fixture in the same gate invocation containing exactly one comparison
-  operand use
-- **WHEN**: the gate runs over both
-- **THEN**: the count of comparison-operand uses in `streaming-contract.ts` is exactly `0` while
-  the count of default-value uses is greater than `0`, so the zero is read from a classifier that
-  found the identifier at all
-- **AND**: the count of comparison-operand uses in the fixture is exactly `1`, proving the
-  classifier distinguishes the two uses
-
-#### Scenario: The fidelity text states bounding, mandatory rebuild, and the absence of a gate
-- **GIVEN**: the tier-3 doc comment and this change's verification report
-- **WHEN**: a documentation gate reads both
-- **THEN**: the comment states that a merged or re-indexed bucket bounds every sample it contains,
-  that no value is interpolated or fabricated, that the gesture-end tier-2 rebuild is mandatory,
-  and that the 2x boundary carries no gate
-- **AND**: neither the comment nor the verification report claims a measured tier-3 fidelity result
-  for this change, and the gate fails against a fixture report that does claim one
+#### Scenario: Tier-3 projection bounds every covered sample across 0.1x through 16x zoom
+- **GIVEN**: a `fast-check` property test populating a `RawSampleRing` and `BucketAccumulator`
+  across arbitrary finite spectra
+- **WHEN**: `projectTier3` projects the accumulator across zoom factors `0.1`, `0.5`, `1`, `2`, `4`,
+  `8`, and `16`
+- **THEN**: every populated projected bucket encloses `[min, max]` of every underlying accumulator
+  bucket overlapping it (`outMin <= y <= outMax` for all covered finite samples), and every
+  uncovered or gap-poisoned bucket produces no fabricated finite value
 
 ### Requirement: `MAX_BUCKETS` and `BUCKET_OVERSAMPLE_DEFAULT` Are Exported Named Constants
 The contract MUST export `MAX_BUCKETS = 8192` and `BUCKET_OVERSAMPLE_DEFAULT = 2` as named
@@ -403,61 +381,95 @@ upon as a constraint on `bucketCount`.
   `MAX_BUCKETS`, so the cap is observed to bind in one case and not the other rather than being
   applied unconditionally
 
-### Requirement: This Change Freezes Types and Invariants Only and Ships No Working Rebuild
-Per the design.md file manifest entry for `packages/core/src/transport/streaming-contract.ts`
-("types and invariants frozen here, implementation in change 8") and the proposal's non-goal
-deferring incremental `O(new samples)` streaming decimation to change 8, this change MUST NOT
-ship a working ingest loop, a working `bucketOrigin` rotation, or a working tier-1/2/3 rebuild.
-`streaming-contract.ts` MUST contain type declarations, documented invariants, constants, the
-argument-validating ring and accumulator factories required above, and function **signatures**.
-Those factories DO allocate their backing arrays and return a fully-formed, zero-filled value —
-construction is not a hot path and a factory that allocated nothing could not validate array
-lengths — but they MUST perform no ingest, no rotation, and no rebuild. any declared
-rebuild or ingest entry point MUST be unimplemented in a way that fails loudly if called, never a
-silent no-op that a consumer could mistake for a completed rebuild.
+### Requirement: Allocation-Free Incremental Ingest
+`@trace-kit/core` MUST provide working `ingestSample(ring, x, y, accumulator?)` and
+`ingestBatch(ring, xs, ys, offset, count, accumulator?)` executing in `O(new samples)` time with
+zero heap allocation on the hot path:
+- Every ingested sample MUST be written to `ring.x[ring.writeIndex]` and `ring.y[ring.writeIndex]`,
+  incrementing `ring.totalWritten` by `1` and updating
+  `ring.writeIndex = ring.totalWritten & (ring.capacity - 1)` using masked indexing (never `%`).
+- When an `accumulator` with `invBucketWidth > 0` is supplied, any sample whose `x` maps to logical
+  bucket `b = Math.floor((x - accumulator.domainMin) * accumulator.invBucketWidth)` with
+  `0 <= b < accumulator.bucketCount` MUST resolve its circular slot via conditional subtraction
+  (`let s = b + accumulator.bucketOrigin; if (s >= accumulator.bucketCount) s -=
+  accumulator.bucketCount;`) and update `min[s]`/`max[s]`/`count[s]` in place (or poison
+  `count[s] = -1` if `y !== y`). Samples outside `[0, bucketCount)` MUST still be stored in `ring`
+  and MUST NOT mutate any accumulator bucket.
 
-#### Scenario: No declared rebuild or ingest entry point has a working body
-- **GIVEN**: each rebuild and ingest entry point declared by `streaming-contract.ts`, invoked
-  once with otherwise valid arguments
-- **WHEN**: each invocation is executed
-- **THEN**: each throws a deferred-to-change-8 error
-- **AND**: the accumulator's `min`, `max`, `count`, `bucketOrigin`, and `revision` are byte-for-
-  byte and value-for-value unchanged after each invocation, so no partial work was performed
+#### Scenario: Ring wrap-around and incremental bucket updates match a fresh rebuild
+- **GIVEN**: a `RawSampleRing` of `capacity = 256` and a `BucketAccumulator` over `[0, 256)`
+- **WHEN**: `500` samples are ingested via `ingestSample` and `ingestBatch` (wrapping the ring),
+  with samples both inside and outside the accumulator domain
+- **THEN**: `ring.totalWritten === 500`, `ring.writeIndex === (500 & 255)`, out-of-domain samples
+  did not mutate any bucket, and for in-domain samples ingested since the last overwrite,
+  `accumulator` holds the exact min/max/count/gap state
 
-#### Scenario: The module writes to no accumulator or ring buffer
-- **GIVEN**: a source-level gate over `streaming-contract.ts` counting indexed writes and `fill`
-  calls against `min`, `max`, `count`, `x`, and `y`, plus a fixture in the same gate invocation
-  containing exactly three such writes
-- **WHEN**: the gate runs over both
-- **THEN**: the count in `streaming-contract.ts` is exactly `0`
-- **AND**: the count in the fixture is exactly `3`, proving the gate both fires and counts
-  correctly rather than reporting `0` for everything
+#### Scenario: ingestBatch reports zero GC events under --expose-gc with a live allocating control
+- **GIVEN**: a warmed-up `RawSampleRing` and `BucketAccumulator` ingesting `1_000` batches of
+  `256` samples via `ingestBatch` under `--expose-gc --no-concurrent-recompilation`, paired in the
+  same test run with an allocating control variant
+- **WHEN**: `PerformanceObserver({ entryTypes: ['gc'] })` measures both windows
+- **THEN**: `ingestBatch` records exactly `0` GC events while the allocating control records `> 0`
 
-### Requirement: Allocation-Free Ingest Is a Frozen Invariant on Change 8, Structurally Guarded Here
-Design.md §D6 states that ingest is `O(new samples)` **with no allocation** — per new sample two
-compares, one store-if, one increment, and no object, closure, or array. Because no ingest body
-ships in this change, that invariant MUST be frozen as documented normative text binding the
-change-8 implementation, and MUST NOT be claimed as measured in this change: a GC-event or
-allocation-counter gate run against an entry point that throws measures nothing. What this change
-MUST assert is structural — `streaming-contract.ts` contains no construct from the
-`allocation-free-hot-path` banned list (object literals, array literals, spreads, closures
-allocated per call, and `.subarray`) in any hot-path declaration — and tier 2's rebuild is frozen
-as writing into the **same preallocated arrays** via `fill` and an indexed loop, never into newly
-allocated ones.
+### Requirement: Ring and Accumulator Operate in xOrigin-Aligned Offset X Space
+`RawSampleRing.x` (`Retained<Float32Array>`) MUST follow the same `xOrigin` offset convention as
+`SpectrumDataPayload.x` (Change 7.5 `x-domain-space-reconciliation`): callers with high-offset
+physical axes (e.g., optical wavelengths near `1550.123456 nm`) store `Float32` offsets relative to
+a caller-owned `Float64` `xOrigin`, and `BucketAccumulator.domainMin` operates in that identical
+ring X space (`absDomainMin - xOrigin`, which equals absolute space when `xOrigin === 0`). This
+convention MUST be documented normatively in JSDoc on `RawSampleRing` and `BucketAccumulator`.
 
-#### Scenario: The banned-construct gate reports zero over the module and is proven live
-- **GIVEN**: the `allocation-free-hot-path` banned-construct gate extended to cover
-  `packages/core/src/transport/streaming-contract.ts`, plus the gate's existing live-proof fixture
-  containing banned constructs
-- **WHEN**: the gate runs over both in the same invocation
-- **THEN**: the violation count for `streaming-contract.ts` is exactly `0`
-- **AND**: the violation count for the fixture is greater than `0`
+#### Scenario: High-offset optical wavelength stream preserves sub-picometer bucket resolution
+- **GIVEN**: `xOrigin = 1550.0` (f64) and samples at absolute wavelengths `1550.000100 nm` through
+  `1550.000900 nm` stored as f32 offsets (`0.0001`..`0.0009`) in `RawSampleRing.x` with
+  `BucketAccumulator.domainMin = 0` and `invBucketWidth = 10_000`
+- **WHEN**: the samples are ingested and materialized into a `SpectrumDataPayload` with
+  `xOrigin = 1550.0`
+- **THEN**: distinct samples `0.0001 nm` apart land in distinct buckets without collapsing to a
+  single f32 quantization step, and the materialized payload carries `payload.xOrigin === 1550.0`
 
-#### Scenario: The invariant is recorded as change 8's obligation, not as a measurement taken here
-- **GIVEN**: the doc comment on the declared ingest entry point and this change's verification
-  report
-- **WHEN**: a documentation gate reads both
-- **THEN**: the comment states the per-sample cost and the no-allocation obligation as binding on
-  the implementing change
-- **AND**: neither the comment nor the verification report claims a measured allocation or
-  GC-event result for ingest in this change
+### Requirement: Zero-Allocation Materialization Into Retained SpectrumDataPayload
+`@trace-kit/core` MUST export `materializeBucketsToPayload(accumulator, payload, ringXOrigin?)`
+and `materializeTier3ToPayload(target, targetBucketCount, domainMin, invBucketWidth, payload,
+ringXOrigin?)`, each writing directly into a caller-preallocated `Retained` `SpectrumDataPayload`
+with zero heap allocation, committing the emitted sample count via `commitPayloadRevision`, and
+returning the emitted sample count:
+- Walking logical buckets `b = 0..bucketCount - 1` (resolving circular slot `s` via conditional
+  subtraction wrap for `BucketAccumulator`), compute bucket center X
+  `xCenter = domainMin + (b + 0.5) / invBucketWidth + ((ringXOrigin ?? payload.xOrigin) - payload.xOrigin)`.
+- For each populated bucket (`count[s] > 0`), emit two vertices `(xCenter, min[s])` and
+  `(xCenter, max[s])`.
+- For each empty or gap-poisoned bucket (`count[s] <= 0`), emit one gap-break vertex
+  `(xCenter, NaN)` so no renderer segment ever spans an empty or gap-poisoned bucket.
+- The caller's `payload.capacity` MUST be validated at the boundary (throwing a `RangeError` if
+  smaller than `bucketCount * 2`), and `payload.revision` MUST increment by `1` on completion.
+
+#### Scenario: Materialization writes valid Retained payload consumable by Canvas2D and WebGL2
+- **GIVEN**: a `BucketAccumulator` (and separately a `Tier3ProjectionTarget`) containing populated
+  buckets, an empty bucket (`count === 0`), and a gap-poisoned bucket (`count === -1`), plus a
+  preallocated `Retained` `SpectrumDataPayload`
+- **WHEN**: `materializeBucketsToPayload` (and `materializeTier3ToPayload`) executes
+- **THEN**: `payload.revision` increments by `1`, populated buckets emit exact `(xCenter, min)` /
+  `(xCenter, max)` pairs, empty and gap-poisoned buckets emit `NaN` in `payload.y`, and passing
+  `payload` to `Canvas2DRenderer` or `WebGL2FigureRenderer` renders without error and without
+  bridging any gap
+
+#### Scenario: Materialization reports zero GC events under --expose-gc
+- **GIVEN**: a warmed-up `BucketAccumulator` and preallocated `SpectrumDataPayload` materialized
+  `1_000` times under `--expose-gc --no-concurrent-recompilation`, paired with an allocating control
+- **WHEN**: `PerformanceObserver({ entryTypes: ['gc'] })` measures both windows
+- **THEN**: `materializeBucketsToPayload` records `0` GC events while the allocating control
+  records `> 0`
+
+### Requirement: Streaming Primitives Are Re-Exported From `@trace-kit/core`
+`@trace-kit/core` (root `.` entry) MUST export `MAX_BUCKETS`, `BUCKET_OVERSAMPLE_DEFAULT`,
+`computeBucketCount`, `createRawSampleRing`, `createBucketAccumulator`, `selectTier`,
+`rotateBucketOrigin`, `ingestSample`, `ingestBatch`, `applyDomainChange`, `rebuildDomain`,
+`projectTier3`, `materializeBucketsToPayload`, and `materializeTier3ToPayload` together with their
+public interfaces (`RawSampleRing`, `BucketAccumulator`, `TierResult`, `Tier1Result`,
+`Tier2Result`, `Tier3Result`, `TierSelectionRequest`, `Tier3ProjectionTarget`).
+
+#### Scenario: Root entry exposes the full streaming API in ESM and CJS
+- **GIVEN**: the built `@trace-kit/core` package
+- **WHEN**: imported via ESM `import('@trace-kit/core')` and CJS `require('@trace-kit/core')`
+- **THEN**: every listed streaming function and constant is defined and callable in both formats

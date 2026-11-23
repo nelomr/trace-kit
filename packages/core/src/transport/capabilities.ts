@@ -20,6 +20,7 @@ export interface TransportCapabilities {
 interface MaybeGlobalExtras {
   Worker?: unknown;
   crossOriginIsolated?: boolean;
+  Atomics?: unknown;
 }
 
 export function detectTransportCapabilities(): TransportCapabilities {
@@ -35,17 +36,29 @@ export function detectTransportCapabilities(): TransportCapabilities {
 /**
  * Internal-only backing selector. Never referenced from `decimation-port.ts`'s public surface —
  * the public currency is a lease handle plus accessors, which never leaks which backing moved
- * the data. The `Shared` backing's SPSC ring is not implemented yet; selection exists so the seam
- * is present without a required config field.
+ * the data. `Transfer` is the universal default; `Shared` is an optional detected fast path.
  */
 export const enum BufferBacking {
   Transfer = 0,
   Shared = 1,
 }
 
-/** `Shared` only when detected available; `Transfer` otherwise. Never a required config field. */
+/**
+ * Selects `Shared` when `SharedArrayBuffer` and `Atomics` are available (and, in browser realms
+ * where `crossOriginIsolated` or `Worker` is present, when `crossOriginIsolated` is true);
+ * otherwise defaults to `Transfer`. Never a required config field.
+ */
 export function selectBufferBacking(
   capabilities: TransportCapabilities,
 ): BufferBacking {
-  return capabilities.sharedMemory ? BufferBacking.Shared : BufferBacking.Transfer;
+  if (!capabilities.sharedMemory) return BufferBacking.Transfer;
+  const g = globalThis as typeof globalThis & MaybeGlobalExtras;
+  if (typeof g.Atomics === "undefined") return BufferBacking.Transfer;
+  const isBrowserRealm =
+    capabilities.workerConstructor ||
+    typeof g.crossOriginIsolated === "boolean";
+  if (isBrowserRealm && !capabilities.crossOriginIsolated) {
+    return BufferBacking.Transfer;
+  }
+  return BufferBacking.Shared;
 }

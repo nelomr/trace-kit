@@ -10,7 +10,7 @@ export const TRANSPORT_STAT_COUNT_I32 = 14;
 /** Exported so a caller can preallocate its own view. Equals `StatGauge`'s member count. */
 export const TRANSPORT_STAT_COUNT_F64 = 3;
 
-export const enum StatCounter {
+export enum StatCounter {
   ChunksAccepted = 0,
   ChunksDropped = 1,
   ConsecutiveDrops = 2, // reset to 0 on every accept
@@ -27,13 +27,13 @@ export const enum StatCounter {
   Health = 13,
 }
 
-export const enum StatGauge {
+export enum StatGauge {
   LastAcceptMs = 0,
   LastSubmitMs = 1,
   OldestInFlightMs = 2,
 }
 
-export const enum TransportHealth {
+export enum TransportHealth {
   Ready = 0,
   Saturated = 1, // dropping, but still accepting
   Stalled = 2, // no accept for stallDropThreshold consecutive drops

@@ -2,7 +2,7 @@
 
 > Change: `core-transport-contract`. New capability. Encodes design.md §D4.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: DecimationPort Interface With Pull-Based Settlement
 `DecimationPort` MUST expose `acquire`, `viewX`/`viewY`/`viewOut`/`viewIndices`, `submit`,
@@ -53,17 +53,18 @@ additive against the same interface.
   is not a per-call callback)
 
 ### Requirement: Synchronous In-Thread Default Implementation
-`createSyncDecimationPort` MUST run `minMaxEnvelope` and `lttb` synchronously on the calling
-thread, without referencing any browser global, so it is trivially Node- and SSR-safe. It MUST
-still drive the slot through `InFlight` -> `Settled` rather than short-circuiting the state
-machine.
+`createSyncDecimationPort` MUST run `minMaxEnvelope`, `lttb`, and `minMaxEnvelopeIndices`
+synchronously on the calling thread, without referencing any browser global, so it is trivially
+Node- and SSR-safe. It MUST still drive the slot through `InFlight` -> `Settled` rather than
+short-circuiting the state machine.
 
-#### Scenario: The sync port runs to completion in a plain Node environment
-- **GIVEN**: `createSyncDecimationPort` invoked from a Vitest test running in Vitest's `node`
-  environment (no jsdom)
-- **WHEN**: `acquire` -> `submit` -> `poll` runs
-- **THEN**: the call completes with a settled lease and no `ReferenceError` for any browser
-  global
+#### Scenario: The sync port executes all three DecimationKind values in plain Node
+- **GIVEN**: `createSyncDecimationPort` invoked in Vitest's `node` environment (no jsdom)
+- **WHEN**: separate `acquire` -> `setKind` -> `submit` -> `poll` -> `release` cycles run for
+  `DecimationKind.MinMaxEnvelope`, `DecimationKind.Lttb`, and
+  `DecimationKind.MinMaxEnvelopeIndices`
+- **THEN**: every cycle completes with a settled lease, no `ReferenceError`, and outputs matching
+  direct calls to `minMaxEnvelope`, `lttb`, and `minMaxEnvelopeIndices`
 
 #### Scenario: The sync port exercises every state transition
 - **GIVEN**: a lease acquired from the sync port
@@ -90,31 +91,27 @@ module scope.
   module-scope cache masked the change
 
 ### Requirement: The Core Never Constructs a Worker
-`packages/core` MUST NOT construct a `Worker` anywhere, and MUST NOT reference `Worker` or
-`self` at module scope in any file. The asynchronous transport delivered by change 8 MUST be
-injected as a `workerFactory: () => Worker` supplied by an adapter or host application, so the
-dual-format (ESM + CJS) build is never broken by a
+`packages/core` MUST NOT construct a `Worker` anywhere, MUST NOT reference `Worker` or `self` at
+module scope in any file, and MUST NOT reference ambient DOM/WebWorker `Worker` global types in
+`packages/core/src/**`. The asynchronous port factory `createWorkerDecimationPort` MUST accept a
+caller-supplied, DOM-free `workerFactory: WorkerFactory` (`() => WorkerLike`) so the dual-format
+(ESM + CJS) build is never broken by a
 `new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })` form.
 
-#### Scenario: A source-level gate rejects Worker construction in the core
+#### Scenario: A source-level gate rejects Worker construction and module-scope globals in core
 - **GIVEN**: a grep- or AST-based CI check over `packages/core/src/**`
-- **WHEN**: it scans for `new Worker(`, and for `Worker` or `self` references outside a function
-  body
-- **THEN**: the check reports no match, and the check itself is proven live by a fixture file
-  containing such a reference that the same check flags
+- **WHEN**: it scans for `new Worker(`, and for `Worker` or `self` value references outside a
+  function body
+- **THEN**: the check reports zero matches across `packages/core/src/**`, and flags a live control
+  fixture containing such a reference
 
-#### Scenario: No workerFactory field is declared in this change
-- **GIVEN**: the transport module's exported types and the port configuration type
-- **WHEN**: they are enumerated
-- **THEN**: no `workerFactory` field, no `Worker`-typed member, and no `Worker` type reference
-  appears anywhere in them — design.md §D4 rejects a `workerFactory?` field on this change's
-  config outright ("dead configuration invites a module-scope `Worker` type reference and lies
-  about what is implemented"), so declaring one would both contradict the design and defeat the
-  no-`Worker`-at-module-scope gate above
-- **AND**: the seam is instead the factory-function boundary: `createSyncDecimationPort` is the
-  only port factory this change exports, and a fixture consumer written against `DecimationPort`
-  compiles unchanged against a second factory added later, proving change 8 is additive without
-  any seam field existing now
+#### Scenario: WorkerDecimationPortConfig uses DOM-free WorkerFactory with no ambient Worker type
+- **GIVEN**: `packages/core/tsconfig.json` configured with `"lib": ["ES2022"]` (no `DOM` or
+  `WebWorker` lib)
+- **WHEN**: `tsc --noEmit` compiles `packages/core` and the emitted `.d.ts` for
+  `WorkerDecimationPortConfig` is inspected
+- **THEN**: compilation succeeds with zero diagnostics, `WorkerDecimationPortConfig` declares
+  `workerFactory: WorkerFactory`, and `SyncDecimationPortConfig` remains free of `workerFactory`
 
 ### Requirement: The Core Loads and Runs With No DOM Globals
 `@trace-kit/core` MUST load and the synchronous port MUST run an `acquire`/`submit`/`poll`/
@@ -126,3 +123,33 @@ dual-format (ESM + CJS) build is never broken by a
   asserts `window`, `document`, and `Worker` are undefined
 - **WHEN**: `createSyncDecimationPort` is constructed and driven through a full round trip
 - **THEN**: the cycle completes with a settled lease and no `ReferenceError` is thrown
+
+### Requirement: `DecimationKind` Includes `MinMaxEnvelopeIndices`
+`DecimationKind` MUST include `MinMaxEnvelopeIndices = 2` alongside `MinMaxEnvelope = 0` and
+`Lttb = 1`. When a lease is submitted with `DecimationKind.MinMaxEnvelopeIndices`, both
+`createSyncDecimationPort` and `createWorkerDecimationPort` MUST run `minMaxEnvelopeIndices` on
+`(viewX, viewY, sampleCount, bucketCount)` writing into `viewIndices`, and MUST report the emitted
+index count as `outCount` to `SettlementSink.onSettled`.
+
+#### Scenario: MinMaxEnvelopeIndices produces renderer-compatible indices through sync and worker ports
+- **GIVEN**: a 200,000-sample waveform processed with `DecimationKind.MinMaxEnvelopeIndices` and
+  `bucketCount = 800` through both `createSyncDecimationPort` and `createWorkerDecimationPort`
+- **WHEN**: `poll(sink)` delivers the settled leases
+- **THEN**: both ports report identical `outCount` and bit-exact identical `viewIndices[0..outCount-1]`
+  matching `minMaxEnvelopeIndices` directly
+
+### Requirement: Asynchronous Worker Port Satisfies the Unchanged `DecimationPort` Surface
+`createWorkerDecimationPort` MUST return a value assignable to the exact, unchanged 19-member
+`DecimationPort` interface (`mode`, `poolPairs`, `transitCapacitySamples`, `acquire`, `viewX`,
+`viewY`, `viewOut`, `viewIndices`, `submit`, `poll`, `release`, `reportResponderFailure`,
+`noteDroppedSamples`, `readStats`, `dispose`, `setKind`, `setSampleCount`, `setBucketCount`,
+`setDomain`) with `mode === PortMode.Asynchronous`, zero `Promise` return types, and zero per-call
+settlement callbacks.
+
+#### Scenario: Consumer function typed against DecimationPort runs identically on sync and worker ports
+- **GIVEN**: one generic caller loop typed strictly against `DecimationPort` (no `Promise`, no
+  per-call callback, no `BufferBacking` reference)
+- **WHEN**: the identical function executes against `createSyncDecimationPort` and against
+  `createWorkerDecimationPort`
+- **THEN**: `tsc --noEmit` succeeds with zero diagnostics and both runs produce identical decimated
+  outputs

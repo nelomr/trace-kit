@@ -32,6 +32,7 @@ export default tseslint.config(
   {
     files: ["**/*.ts"],
     ignores: [
+      "packages/core/src/node/**",
       "packages/core/test/**",
       "packages/core/bench/**",
       "packages/renderers/test/**",
@@ -116,6 +117,7 @@ export default tseslint.config(
     // already lists `test/**` in its own `tsconfig.json` `include`, so its test files reach a
     // program through ordinary `projectService` discovery and must stay on the block above.
     files: [
+      "packages/core/src/node/**/*.ts",
       "packages/core/test/**/*.ts",
       "packages/core/bench/**/*.ts",
       "packages/renderers/test/**/*.ts",
@@ -127,6 +129,7 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         project: [
+          "packages/core/tsconfig.node.json",
           "packages/core/tsconfig.test.json",
           "packages/renderers/tsconfig.test.json",
         ],
@@ -174,6 +177,8 @@ export default tseslint.config(
     files: [
       "packages/core/src/decimation/**/*.ts",
       "packages/core/src/viewport/window.ts",
+      "packages/core/src/transport/streaming-contract.ts",
+      "packages/core/src/transport/materialize.ts",
     ],
     rules: {
       "no-restricted-syntax": [

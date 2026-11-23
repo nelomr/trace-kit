@@ -26,7 +26,7 @@ export type Lease<S extends LeasePhase> = number & {
 export const SATURATED = -1 as const;
 export type Saturated = typeof SATURATED;
 
-export const enum SlotState {
+export enum SlotState {
   Free = 0,
   Acquired = 1,
   InFlight = 2,

@@ -2,7 +2,7 @@
 
 > Change: `core-transport-contract`. New capability. Encodes design.md §D2, §D3.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Saturation Drops the Chunk and Counts, Never Allocates
 When no pool pair is free, `acquire()` MUST return `SATURATED` (`-1`), the ingest path MUST drop
@@ -124,40 +124,39 @@ timer handle may exist anywhere in the port, so nothing keeps an event loop aliv
 `dispose()`. Timestamps MUST come from `globalThis.performance.now()` when available and
 `Date.now()` otherwise, with that check inside a function body and never at module scope.
 
-On detection every `InFlight` slot MUST move to `Lost`, be re-minted with fresh backing and views,
-and have its `generation` incremented so a zombie reply for a pre-failure lease fails the
-generation compare, is discarded, and increments `StaleSettlements`. Re-minting MUST be capped at
-`maxRemintEvents` (default `8`); at the cap the lost slots MUST NOT be re-minted, `Health` MUST
-become `Degraded` terminally, and `acquire()` MUST return `SATURATED` permanently.
+On detection every `InFlight` slot MUST move to `Lost`, any failed/hung worker instance MUST be
+terminated immediately, and if `remintEventCount < maxRemintEvents` (default `8`), the lost slots
+MUST be re-minted with fresh backing and views, have their `generation` incremented (so any zombie
+reply fails the generation compare, is discarded, and increments `StaleSettlements`), and transition
+back to `Free` with a replacement worker respawned lazily via `workerFactory()` on the next
+`acquire()` or `submit()`. At the cap (`remintEventCount >= maxRemintEvents`), the lost slots MUST
+NOT be re-minted, `workerFactory()` MUST NOT be invoked again, `Health` MUST become `Degraded`
+terminally, and `acquire()` MUST return `SATURATED` permanently.
 
 #### Scenario: A hung responder that fires no event is recovered by the lazy sweep
 - **GIVEN**: a lease submitted and never settled, with the port's time source advanced past
   `leaseTimeoutMs`, and no call to `reportResponderFailure`
 - **WHEN**: `acquire()` is called
-- **THEN**: the sweep moves the timed-out slot to `Lost` and back to `Free` via re-mint,
-  `stats.counters[StatCounter.ResponderFailures]` increments by exactly `1` with
-  `FailureReason.Timeout`, and the returned lease is usable
-- **AND**: an identical port whose time source is advanced to exactly `leaseTimeoutMs - 1`
-  performs no sweep in the same run — `ResponderFailures` stays exactly `0` — so the recovery
-  above is attributable to the deadline and not to `acquire()` sweeping unconditionally
+- **THEN**: the sweep terminates the hung worker (if worker-backed), moves the timed-out slot to
+  `Lost` and back to `Free` via re-mint, increments `ResponderFailures` by `1`, lazily respawns a
+  fresh worker, and returns a usable lease
+- **AND**: an identical port whose time source is advanced to `leaseTimeoutMs - 1` performs no
+  sweep (`ResponderFailures === 0`)
 
 #### Scenario: No timer is ever created
 - **GIVEN**: a test that replaces `globalThis.setTimeout` and `globalThis.setInterval` with
-  counting stubs before the port is constructed
-- **WHEN**: a full run including a timeout-triggered sweep and `dispose()` completes
-- **THEN**: both stubs record exactly `0` calls
-- **AND**: a control in the same run that schedules one `setTimeout` directly records exactly `1`,
-  proving the stubs are installed and observing
+  counting stubs before a worker or sync port is constructed
+- **WHEN**: a full run including a timeout-triggered sweep, respawn, and `dispose()` completes
+- **THEN**: both stubs record exactly `0` calls, while a direct `setTimeout` control records `1`
 
-#### Scenario: The re-mint cap is terminal
-- **GIVEN**: `maxRemintEvents = 8` and a crash-looping responder driven through `9` injected
-  failures
-- **WHEN**: counters and health are read after each failure
-- **THEN**: `RemintEvents` stops increasing at exactly `8 * poolPairs` and does not increase on the
-  ninth failure, `Health` is `Degraded`, and every subsequent `acquire()` returns `SATURATED`
-- **AND**: after the eighth failure and before the ninth, `Health` returned to `Ready` and
-  `acquire()` returned a usable lease, so the terminal state is reached at the cap rather than at
-  the first failure
+#### Scenario: The re-mint cap is terminal and halts worker respawn
+- **GIVEN**: a worker port with `maxRemintEvents = 3` and a crash-looping responder driven through
+  `4` failures
+- **WHEN**: counters, `Health`, and `workerFactory` invocation count are inspected after each
+  failure
+- **THEN**: recovery and lazy respawn occur for failures 1 through 3, while failure 4 leaves
+  `RemintEvents` unchanged, invokes `workerFactory` `0` additional times, sets `Health` to
+  `TransportHealth.Degraded`, and causes every subsequent `acquire()` to return `SATURATED`
 
 ### Requirement: Deterministic Stats Contract Backed by Preallocated Typed Arrays
 `TransportStatsView` MUST expose `counters: Int32Array` and `gauges: Float64Array` of fixed,
@@ -201,3 +200,22 @@ the nursery, so it is retained only as subordinate corroboration.
 - **WHEN**: a `PerformanceObserver({ entryTypes: ['gc'] })` counts events over the measured window
 - **THEN**: the observed count is `0`, recorded as corroboration subordinate to the
   construction-count assertion rather than as the determination itself
+
+### Requirement: Live Maintenance of `LeasesOutstanding`, `OldestInFlightMs`, `DomainShifts`, and `DomainRebuilds`
+Live transport and streaming runs MUST populate every counter and gauge defined in `StatCounter`
+and `StatGauge`:
+- `StatCounter.LeasesOutstanding` MUST reflect the live count of non-`Free`, non-`Lost` slots.
+- `StatGauge.OldestInFlightMs` MUST reflect the elapsed age in milliseconds of the oldest currently
+  `InFlight` slot (`0` when no slot is `InFlight`).
+- `@trace-kit/core` MUST provide allocation-free telemetry recording helpers (or streaming stats
+  hooks) so a completed Tier-1 aligned-pan rotation increments `StatCounter.DomainShifts` by `1`
+  and a completed Tier-2 rebuild increments `StatCounter.DomainRebuilds` by `1` in a
+  `TransportStatsView`.
+
+#### Scenario: DomainShifts and DomainRebuilds increment accurately without allocation
+- **GIVEN**: a `TransportStatsView` wired to streaming domain-change execution
+- **WHEN**: three Tier-1 aligned pans, two Tier-2 rebuilds, and five Tier-3 in-gesture projections
+  execute
+- **THEN**: `stats.counters[StatCounter.DomainShifts] === 3` and
+  `stats.counters[StatCounter.DomainRebuilds] === 2`, while Tier-3 projections increment neither
+  counter

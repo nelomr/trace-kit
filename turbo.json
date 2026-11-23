@@ -6,10 +6,20 @@
       "outputs": ["dist/**"]
     },
     "test": {
-      "dependsOn": ["build", "test:visual"]
+      "dependsOn": ["build", "test:visual", "test:browser"]
     },
     "test:unit": {
       "dependsOn": []
+    },
+    "test:browser": {
+      "dependsOn": ["build"],
+      "inputs": [
+        "src/**",
+        "test/browser/**",
+        "../../vitest.config.ts",
+        "../../pnpm-workspace.yaml"
+      ],
+      "outputs": []
     },
     "test:visual": {
       "dependsOn": ["build"],

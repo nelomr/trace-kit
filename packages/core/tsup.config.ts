@@ -1,21 +1,18 @@
 import { defineConfig } from "tsup";
 
-// Dual ESM + CJS build so consumers on either module system can `import` or `require` this
-// package without a bundler doing the translation. `bench/` and `test/` are outside `src/`,
-// so this glob never sees them — they are typechecked and linted via `tsconfig.test.json`
-// instead, never published.
+// Dual ESM + CJS multi-entry build so consumers on either module system can `import` or `require`
+// `@trace-kit/core`, `@trace-kit/core/worker`, or `@trace-kit/core/node` without pulling Node
+// builtins into browser bundles or unrelated viewport/export code into worker bundles.
 //
-// KNOWN, ACCEPTED GAP (not a silent oversight): tsup's `dts` option bundles declarations via
-// `rollup-plugin-dts`, which does not emit `.d.ts.map` declaration maps at all (no
-// `sourcemap` field exists on tsup's `DtsConfig` type). The alternative
-// `experimentalDts: true` path requires `@microsoft/api-extractor`, a new, uncatalogued
-// dependency that isn't justified unless `dts` generation actually becomes a build
-// bottleneck. `dts: true` is used as written; declaration maps are not emitted. `.js`/`.cjs`
-// sourcemaps ARE emitted (tsup supports those natively) and are the sourcemap guarantee this
-// build can actually keep.
+// `node:worker_threads` is externalized and imported exclusively by `src/node/index.ts`.
+// tsup's declaration bundler cannot emit `.d.ts.map` files; `tsconfig.dts.json` adds declaration
+// maps in the post-build `tsc` step (mirroring `packages/renderers/tsconfig.svg-dts.json`).
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: ["src/index.ts", "src/worker.ts", "src/node/index.ts"],
   format: ["esm", "cjs"],
+  external: ["node:worker_threads"],
+  removeNodeProtocol: false,
+  tsconfig: "tsconfig.dts.json",
   dts: true,
   sourcemap: true,
   clean: true,

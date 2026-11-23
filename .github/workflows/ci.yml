@@ -86,6 +86,33 @@ jobs:
       - name: Lint-rules ban is enforced (regression meta-test)
         run: pnpm exec vitest run packages/core/test/lint-rules.test.ts
 
+      - name: Verify test:browser task is non-vacuous
+        run: node scripts/verify-turbo-ran.mjs test:browser
+
+      - name: Browser worker tests (Transfer non-isolated + Shared COOP/COEP)
+        run: pnpm --filter @trace-kit/core test:browser --reporter=json --outputFile=/tmp/browser-worker-results.json
+
+      - name: Confirm browser worker suites actually ran (anti-vacuity)
+        run: |
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync("/tmp/browser-worker-results.json", "utf8"));
+            if (r.numPassedTests + r.numFailedTests === 0 || r.numPendingTests > 0) {
+              console.error(
+                "Browser worker suite did not execute all tests cleanly. numPassedTests=" +
+                r.numPassedTests + " numFailedTests=" + r.numFailedTests +
+                " numPendingTests=" + r.numPendingTests,
+              );
+              process.exit(1);
+            }
+            console.log(
+              r.numPassedTests + " passed, " + r.numFailedTests + " failed, " +
+              r.numPendingTests + " pending, out of " + r.numTotalTests + " browser worker cases.",
+            );
+          '
+
+      - name: Verify playground production build (with module worker)
+        run: pnpm --filter @trace-kit/playground run build
+
       - name: Verify test:visual task is non-vacuous
         run: node scripts/verify-turbo-ran.mjs test:visual
 

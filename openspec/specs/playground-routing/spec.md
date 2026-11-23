@@ -1,6 +1,6 @@
 # Capability: playground-routing
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Additive Route Registration
 The route registry MUST resolve exactly the set of registered views, and registering an
@@ -19,8 +19,8 @@ file `apps/playground/src/views/index.ts`.
 - **GIVEN**: the playground with every view module imported by
   `apps/playground/src/views/index.ts` registered
 - **WHEN**: the registry's list of resolvable paths is inspected
-- **THEN**: it equals exactly the set `/home`, `/core-math`, `/svg-export` and `/engine-parity`,
-  and no other path
+- **THEN**: it equals exactly the set `/home`, `/core-math`, `/svg-export`, `/engine-parity`, and
+  `/streaming-transport`, and no other path
 
 ### Requirement: Landing View and Default Route
 A `/home` view MUST be registered, listing every other registered view (read from the registry
@@ -54,8 +54,6 @@ MUST be asserted by count, not by manual inspection.
 - **THEN**: after unmount, the number of `removeEventListener` calls matching the mount's
   `addEventListener` calls is equal, and the animation-frame callback is cancelled, leaving a
   net-zero outstanding registration count
-
-## ADDED Requirements
 
 ### Requirement: The SVG Export View Registers at `/svg-export` Without Shell Edits
 The SVG export view MUST be registered through the registry's registration function at the path
@@ -102,3 +100,21 @@ appear automatically as a link on `/home`.
   registration
 - **WHEN**: routes are resolved from that registry
 - **THEN**: the view's route resolves through the registry alone; no shell or router file is needed
+
+### Requirement: The Streaming Transport View Registers at `/streaming-transport` Without Shell Edits
+The streaming transport view (`playground-streaming-transport-view`) MUST be registered through the
+registry's registration function at the path `/streaming-transport` with a human-readable label
+(e.g., `"Streaming Transport"`), a mount function, and an unmount function, from a `register.ts`
+under `apps/playground/src/views/streaming-transport/` imported by
+`apps/playground/src/views/index.ts`. Registering it MUST require no edit to shell, router, or
+landing view sources, and it MUST appear automatically as a link on `/home`.
+
+#### Scenario: The route resolves to the streaming transport view
+- **GIVEN**: the playground with all views registered
+- **WHEN**: the registry resolves `/streaming-transport`
+- **THEN**: it returns the streaming transport view's mount function
+
+#### Scenario: The landing view lists `/streaming-transport` automatically
+- **GIVEN**: `/home` mounted with all registered views
+- **WHEN**: its navigation links are enumerated
+- **THEN**: one link targets `/streaming-transport` without any edit to the `/home` view source
