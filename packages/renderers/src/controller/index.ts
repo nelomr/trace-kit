@@ -51,5 +51,7 @@ export type {
   SpectrumEngineController,
   SpectrumEngineControllerOptions,
   ViewportDomain,
+  WebGL2ContextLostEvent,
+  WebGL2ContextRestoredEvent,
   WebGL2FallbackEvent,
 } from "./types.js";

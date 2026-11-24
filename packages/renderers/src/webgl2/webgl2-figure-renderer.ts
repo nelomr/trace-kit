@@ -44,13 +44,19 @@ import { tryParseCssColorInto } from "./color.js";
 import { clearGlCanvas, drawGlFrame, FrameState, UNIFORM_ROW_STRIDE } from "./frame.js";
 import type { Gl2Context } from "./gl-context.js";
 import { createGlPrograms, type GlPrograms } from "./program.js";
+import { attachRecoveryHandle } from "./rehydrate.js";
 import {
   acquireOverlayContext,
   acquireWebGl2Context,
   type OverlayDrawingContext,
   type WebGL2FigureSurfaces,
 } from "./surfaces.js";
-import { createTraceSlot, releaseTraceSlot, type TraceGpuSlot } from "./trace-slot.js";
+import {
+  createTraceSlot,
+  invalidateTraceSlotGpu,
+  releaseTraceSlot,
+  type TraceGpuSlot,
+} from "./trace-slot.js";
 
 export interface WebGL2FigureRendererOptions {
   /** Three distinct canvases the caller has stacked in one CSS box. */
@@ -134,7 +140,9 @@ export class WebGL2FigureRenderer implements FigureRenderer {
     try {
       this.#programs = createGlPrograms(gl);
     } catch (error) {
-      gl.getExtension("WEBGL_lose_context")?.loseContext();
+      if (!gl.isContextLost()) {
+        gl.getExtension("WEBGL_lose_context")?.loseContext();
+      }
       throw error;
     }
 
@@ -159,6 +167,13 @@ export class WebGL2FigureRenderer implements FigureRenderer {
     this.#frame = new FrameState(gl, this.#programs, first);
     this.#frame.allocate(0);
     this.#frame.selection = options.decimation ?? null;
+    attachRecoveryHandle(
+      this,
+      Object.freeze({
+        isContextLost: () => this.#isContextLost(),
+        rehydrate: () => this.#rehydrate(),
+      }),
+    );
   }
 
   static #acquireUnderlay(surfaces: WebGL2FigureSurfaces): TraceDrawingContext {
@@ -302,7 +317,7 @@ export class WebGL2FigureRenderer implements FigureRenderer {
     const underlay = this.#underlay;
     const overlay = this.#overlay;
     const gl = this.#gl;
-    if (underlay === null || overlay === null || gl === null) return;
+    if (underlay === null || overlay === null || gl === null || gl.isContextLost()) return;
 
     this.#releaseRetiredSlots(gl);
     const t = this.#primaryTransform;
@@ -349,7 +364,7 @@ export class WebGL2FigureRenderer implements FigureRenderer {
     const underlay = this.#underlay;
     const overlay = this.#overlay;
     const gl = this.#gl;
-    if (underlay === null || overlay === null || gl === null) return;
+    if (underlay === null || overlay === null || gl === null || gl.isContextLost()) return;
     const t = this.#primaryTransform;
     underlay.setTransform(1, 0, 0, 1, 0, 0);
     underlay.fillStyle = this.#style.backgroundColor;
@@ -369,7 +384,7 @@ export class WebGL2FigureRenderer implements FigureRenderer {
     if (this.#disposed) return;
     this.#disposed = true;
     const gl = this.#gl;
-    if (gl !== null) {
+    if (gl !== null && !gl.isContextLost()) {
       this.#releaseRetiredSlots(gl);
       for (const slot of this.#slots) releaseTraceSlot(gl, slot);
       const programs = this.#programs;
@@ -389,6 +404,30 @@ export class WebGL2FigureRenderer implements FigureRenderer {
     this.#slots = [];
     this.#retired = [];
     this.#tracePayloads = [];
+  }
+
+  #isContextLost(): boolean {
+    return this.#gl !== null && this.#gl.isContextLost();
+  }
+
+  #rehydrate(): void {
+    const gl = this.#gl;
+    if (this.#disposed || gl === null) {
+      throw new Error("WebGL2FigureRenderer: cannot rehydrate a disposed renderer.");
+    }
+    if (gl.isContextLost()) {
+      throw new Error("WebGL2FigureRenderer: cannot rehydrate while the GL context is lost.");
+    }
+    const nextPrograms = createGlPrograms(gl);
+    this.#retired = [];
+    this.#programs = nextPrograms;
+    this.#frame.programs = nextPrograms;
+    for (let i = 0; i < this.#slots.length; i += 1) {
+      const slot = this.#slots[i];
+      if (slot !== undefined) {
+        invalidateTraceSlotGpu(slot);
+      }
+    }
   }
 
   #unit(axis: "x" | "y"): string {

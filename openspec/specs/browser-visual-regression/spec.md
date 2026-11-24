@@ -4,7 +4,7 @@
 > OS policy belong to `visual-golden-corpus`, scenario identity to `render-scenario-fixtures`, and the
 > Vitest upgrade mechanics to `workspace-toolchain`.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: The Browser Project Uses a Playwright Provider Factory and Declares No `environment` Key
 The browser-mode Vitest project added to `test.projects` MUST configure its provider through a
@@ -140,8 +140,8 @@ WebGL2 comparison MUST emit a diff artifact like any other.
 
 ### Requirement: WebGL2 Call-Sequence Tests Live in the Node Project, Not the Visual Project
 Assertions over the sequence of GL calls (uniform values, draw-call counts, create/delete balance,
-paint order) MUST run in the `renderers` (Node) project against `RecordingGl2Context`
-(`webgl2-golden-parity`), and assertions over the sequence of 2D context calls (the plot clip's
+paint order, and in-place rehydration call sequences) MUST run in the `renderers` (Node) project against `RecordingGl2Context`
+(`webgl2-golden-parity`, `gl-resource-rehydration`), and assertions over the sequence of 2D context calls (the plot clip's
 `save`/`rect`/`clip`/`restore`, clamped path coordinates, pen-lift call counts, decimator
 invocations) MUST run there against `RecordingContext`. The `visual` project MUST NOT construct or
 assert against a fake GL or a fake 2D context; its assertions are `toMatchScreenshot` comparisons,
@@ -151,6 +151,9 @@ goldens nor fakes:
 - WebGL2 probes (`webgl2-behaviour.visual.test.ts`): pixel reads of a real render for diagonal
   anti-aliasing, blank gaps, Infinity reaching the plot edge, non-positive log samples, blank
   gutters, grid under the stacked GL layer, and a canvas with a prior `2d` context;
+- WebGL2 context-recovery probe (`context-recovery.visual.test.ts`): pixel reads of real
+  `SpectrumEngineController` + `WebGL2FigureRenderer` renders across real `WEBGL_lose_context`
+  loss/restore cycles comparing post-restore `ImageData` directly against pre-loss `ImageData`;
 - Canvas2D probes: pixel reads of a real `Canvas2DRenderer` render for blank gutters with an
   out-of-window payload, `±Infinity` reaching the plot's top and bottom bands, non-positive log
   samples not bridged, and alternating infinities leaving no trace ink outside the plot rectangle
@@ -165,19 +168,19 @@ scenario is verified once during implementation by a deliberately failing run, n
 test.
 
 #### Scenario: No fake GL appears in the visual project
-- **GIVEN**: the files under `packages/renderers/test/visual/`
+- **GIVEN**: the files under `packages/renderers/test/visual/` (including `context-recovery.visual.test.ts`)
 - **WHEN**: they are searched for imports of `RecordingGl2Context` and `RecordingContext`
 - **THEN**: there is none
 
 #### Scenario: The fake-GL tests run in the renderers project
 - **GIVEN**: `pnpm run test`
-- **WHEN**: the WebGL2 call-sequence tests execute
+- **WHEN**: the WebGL2 call-sequence and GL rehydration tests execute
 - **THEN**: they are reported under the `renderers` project
 
-#### Scenario: Canvas2D probes run in the visual project without goldens
-- **GIVEN**: the Canvas2D and paired behaviour probe files under `packages/renderers/test/visual/`
+#### Scenario: Behaviour probes run in the visual project without goldens
+- **GIVEN**: the Canvas2D, paired, and `context-recovery.visual.test.ts` behaviour probe files under `packages/renderers/test/visual/`
 - **WHEN**: they are inspected and run with `pnpm --filter @trace-kit/renderers test:visual`
-- **THEN**: they construct `Canvas2DRenderer` on a real canvas, read pixels with `getImageData`,
+- **THEN**: they construct real renderers/controllers on real canvases, read pixels with `getImageData`,
   contain no `toMatchScreenshot` call, import no fake context, and leave the
   `__screenshots__/` directory unchanged
 
@@ -186,3 +189,47 @@ test.
   before and after this change
 - **WHEN**: their fixture ids are compared
 - **THEN**: they are identical, and no probe payload is exported from `@trace-kit/renderers/fixtures`
+
+### Requirement: Cross-Platform Chromium `WEBGL_lose_context` Visual Recovery Probe
+`packages/renderers/test/visual/context-recovery.visual.test.ts` MUST run in the `visual` Chromium Playwright project on **both macOS and Linux CI** against real `SpectrumEngineController` and real `WebGL2FigureRenderer` instances (with zero injected renderer fakes, zero fake GL contexts, zero `toMatchScreenshot` calls, and zero modifications to `__screenshots__/` or `@trace-kit/renderers/fixtures`).
+
+The probe MUST drive genuine browser context loss and restoration via `plotCanvas.getContext("webgl2")!.getExtension("WEBGL_lose_context")!` (`loseContext()` / `restoreContext()`), reading rendered pixels synchronously via `getImageData` on both the composited 3-canvas stack and the WebGL2 `plot` layer, and MUST verify:
+1. Pre-loss rendering paints non-blank trace pixels for a rich optical signal (resonance peak, ripple, `NaN` gap, and isolated sample marker).
+2. `ext.loseContext()` delivers `webglcontextlost` with `event.defaultPrevented === true`, sets `controller.contextLost === true`, `gl.isContextLost() === true`, and fires `onContextLost` once.
+3. Suspended `render()`, `requestRender()`, and `clear()` calls while lost execute without throwing and leave `controller.contextLost === true`.
+4. `ext.restoreContext()` delivers `onContextRestored`, resets `controller.contextLost === false` and `gl.isContextLost() === false`, preserves the exact `plot` `<canvas>` DOM node identity (`postPlot === prePlot`, proving in-place rehydration), and renders post-restore composited and `plot`-layer `ImageData` pixel-identical (`0` mismatched pixels) to the pre-loss `ImageData` captured in the same Chromium session.
+5. Repeated `loseContext() -> restoreContext() -> loseContext() -> restoreContext()` cycles preserve `0` mismatched pixels against `preLoss` and increment `restoreCount` (`1`, `2`).
+6. Explicit decimation (`{ algorithm: "lttb" }` and `{ algorithm: "min-max" }`) preserves `0` mismatched pixels between pre-loss and post-restore renders.
+7. State mutations applied while `contextLost === true` (`setDomain(...)` or updated `commitPayloadRevision(...)`) produce post-restore pixels matching a fresh reference controller rendered with the same mutated state (`0` mismatched pixels).
+8. Calling `controller.setMode("canvas2d")` while `contextLost === true` exits suspended state (`contextLost === false`, `activeKind === "canvas2d"`) and paints non-blank live Canvas2D trace pixels.
+9. Calling `controller.dispose()` both while healthy and while `contextLost === true` completes with zero throws and zero spurious `onContextLost` callbacks.
+
+#### Scenario: Single WEBGL_lose_context lose-and-restore cycle reproduces pixel-identical composited and plot-layer frames in place
+- **GIVEN**: a real `SpectrumEngineController` (`mode: "webgl2"`) in Chromium Playwright rendering a test-local optical signal (resonance peak, ripple, `NaN` gap, isolated marker) whose pre-loss composited and `plot`-layer `ImageData` (`preLoss`) are captured
+- **WHEN**: `ext.loseContext()` fires, `onContextLost` settles, suspended `render()`/`requestRender()`/`clear()` calls run, `ext.restoreContext()` fires, and `onContextRestored` settles
+- **THEN**: `event.defaultPrevented === true`, `controller.contextLost` transitioned `false -> true -> false`, `controller.canvases[1]` is the exact same `HTMLCanvasElement` reference, `onContextRestored` reports `restoreCount: 1`, and post-restore composited and `plot`-layer `ImageData` have `0` mismatched pixels compared to `preLoss`
+
+#### Scenario: Repeated lose-restore cycles preserve pixel identity and increment restoreCount
+- **GIVEN**: the same Chromium Playwright `SpectrumEngineController` (`mode: "webgl2"`) after capturing `preLoss`
+- **WHEN**: two consecutive `ext.loseContext()` -> await `onContextLost` -> `ext.restoreContext()` -> await `onContextRestored` cycles execute
+- **THEN**: `onContextRestored` receives `restoreCount: 1` then `restoreCount: 2`, `controller.canvases[1]` identity stays unchanged across both cycles, and post-restore `ImageData` after cycle 2 has `0` mismatched pixels compared to `preLoss`
+
+#### Scenario: Explicit lttb and min-max decimation preserve exact pixel identity across context loss and restore
+- **GIVEN**: real Chromium `SpectrumEngineController` (`mode: "webgl2"`) instances configured with `{ algorithm: "lttb", threshold: 256 }` and `{ algorithm: "min-max", bucketCount: 128 }`
+- **WHEN**: each captures `preLoss` `ImageData`, runs `ext.loseContext()` -> `ext.restoreContext()`, and captures `postRestore` `ImageData`
+- **THEN**: both decimation configurations produce `0` mismatched pixels between `postRestore` and `preLoss`
+
+#### Scenario: Domain and payload mutations made while lost render accurately after restore
+- **GIVEN**: a real Chromium `SpectrumEngineController` (`mode: "webgl2"`) paused in `contextLost === true`
+- **WHEN**: `setDomain(...)` and a new `commitPayloadRevision(...)` are applied while `contextLost === true`, followed by `ext.restoreContext()` and `onContextRestored`
+- **THEN**: the post-restore composited `ImageData` has `0` mismatched pixels compared to a fresh reference `SpectrumEngineController` rendered directly with the mutated domain and payload
+
+#### Scenario: Switching to Canvas2D while lost exits suspended state and paints live pixels
+- **GIVEN**: a real Chromium `SpectrumEngineController` (`mode: "webgl2"`) paused in `contextLost === true` after `ext.loseContext()`
+- **WHEN**: `controller.setMode("canvas2d")` is invoked and the Canvas2D surface is read via `getImageData`
+- **THEN**: `controller.activeKind === "canvas2d"`, `controller.contextLost === false`, `controller.canvases` has length `1`, and the Canvas2D plot region contains non-background trace pixels
+
+#### Scenario: Clean disposal while healthy and while context-lost emits zero spurious onContextLost callbacks
+- **GIVEN**: two real Chromium `SpectrumEngineController` (`mode: "webgl2"`) instances with `onContextLost` spies: controller A healthy, and controller B already in `contextLost === true` after `ext.loseContext()`
+- **WHEN**: `dispose()` is called on both controllers and a microtask/animation-frame tick elapses
+- **THEN**: controller A records `0` `onContextLost` invocations, controller B records exactly `1` (the pre-dispose loss only), both report `disposed === true` and `contextLost === false`, and zero uncaught errors occur

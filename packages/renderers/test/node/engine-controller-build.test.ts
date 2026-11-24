@@ -74,6 +74,8 @@ const EXPECTED_PUBLIC_TYPES = [
   "ViewportInvalidationEvent",
   "ViewportInvalidationPhase",
   "ViewportMutationReason",
+  "WebGL2ContextLostEvent",
+  "WebGL2ContextRestoredEvent",
   "WebGL2FallbackEvent",
   "WheelZoomAxis",
 ];
@@ -88,7 +90,7 @@ describe("the ./controller subpath", () => {
     });
   });
 
-  it("builds ESM, CJS, declarations and declaration maps with all 28 public types", () => {
+  it("builds ESM, CJS, declarations and declaration maps with all 30 public types", () => {
     for (const file of ["index.js", "index.cjs", "index.d.ts", "index.d.cts", "index.d.ts.map"]) {
       expect(existsSync(dist("controller", file)), file).toBe(true);
     }

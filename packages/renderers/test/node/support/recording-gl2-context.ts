@@ -36,6 +36,8 @@ export interface RecordingGl2Options {
   readonly linkFailureLog?: string;
   /** Defaults to `true`; `false` makes `getExtension("WEBGL_lose_context")` return `null`. */
   readonly loseContextExtension?: boolean;
+  /** Defaults to `false`; `true` starts the fake context in the lost state. */
+  readonly initiallyLost?: boolean;
 }
 
 export interface BufferUpload {
@@ -62,14 +64,15 @@ export class RecordingGl2Context implements Gl2Context {
   readonly deleted: KindCounts = zeroCounts();
   readonly live = new Set<FakeGlObject>();
 
-  readonly #compileFailureLog: string | undefined;
-  readonly #linkFailureLog: string | undefined;
+  #compileFailureLog: string | undefined;
+  #linkFailureLog: string | undefined;
   readonly #loseContextExtension: boolean;
   readonly #uploads: BufferUpload[] = [];
   readonly #uniforms: { name: string; values: number[] }[] = [];
   readonly #shaderSources = new Map<FakeGlObject, string>();
   #nextId = 1;
   #boundArrayBuffer: FakeGlObject | null = null;
+  #contextLost: boolean;
   readonly #loseContext: LoseContextExtension;
 
   constructor(options: RecordingGl2Options = {}) {
@@ -77,11 +80,34 @@ export class RecordingGl2Context implements Gl2Context {
     this.#compileFailureLog = options.compileFailureLog;
     this.#linkFailureLog = options.linkFailureLog;
     this.#loseContextExtension = options.loseContextExtension ?? true;
+    this.#contextLost = options.initiallyLost ?? false;
     this.#loseContext = {
       loseContext: () => {
         this.#record("loseContext", []);
       },
     };
+  }
+
+  isContextLost(): boolean {
+    return this.#contextLost;
+  }
+
+  simulateContextLoss(): void {
+    this.#contextLost = true;
+    this.live.clear();
+    this.#boundArrayBuffer = null;
+  }
+
+  simulateContextRestore(): void {
+    this.#contextLost = false;
+  }
+
+  setCompileFailure(log: string | undefined): void {
+    this.#compileFailureLog = log;
+  }
+
+  setLinkFailure(log: string | undefined): void {
+    this.#linkFailureLog = log;
   }
 
   #record(name: string, args: readonly unknown[]): void {
@@ -129,6 +155,7 @@ export class RecordingGl2Context implements Gl2Context {
 
   createShader(type: number): WebGLShader | null {
     this.#record("createShader", [type]);
+    if (this.#contextLost) return null;
     return this.#create("shader");
   }
   shaderSource(shader: WebGLShader, source: string): void {
@@ -184,8 +211,9 @@ export class RecordingGl2Context implements Gl2Context {
     return new FakeUniformLocation(name);
   }
 
-  createBuffer(): WebGLBuffer {
+  createBuffer(): WebGLBuffer | null {
     this.#record("createBuffer", []);
+    if (this.#contextLost) return null;
     return this.#create("buffer");
   }
   deleteBuffer(buffer: WebGLBuffer | null): void {
@@ -222,8 +250,9 @@ export class RecordingGl2Context implements Gl2Context {
     this.#record("bufferData", [target, srcData, usage, srcOffset, length]);
   }
 
-  createVertexArray(): WebGLVertexArrayObject {
+  createVertexArray(): WebGLVertexArrayObject | null {
     this.#record("createVertexArray", []);
+    if (this.#contextLost) return null;
     return this.#create("vertexArray");
   }
   deleteVertexArray(vertexArray: WebGLVertexArrayObject | null): void {

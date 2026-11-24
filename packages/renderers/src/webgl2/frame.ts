@@ -48,7 +48,7 @@ const ROW_ONE = 19;
  */
 export class FrameState {
   readonly gl: Gl2Context;
-  readonly programs: GlPrograms;
+  programs: GlPrograms;
   /** The primary axis transform: its device size sets the viewport and its plot rectangle the
    * scissor, since every axis shares one plot geometry. */
   primary: ViewportTransform;
@@ -141,8 +141,8 @@ export function drawGlFrame(frame: FrameState, slots: readonly TraceGpuSlot[], c
     const markIsolated = (frame.markIsolated[i] ?? 1) === 1;
 
     ensureTraceUploaded(gl, slot, payload, t.plotWidth, frame.selection, markIsolated, t.yScaleKind);
-    const drawLine = slot.vertexCount >= 2;
-    const drawMarkers = markIsolated && slot.markerCount > 0;
+    const drawLine = slot.vertexCount >= 2 && slot.lineVao !== null;
+    const drawMarkers = markIsolated && slot.markerCount > 0 && slot.markerVao !== null;
     if (!drawLine && !drawMarkers) continue;
 
     const base = i * UNIFORM_ROW_STRIDE;

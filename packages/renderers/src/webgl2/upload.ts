@@ -76,24 +76,55 @@ export function ensureTraceUploaded(
     }
   }
 
-  if (
+  const keyMatches =
     slot.uploadedRevision === payload.revision &&
     slot.uploadedMode === mode &&
     slot.uploadedAlgorithm === algorithm &&
-    slot.uploadedParameter === parameter
-  ) {
+    slot.uploadedParameter === parameter;
+
+  if (keyMatches) {
+    if (!slot.gpuDirty) return;
+    if (gl.isContextLost()) return;
+    if (slot.vertexCount === 0) {
+      slot.gpuDirty = false;
+      return;
+    }
+
+    ensureLineObjects(gl, slot);
+    const xBuffer = slot.xBuffer;
+    const yBuffer = slot.yBuffer;
+    if (xBuffer === null || yBuffer === null) return;
+
+    if (mode === UPLOAD_FULL) {
+      uploadPair(gl, xBuffer, yBuffer, payload.x, payload.y, slot.vertexCount);
+    } else {
+      uploadPair(gl, xBuffer, yBuffer, slot.scratchX, slot.scratchY, slot.vertexCount);
+    }
+
+    if (markIsolated && slot.markerCount > 0) {
+      ensureMarkerObjects(gl, slot);
+      const markerXBuffer = slot.markerXBuffer;
+      const markerYBuffer = slot.markerYBuffer;
+      if (markerXBuffer === null || markerYBuffer === null) return;
+      uploadPair(gl, markerXBuffer, markerYBuffer, slot.markerX, slot.markerY, slot.markerCount);
+    }
+
+    if (gl.isContextLost()) return;
+    slot.gpuDirty = false;
     return;
   }
 
-  slot.uploadedRevision = payload.revision;
-  slot.uploadedMode = mode;
-  slot.uploadedAlgorithm = algorithm;
-  slot.uploadedParameter = parameter;
-  slot.markerCount = 0;
+  if (gl.isContextLost()) return;
 
   // `length: 0` means "to the end of the view" in WebGL 2, so an empty stream must not reach it.
   if (n === 0) {
     slot.vertexCount = 0;
+    slot.markerCount = 0;
+    slot.uploadedRevision = payload.revision;
+    slot.uploadedMode = mode;
+    slot.uploadedAlgorithm = algorithm;
+    slot.uploadedParameter = parameter;
+    slot.gpuDirty = false;
     return;
   }
 
@@ -106,7 +137,6 @@ export function ensureTraceUploaded(
   if (mode === UPLOAD_FULL) {
     drawnCount = n;
     uploadPair(gl, xBuffer, yBuffer, payload.x, payload.y, n);
-    slot.vertexCount = n;
   } else {
     growDecimationScratch(slot, emitted);
     drawnCount = decimateTraceIndices(algorithm ?? "lttb", parameter, payload.x, payload.y, n, slot.indices);
@@ -121,18 +151,30 @@ export function ensureTraceUploaded(
       gatheredX[i] = j < 0 ? NaN : (px[j] ?? NaN);
       gatheredY[i] = j < 0 ? NaN : (py[j] ?? NaN);
     }
-    slot.vertexCount = drawnCount;
     if (drawnCount > 0) uploadPair(gl, xBuffer, yBuffer, gatheredX, gatheredY, drawnCount);
   }
 
-  if (!markIsolated || drawnCount === 0) return;
-  uploadMarkers(gl, slot, payload, mode === UPLOAD_DECIMATED ? drawnCount : 0, n, yScaleKind);
+  let markerCount = 0;
+  if (markIsolated && drawnCount > 0) {
+    markerCount = uploadMarkers(gl, slot, payload, mode === UPLOAD_DECIMATED ? drawnCount : 0, n, yScaleKind);
+    if (markerCount < 0) return;
+  }
+
+  if (gl.isContextLost()) return;
+  slot.vertexCount = drawnCount;
+  slot.markerCount = markerCount;
+  slot.uploadedRevision = payload.revision;
+  slot.uploadedMode = mode;
+  slot.uploadedAlgorithm = algorithm;
+  slot.uploadedParameter = parameter;
+  slot.gpuDirty = false;
 }
 
 /**
  * Counts isolated samples in the stream just uploaded and, only if there are any, gathers their
  * source positions into the marker buffers. The pen-state rules are the shared walk's, so the GPU
- * path and the 2D painters agree on which samples are isolated.
+ * path and the 2D painters agree on which samples are isolated. Returns `-1` if marker buffer
+ * creation fails (for example when the GL context is lost mid-upload).
  */
 function uploadMarkers(
   gl: Gl2Context,
@@ -141,9 +183,9 @@ function uploadMarkers(
   decimatedCount: number,
   directCount: number,
   yScaleKind: number,
-): void {
+): number {
   const count = countIsolatedSegments(payload.x, payload.y, slot.indices, decimatedCount, directCount, yScaleKind);
-  if (count === 0) return;
+  if (count === 0) return 0;
 
   growMarkerScratch(slot, count);
   collectIsolatedSampleIndices(
@@ -169,7 +211,7 @@ function uploadMarkers(
   ensureMarkerObjects(gl, slot);
   const markerXBuffer = slot.markerXBuffer;
   const markerYBuffer = slot.markerYBuffer;
-  if (markerXBuffer === null || markerYBuffer === null) return;
+  if (markerXBuffer === null || markerYBuffer === null) return -1;
   uploadPair(gl, markerXBuffer, markerYBuffer, markerX, markerY, count);
-  slot.markerCount = count;
+  return count;
 }

@@ -39,6 +39,8 @@ export class TraceGpuSlot {
   uploadedMode = UPLOAD_NONE;
   uploadedAlgorithm: DecimationAlgorithm | null = null;
   uploadedParameter = -1;
+  /** True after GPU handle invalidation; triggers direct re-upload without re-decimating when the key still matches. */
+  gpuDirty = false;
 
   /** Vertices in the drawn polyline; the line pass draws `vertexCount - 1` instances. */
   vertexCount = 0;
@@ -86,6 +88,14 @@ export function ensureLineObjects(gl: Gl2Context, slot: TraceGpuSlot): void {
   const xBuffer = gl.createBuffer();
   const yBuffer = gl.createBuffer();
   const vao = gl.createVertexArray();
+  if (xBuffer === null || yBuffer === null || vao === null) {
+    if (!gl.isContextLost()) {
+      if (xBuffer !== null) gl.deleteBuffer(xBuffer);
+      if (yBuffer !== null) gl.deleteBuffer(yBuffer);
+      if (vao !== null) gl.deleteVertexArray(vao);
+    }
+    return;
+  }
   gl.bindVertexArray(vao);
   bindInstancedPair(gl, xBuffer, 0);
   bindInstancedPair(gl, yBuffer, 2);
@@ -105,6 +115,14 @@ export function ensureMarkerObjects(gl: Gl2Context, slot: TraceGpuSlot): void {
   const xBuffer = gl.createBuffer();
   const yBuffer = gl.createBuffer();
   const vao = gl.createVertexArray();
+  if (xBuffer === null || yBuffer === null || vao === null) {
+    if (!gl.isContextLost()) {
+      if (xBuffer !== null) gl.deleteBuffer(xBuffer);
+      if (yBuffer !== null) gl.deleteBuffer(yBuffer);
+      if (vao !== null) gl.deleteVertexArray(vao);
+    }
+    return;
+  }
   gl.bindVertexArray(vao);
   gl.bindBuffer(GL_ARRAY_BUFFER, xBuffer);
   gl.enableVertexAttribArray(0);
@@ -134,6 +152,20 @@ export function growMarkerScratch(slot: TraceGpuSlot, count: number): void {
   if (slot.markerY.length < count) slot.markerY = new Float32Array(count);
 }
 
+/**
+ * Clears invalidated prior-generation GL handles after GPU recovery without calling `gl.delete*`,
+ * preserving the upload key and CPU scratch so the next upload repopulates fresh VBOs/VAOs directly.
+ */
+export function invalidateTraceSlotGpu(slot: TraceGpuSlot): void {
+  slot.xBuffer = null;
+  slot.yBuffer = null;
+  slot.lineVao = null;
+  slot.markerXBuffer = null;
+  slot.markerYBuffer = null;
+  slot.markerVao = null;
+  slot.gpuDirty = true;
+}
+
 /** Deletes every GL object the slot owns and forgets them. Safe to call twice. */
 export function releaseTraceSlot(gl: Gl2Context, slot: TraceGpuSlot): void {
   gl.deleteBuffer(slot.xBuffer);
@@ -148,6 +180,7 @@ export function releaseTraceSlot(gl: Gl2Context, slot: TraceGpuSlot): void {
   slot.markerXBuffer = null;
   slot.markerYBuffer = null;
   slot.markerVao = null;
+  slot.gpuDirty = false;
   slot.uploadedRevision = -1;
   slot.uploadedMode = UPLOAD_NONE;
   slot.vertexCount = 0;

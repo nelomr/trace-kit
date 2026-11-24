@@ -560,7 +560,17 @@ changes:
     name: engine-context-recovery
     prerequisites: 
       - engine-controller
-    capabilities: not_yet_specified
+    capabilities:
+      - name: browser-visual-regression
+        deltas: [ADDED, MODIFIED]
+      - name: context-loss-lifecycle
+        deltas: [ADDED]
+      - name: gl-resource-rehydration
+        deltas: [ADDED]
+      - name: package-build-pipeline
+        deltas: [MODIFIED]
+      - name: renderer-lifecycle-manager
+        deltas: [ADDED, MODIFIED]
     # Intended capability surface:
     #   context-loss-lifecycle   ADDED    — listeners, loop suspension, preventDefault, no throw
     #   gl-resource-rehydration  ADDED    — shaders/programs/VBOs rebuilt, re-upload from payload.revision

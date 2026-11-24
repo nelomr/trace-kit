@@ -52,6 +52,22 @@ export interface WebGL2FallbackEvent {
   readonly sampleCount: number;
 }
 
+/** Event delivered to `onContextLost` when the active WebGL2 plot canvas loses its GPU context. */
+export interface WebGL2ContextLostEvent {
+  readonly activeKind: "webgl2";
+  readonly sampleCount: number;
+  readonly mode: EngineSelectionMode;
+  readonly statusMessage: string;
+}
+
+/** Event delivered to `onContextRestored` after a lost WebGL2 context rehydrates and repaints synchronously. */
+export interface WebGL2ContextRestoredEvent {
+  readonly activeKind: "webgl2";
+  readonly sampleCount: number;
+  readonly mode: EngineSelectionMode;
+  readonly restoreCount: number;
+}
+
 /** Minimal `ResizeObserverEntry` shape accepted by injectable observer seams. */
 export interface ResizeObserverEntryLike {
   readonly contentRect: {
@@ -100,6 +116,10 @@ export interface SpectrumEngineControllerOptions {
   readonly onEngineChange?: (event: EngineChangeEvent) => void;
   /** Callback invoked after Canvas2D fallback is mounted when WebGL2 creation, replay, or pre-render throws. */
   readonly onWebGL2Fallback?: (event: WebGL2FallbackEvent) => void;
+  /** Callback invoked once per loss transition after the active WebGL2 context is lost and rendering suspends. */
+  readonly onContextLost?: (event: WebGL2ContextLostEvent) => void;
+  /** Callback invoked after a lost WebGL2 context restores, rehydrates GPU resources, and paints synchronously. */
+  readonly onContextRestored?: (event: WebGL2ContextRestoredEvent) => void;
 
   // Injectable test and platform seams:
   readonly createCanvas2DRenderer?: (options: Canvas2DRendererOptions) => FigureRenderer;
@@ -123,6 +143,7 @@ export interface SpectrumEngineController {
   readonly pendingKind: EngineKind | null;
   readonly gestureActive: boolean;
   readonly webgl2Fallback: boolean;
+  readonly contextLost: boolean;
   readonly sampleCount: number;
   readonly disposed: boolean;
   readonly container: HTMLElement;

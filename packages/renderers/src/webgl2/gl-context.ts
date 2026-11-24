@@ -32,7 +32,7 @@ export interface Gl2Context {
   useProgram(program: WebGLProgram | null): void;
   getUniformLocation(program: WebGLProgram, name: string): WebGLUniformLocation | null;
 
-  createBuffer(): WebGLBuffer;
+  createBuffer(): WebGLBuffer | null;
   deleteBuffer(buffer: WebGLBuffer | null): void;
   bindBuffer(target: number, buffer: WebGLBuffer | null): void;
   /** The `srcOffset`/`length` overload: uploads `length` elements starting at element
@@ -45,7 +45,7 @@ export interface Gl2Context {
     length: number,
   ): void;
 
-  createVertexArray(): WebGLVertexArrayObject;
+  createVertexArray(): WebGLVertexArrayObject | null;
   deleteVertexArray(vertexArray: WebGLVertexArrayObject | null): void;
   bindVertexArray(vertexArray: WebGLVertexArrayObject | null): void;
   enableVertexAttribArray(index: number): void;
@@ -95,6 +95,8 @@ export interface Gl2Context {
   ): void;
 
   drawArraysInstanced(mode: number, first: number, count: number, instanceCount: number): void;
+
+  isContextLost(): boolean;
 
   getExtension(extensionName: "WEBGL_lose_context"): LoseContextExtension | null;
 }

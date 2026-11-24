@@ -49,6 +49,7 @@ nothing reaches a DOM or GL object at import time.
 | `webgl2/frame.ts` | numeric constants, one class, functions | none |
 | `webgl2/precision.ts` | one constant, one function | none |
 | `webgl2/float-bits.ts` | numeric constants, two functions | none |
+| `webgl2/rehydrate.ts` | one string constant, type declarations, three functions | none |
 
 The allocation-free lint block covers the four files that run on every frame: `frame.ts`,
 `upload.ts`, `precision.ts` and `float-bits.ts`. The others (`shaders`, `program`, `color`,

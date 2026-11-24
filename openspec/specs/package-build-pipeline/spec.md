@@ -81,15 +81,18 @@ and `require` conditions pointing at `./dist/webgl2/index.d.ts`, `./dist/webgl2/
 `./dist/webgl2/index.cjs`, alongside the existing `.`, `./font`, `./svg` and `./fixtures` entries.
 `tsup.config.ts` MUST add `src/webgl2/index.ts` as a separate entry emitting ESM, CJS,
 declarations and sourcemaps, and the post-build declaration-map step used for `./svg` MUST also
-emit a `.d.ts.map` for `./webgl2`. The subpath MUST expose `WebGL2FigureRenderer` and the type
-`WebGL2FigureRendererOptions` (and `WebGL2FigureSurfaces`). The root `.` entry MUST NOT include
-the WebGL2 module, the shader sources or any GL code.
+emit a `.d.ts.map` for `./webgl2`. The subpath MUST expose the exact single concrete runtime export
+`["WebGL2FigureRenderer"]` and the public types `WebGL2FigureRendererOptions` and
+`WebGL2FigureSurfaces`, and MUST NOT re-export package-internal recovery helpers from
+`src/webgl2/rehydrate.ts`. The root `.` entry MUST NOT include the WebGL2 module, the shader
+sources or any GL code.
 
-#### Scenario: The subpath resolves under both module systems
+#### Scenario: The subpath resolves under both module systems with exact single runtime export
 - **GIVEN**: the built renderers package
 - **WHEN**: Node performs `import('@trace-kit/renderers/webgl2')` and
   `require('@trace-kit/renderers/webgl2')`
-- **THEN**: both resolve and expose `WebGL2FigureRenderer`
+- **THEN**: both resolve and expose the exact sorted runtime key list `["WebGL2FigureRenderer"]`
+  (zero internal rehydration helpers leaked)
 
 #### Scenario: Declarations and maps are emitted
 - **GIVEN**: the build output for `./webgl2`
@@ -107,15 +110,20 @@ the WebGL2 module, the shader sources or any GL code.
 - **THEN**: it has exactly the `types`, `import` and `require` keys with the paths above
 
 ### Requirement: The `./webgl2` Subpath Is Included in the `sideEffects` Audit and Reaches No Cold Entry
-The `sideEffects` audit for `@trace-kit/renderers` MUST list every file under `src/webgl2/` and
+The `sideEffects` audit (`packages/renderers/SIDE-EFFECTS.md`) for `@trace-kit/renderers` MUST list
+every file under `src/webgl2/` — including the package-internal `webgl2/rehydrate.ts` module (`| none |`,
+which evaluates `Symbol.for("trace-kit.webgl2.recovery")` lazily inside helper functions) — and
 state that none performs a top-level side effect (no import-time context creation, shader
 compilation, listener registration or global mutation: shader sources are plain string constants).
-The `./webgl2` bundle MUST NOT import the `./font` entry or the `./svg` entry.
+The `./webgl2` bundle MUST NOT import the `./font` entry or the `./svg` entry. `packages/core` and
+`apps/playground` MUST remain completely untouched by `engine-context-recovery` (`packages/core`
+remains 100% DOM-free and GL-free).
 
-#### Scenario: The audit names the new modules
-- **GIVEN**: the committed audit note
-- **WHEN**: it is inspected
-- **THEN**: it names every file under `src/webgl2/` with a no-side-effect statement
+#### Scenario: The audit names every webgl2 module including webgl2/rehydrate.ts
+- **GIVEN**: `packages/renderers/SIDE-EFFECTS.md` and `packages/renderers/src/webgl2/*.ts`
+- **WHEN**: `packages/renderers/test/node/webgl2-build.test.ts` inspects the committed audit note
+- **THEN**: it names every file under `src/webgl2/`, including `webgl2/rehydrate.ts`, with a `none`
+  side-effect statement
 
 #### Scenario: Importing the subpath has no side effect
 - **GIVEN**: a Node process with no DOM globals
@@ -124,7 +132,7 @@ The `./webgl2` bundle MUST NOT import the `./font` entry or the `./svg` entry.
   and without creating a context
 
 #### Scenario: The WebGL2 bundle does not pull the font or the exporter
-- **GIVEN**: the built `./webgl2` ESM output and its chunks
+- **GIVEN**: the built `./webgl2` ESM and CJS outputs and their chunks
 - **WHEN**: they are searched for the embedded font data URL and `exportToSvg`
 - **THEN**: neither appears
 
@@ -178,24 +186,24 @@ side effect and keeping `@trace-kit/core` 100% DOM-free (`"lib": ["ES2022"]`) wi
 `packages/renderers/package.json` `exports` MUST declare a `"./controller"` entry with `types`, `import`, and `require` conditions pointing at `./dist/controller/index.d.ts`, `./dist/controller/index.js`, and `./dist/controller/index.cjs`, alongside the existing `"."`, `"./font"`, `"./svg"`, `"./webgl2"`, and `"./fixtures"` entries. `packages/renderers/tsup.config.ts` MUST include `src/controller/index.ts` as a separate entry emitting ESM (`.js`), CJS (`.cjs`), declarations (`.d.ts`, `.d.cts`), and sourcemaps, and `packages/renderers/tsconfig.svg-dts.json` MUST include `src/controller/index.ts` so the post-build `tsc` step emits `./dist/controller/index.d.ts.map`.
 
 The `./controller` subpath MUST export:
-- Concrete runtime values and functions:
+- Concrete runtime values and functions (exact `17` exports):
   - Engine controller exports: `createSpectrumEngineController`, `DEFAULT_HYSTERESIS_CONFIG`, `resolveHysteresisConfig`, `classifyHysteresisBand`, `evaluateHysteresisTarget`, `computePayloadSampleCount`, and `computeTracesSampleCount`.
   - Interaction controller exports: `createViewportInteractionController`, `DEFAULT_WHEEL_LINE_HEIGHT_PX`, `DEFAULT_WHEEL_PAGE_FALLBACK_PX`, `MAX_WHEEL_DELTA_PX`, `DEFAULT_WHEEL_SENSITIVITY`, `DEFAULT_MIN_BOX_SIZE_CSS`, `DEFAULT_SETTLE_DEBOUNCE_MS`, `classifyPointerRegion`, `normalizeWheelDeltaPx`, and `resolveWheelAxisMask`.
-- TypeScript exported types in `dist/controller/index.d.ts`:
-  - Engine controller types: `SpectrumEngineController`, `SpectrumEngineControllerOptions`, `ViewportDomain`, `EngineKind`, `EngineSelectionMode`, `HysteresisBand`, `HysteresisConfig`, `ResolvedHysteresisConfig`, `HysteresisEvaluationInput`, `HysteresisEvaluationResult`, `EngineChangeEvent`, `EngineChangeReason`, `WebGL2FallbackEvent`, `ResizeObserverLike`, `ResizeObserverEntryLike`, and `ResizeObserverCallbackLike`.
-  - Interaction controller types: `ViewportInteractionController`, `ViewportInteractionControllerOptions`, `InteractionDragMode`, `WheelZoomAxis`, `PointerRegion`, `BoxZoomState`, `InteractionGestureState`, `ViewportInvalidationPhase`, `ViewportMutationReason`, `ViewportInvalidationEvent`, `BoxSelectEvent`, and `GestureStateChangeEvent`.
+- TypeScript exported types in `dist/controller/index.d.ts` (exact `30` public types):
+  - Engine controller types (`18`): `SpectrumEngineController`, `SpectrumEngineControllerOptions`, `ViewportDomain`, `EngineKind`, `EngineSelectionMode`, `HysteresisBand`, `HysteresisConfig`, `ResolvedHysteresisConfig`, `HysteresisEvaluationInput`, `HysteresisEvaluationResult`, `EngineChangeEvent`, `EngineChangeReason`, `WebGL2FallbackEvent`, `WebGL2ContextLostEvent`, `WebGL2ContextRestoredEvent`, `ResizeObserverLike`, `ResizeObserverEntryLike`, and `ResizeObserverCallbackLike`.
+  - Interaction controller types (`12`): `ViewportInteractionController`, `ViewportInteractionControllerOptions`, `InteractionDragMode`, `WheelZoomAxis`, `PointerRegion`, `BoxZoomState`, `InteractionGestureState`, `ViewportInvalidationPhase`, `ViewportMutationReason`, `ViewportInvalidationEvent`, `BoxSelectEvent`, and `GestureStateChangeEvent`.
 
 The root `"."` entry of `@trace-kit/renderers` MUST NOT include `createSpectrumEngineController`, `createViewportInteractionController`, `WebGL2FigureRenderer`, shader sources, `exportToSvg`, or any GL code.
 
-#### Scenario: The ./controller subpath resolves under both ESM and CJS with all concrete runtime exports
+#### Scenario: The ./controller subpath resolves under both ESM and CJS with all 17 concrete runtime exports
 - **GIVEN**: the built `@trace-kit/renderers` package
 - **WHEN**: Node evaluates `import('@trace-kit/renderers/controller')` and `require('@trace-kit/renderers/controller')`
 - **THEN**: both resolve and expose the exact sorted set of 17 concrete runtime exports (`createSpectrumEngineController`, `createViewportInteractionController`, `DEFAULT_HYSTERESIS_CONFIG`, `DEFAULT_MIN_BOX_SIZE_CSS`, `DEFAULT_SETTLE_DEBOUNCE_MS`, `DEFAULT_WHEEL_LINE_HEIGHT_PX`, `DEFAULT_WHEEL_PAGE_FALLBACK_PX`, `DEFAULT_WHEEL_SENSITIVITY`, `MAX_WHEEL_DELTA_PX`, `classifyHysteresisBand`, `classifyPointerRegion`, `computePayloadSampleCount`, `computeTracesSampleCount`, `evaluateHysteresisTarget`, `normalizeWheelDeltaPx`, `resolveHysteresisConfig`, `resolveWheelAxisMask`)
 
-#### Scenario: Declarations, CJS declarations, and declaration maps are emitted for ./controller
+#### Scenario: Declarations, CJS declarations, and declaration maps are emitted for ./controller with all 30 public types
 - **GIVEN**: the build output for `./controller`
-- **WHEN**: `packages/renderers/dist/controller/` is listed and `packages/renderers/dist/controller/index.d.ts` is inspected
-- **THEN**: `dist/controller/` contains `index.js`, `index.cjs`, `index.d.ts`, `index.d.cts`, and `index.d.ts.map`, and `index.d.ts` exports both `SpectrumEngineController` and `ViewportInteractionController` along with all 28 public types
+- **WHEN**: `packages/renderers/dist/controller/` is listed and `packages/renderers/dist/controller/index.d.ts` is inspected by `packages/renderers/test/node/engine-controller-build.test.ts`
+- **THEN**: `dist/controller/` contains `index.js`, `index.cjs`, `index.d.ts`, `index.d.cts`, and `index.d.ts.map`, and `index.d.ts` exports `SpectrumEngineController`, `ViewportInteractionController`, `WebGL2ContextLostEvent`, and `WebGL2ContextRestoredEvent` along with all 30 public types
 
 #### Scenario: The root @trace-kit/renderers bundle excludes the controllers and WebGL2 backend
 - **GIVEN**: the built root entry files `packages/renderers/dist/index.js` and `packages/renderers/dist/index.cjs`

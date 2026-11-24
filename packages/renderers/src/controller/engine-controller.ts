@@ -13,6 +13,7 @@ import {
 } from "../canvas2d/canvas2d-renderer.js";
 import type { FigureRenderer } from "../figure-renderer.js";
 import type { AxisLayout, FigureStyle } from "../style.js";
+import { getRecoveryHandle } from "../webgl2/rehydrate.js";
 import {
   WebGL2FigureRenderer,
   type WebGL2FigureRendererOptions,
@@ -35,13 +36,24 @@ import type {
   SpectrumEngineController,
   SpectrumEngineControllerOptions,
   ViewportDomain,
+  WebGL2ContextLostEvent,
+  WebGL2ContextRestoredEvent,
   WebGL2FallbackEvent,
 } from "./types.js";
 
 const DEFAULT_WIDTH_CSS = 800;
 const DEFAULT_HEIGHT_CSS = 400;
 const DEFAULT_DPR = 1;
+const DEFAULT_CONTEXT_LOST_MESSAGE = "WebGL2 context lost.";
 const EMPTY_CANVASES: readonly HTMLCanvasElement[] = Object.freeze([]);
+
+function extractStatusMessage(event: Event): string {
+  const raw: unknown = Reflect.get(event, "statusMessage");
+  if (typeof raw === "string" && raw.trim().length > 0) {
+    return raw;
+  }
+  return DEFAULT_CONTEXT_LOST_MESSAGE;
+}
 
 function assertPositiveFinite(value: number, name: string): number {
   if (!Number.isFinite(value) || value <= 0) {
@@ -113,6 +125,8 @@ class SpectrumEngineControllerImpl implements SpectrumEngineController {
   readonly #yAxes: readonly YAxisRegistration[] | undefined;
   readonly #onEngineChange: ((event: EngineChangeEvent) => void) | undefined;
   readonly #onWebGL2Fallback: ((event: WebGL2FallbackEvent) => void) | undefined;
+  readonly #onContextLost: ((event: WebGL2ContextLostEvent) => void) | undefined;
+  readonly #onContextRestored: ((event: WebGL2ContextRestoredEvent) => void) | undefined;
   readonly #createCanvas2DRenderer: (options: Canvas2DRendererOptions) => FigureRenderer;
   readonly #createWebGL2Renderer: (options: WebGL2FigureRendererOptions) => FigureRenderer;
   readonly #createCanvas: () => HTMLCanvasElement;
@@ -125,9 +139,12 @@ class SpectrumEngineControllerImpl implements SpectrumEngineController {
   #activeRenderer: FigureRenderer | null = null;
   #disposedTransform: ViewportTransform | null = null;
   #mountedCanvases: readonly HTMLCanvasElement[] = EMPTY_CANVASES;
+  #boundPlotCanvas: HTMLCanvasElement | null = null;
   #pendingKind: EngineKind | null = null;
   #gestureActive = false;
   #webgl2Fallback = false;
+  #contextLost = false;
+  #restoreCount = 0;
   #hysteresisDirty = false;
   #disposed = false;
   #transitionSeq = 0;
@@ -158,6 +175,204 @@ class SpectrumEngineControllerImpl implements SpectrumEngineController {
     this.#rafHandle = null;
     if (this.#disposed) return;
     this.render();
+  };
+
+  readonly #onPlotContextLost = (event: Event): void => {
+    if (
+      this.#disposed ||
+      this.#activeKind !== "webgl2" ||
+      event.target !== this.#boundPlotCanvas
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    if (this.#rafHandle !== null) {
+      this.#cancelAnimationFrame(this.#rafHandle);
+      this.#rafHandle = null;
+    }
+
+    if (this.#contextLost) return;
+    this.#contextLost = true;
+
+    const statusMessage = extractStatusMessage(event);
+    this.#onContextLost?.({
+      activeKind: "webgl2",
+      sampleCount: this.#sampleCount,
+      mode: this.#mode,
+      statusMessage,
+    });
+  };
+
+  readonly #onPlotContextRestored = (event: Event): void => {
+    if (
+      this.#disposed ||
+      this.#activeKind !== "webgl2" ||
+      event.target !== this.#boundPlotCanvas
+    ) {
+      return;
+    }
+
+    if (!this.#contextLost) return;
+
+    const activeRenderer = this.#activeRenderer;
+    if (activeRenderer === null) {
+      this.#contextLost = false;
+      return;
+    }
+
+    this.#contextLost = false;
+    const restoreSeq = this.#transitionSeq;
+    const handle = getRecoveryHandle(activeRenderer);
+
+    if (handle !== null) {
+      try {
+        handle.rehydrate();
+        this.#syncRevisionsAndSampleCount();
+        this.render();
+        if (
+          this.#disposed ||
+          this.#transitionSeq !== restoreSeq ||
+          this.#activeKind !== "webgl2" ||
+          this.#contextLost
+        ) {
+          return;
+        }
+        if (handle.isContextLost()) {
+          throw new Error("WebGL2 context remained lost immediately after restoration.");
+        }
+      } catch (error) {
+        if (this.#disposed || this.#transitionSeq !== restoreSeq) return;
+        this.#fallbackFromBrokenWebGL2Restore(error);
+        return;
+      }
+
+      if (this.#rafHandle !== null) {
+        this.#cancelAnimationFrame(this.#rafHandle);
+        this.#rafHandle = null;
+      }
+      this.#restoreCount += 1;
+      this.#onContextRestored?.({
+        activeKind: "webgl2",
+        sampleCount: this.#sampleCount,
+        mode: this.#mode,
+        restoreCount: this.#restoreCount,
+      });
+      return;
+    }
+
+    // Custom injected renderer stub without an internal recovery handle:
+    // poll pending decimation work and evaluate hysteresis before staging fresh canvases.
+    try {
+      if (this.#decimationPort !== null && this.#settlementSink !== null) {
+        this.#decimationPort.poll(this.#settlementSink);
+      }
+    } catch (error) {
+      if (this.#disposed || this.#transitionSeq !== restoreSeq) return;
+      this.#fallbackFromBrokenWebGL2Restore(error);
+      return;
+    }
+
+    if (
+      this.#disposed ||
+      this.#transitionSeq !== restoreSeq ||
+      this.#activeKind !== "webgl2" ||
+      this.#contextLost
+    ) {
+      return;
+    }
+
+    this.#syncRevisionsAndSampleCount();
+    if (this.#hysteresisDirty) {
+      const desired = resolveDesiredEngine(
+        this.#mode,
+        this.#activeKind,
+        this.#sampleCount,
+        this.#hysteresis.downThreshold,
+        this.#hysteresis.upThreshold,
+        this.#webgl2Fallback,
+      );
+      if (desired !== this.#activeKind) {
+        if (this.#gestureActive) {
+          this.#pendingKind = desired;
+          this.#hysteresisDirty = false;
+        } else {
+          const reason: EngineChangeReason =
+            this.#mode === "auto" ? "hysteresis-down" : "mode-change";
+          this.#transitionTo(desired, reason, true, true);
+          return;
+        }
+      } else {
+        this.#pendingKind = null;
+        this.#hysteresisDirty = false;
+      }
+    }
+
+    // Stage 3 fresh canvases and swap atomically without emitting onEngineChange.
+    const incomingCanvases: HTMLCanvasElement[] = [
+      this.#stageCanvas("webgl2", "underlay", false),
+      this.#stageCanvas("webgl2", "plot", false),
+      this.#stageCanvas("webgl2", "overlay", true),
+    ];
+    const incomingPlot = incomingCanvases[1]!;
+    let incomingLost = false;
+    const onIncomingLost = (): void => {
+      incomingLost = true;
+    };
+    if (typeof incomingPlot.addEventListener === "function") {
+      incomingPlot.addEventListener("webglcontextlost", onIncomingLost);
+    }
+
+    let incoming: FigureRenderer | null = null;
+    try {
+      incoming = this.#constructWebGL2(
+        incomingCanvases[0]!,
+        incomingCanvases[1]!,
+        incomingCanvases[2]!,
+      );
+      this.#replayState(incoming);
+      incoming.render();
+      const incomingHandle = getRecoveryHandle(incoming);
+      if (incomingLost || (incomingHandle !== null && incomingHandle.isContextLost())) {
+        throw new Error("WebGL2 context was lost during restoration.");
+      }
+    } catch (error) {
+      if (typeof incomingPlot.removeEventListener === "function") {
+        incomingPlot.removeEventListener("webglcontextlost", onIncomingLost);
+      }
+      try {
+        incoming?.dispose();
+      } catch {
+        // Ignore secondary disposal errors during restore failure unwind.
+      }
+      if (this.#disposed || this.#transitionSeq !== restoreSeq) return;
+      this.#fallbackFromBrokenWebGL2Restore(error);
+      return;
+    }
+
+    if (typeof incomingPlot.removeEventListener === "function") {
+      incomingPlot.removeEventListener("webglcontextlost", onIncomingLost);
+    }
+    if (this.#rafHandle !== null) {
+      this.#cancelAnimationFrame(this.#rafHandle);
+      this.#rafHandle = null;
+    }
+    const committedSeq = this.#commitDomAndSwap(incoming, incomingCanvases, true);
+    if (
+      this.#disposed ||
+      this.#contextLost ||
+      this.#transitionSeq !== committedSeq ||
+      this.#activeKind !== "webgl2"
+    ) {
+      return;
+    }
+    this.#restoreCount += 1;
+    this.#onContextRestored?.({
+      activeKind: "webgl2",
+      sampleCount: this.#sampleCount,
+      mode: this.#mode,
+      restoreCount: this.#restoreCount,
+    });
   };
 
   readonly #onResize: ResizeObserverCallbackLike = (entries: readonly ResizeObserverEntryLike[]) => {
@@ -239,6 +454,8 @@ class SpectrumEngineControllerImpl implements SpectrumEngineController {
     this.#settlementSink = options.settlementSink ?? null;
     this.#onEngineChange = options.onEngineChange;
     this.#onWebGL2Fallback = options.onWebGL2Fallback;
+    this.#onContextLost = options.onContextLost;
+    this.#onContextRestored = options.onContextRestored;
     this.#createCanvas2DRenderer = options.createCanvas2DRenderer ?? defaultCreateCanvas2DRenderer;
     this.#createWebGL2Renderer = options.createWebGL2Renderer ?? defaultCreateWebGL2Renderer;
     this.#createCanvas =
@@ -330,6 +547,10 @@ class SpectrumEngineControllerImpl implements SpectrumEngineController {
 
   get webgl2Fallback(): boolean {
     return this.#webgl2Fallback;
+  }
+
+  get contextLost(): boolean {
+    return this.#contextLost;
   }
 
   get sampleCount(): number {
@@ -535,6 +756,9 @@ class SpectrumEngineControllerImpl implements SpectrumEngineController {
 
   retryWebGL2(): boolean {
     if (this.#disposed) return false;
+    if (this.#activeKind === "webgl2" && this.#contextLost) {
+      return false;
+    }
     this.#webgl2Fallback = false;
     this.#syncRevisionsAndSampleCount();
     this.#hysteresisDirty = true;
@@ -550,7 +774,7 @@ class SpectrumEngineControllerImpl implements SpectrumEngineController {
 
     if (this.#gestureActive) {
       this.#pendingKind = desired !== this.#activeKind ? desired : null;
-      return this.#activeKind === "webgl2";
+      return this.#activeKind === "webgl2" && !this.#contextLost;
     }
 
     if (desired === "webgl2" && this.#activeKind !== "webgl2") {
@@ -561,7 +785,7 @@ class SpectrumEngineControllerImpl implements SpectrumEngineController {
       this.#hysteresisDirty = false;
     }
 
-    return this.#activeKind === "webgl2";
+    return this.#activeKind === "webgl2" && !this.#contextLost;
   }
 
   render(): void {
@@ -609,22 +833,28 @@ class SpectrumEngineControllerImpl implements SpectrumEngineController {
       }
     }
 
+    if (this.#contextLost) return;
     this.#activeRenderer?.render();
   }
 
   requestRender(): void {
     if (this.#disposed || this.#rafHandle !== null) return;
+    if (this.#contextLost && !(this.#pendingKind === "canvas2d" && !this.#gestureActive)) {
+      return;
+    }
     this.#rafHandle = this.#requestAnimationFrame(this.#onFrame);
   }
 
   clear(): void {
-    if (this.#disposed) return;
+    if (this.#disposed || this.#contextLost) return;
     this.#activeRenderer?.clear();
   }
 
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
+    this.#detachContextListeners();
+    this.#contextLost = false;
 
     if (this.#rafHandle !== null) {
       this.#cancelAnimationFrame(this.#rafHandle);
@@ -773,10 +1003,32 @@ class SpectrumEngineControllerImpl implements SpectrumEngineController {
     incoming.setDecimation(this.#decimation);
   }
 
+  #attachContextListeners(plotCanvas: HTMLCanvasElement): void {
+    this.#detachContextListeners();
+    this.#boundPlotCanvas = plotCanvas;
+    if (typeof plotCanvas.addEventListener === "function") {
+      plotCanvas.addEventListener("webglcontextlost", this.#onPlotContextLost);
+      plotCanvas.addEventListener("webglcontextrestored", this.#onPlotContextRestored);
+    }
+  }
+
+  #detachContextListeners(): void {
+    const canvas = this.#boundPlotCanvas;
+    this.#boundPlotCanvas = null;
+    if (canvas !== null && typeof canvas.removeEventListener === "function") {
+      canvas.removeEventListener("webglcontextlost", this.#onPlotContextLost);
+      canvas.removeEventListener("webglcontextrestored", this.#onPlotContextRestored);
+    }
+  }
+
   #commitDomAndSwap(
     incoming: FigureRenderer,
     incomingCanvases: readonly HTMLCanvasElement[],
+    ignoreOutgoingDisposeError = false,
   ): number {
+    this.#detachContextListeners();
+    this.#contextLost = false;
+
     const outgoing = this.#activeRenderer;
     const outgoingCanvases = this.#mountedCanvases;
     const firstOutgoing = outgoingCanvases[0];
@@ -803,18 +1055,80 @@ class SpectrumEngineControllerImpl implements SpectrumEngineController {
     this.#hysteresisDirty = false;
     const committedSeq = ++this.#transitionSeq;
 
-    outgoing?.dispose();
+    try {
+      if (outgoing !== null) {
+        if (ignoreOutgoingDisposeError) {
+          try {
+            outgoing.dispose();
+          } catch {
+            // Ignore secondary disposal errors from a broken outgoing renderer.
+          }
+        } else {
+          outgoing.dispose();
+        }
+      }
+    } finally {
+      if (
+        !this.#disposed &&
+        this.#transitionSeq === committedSeq &&
+        this.#activeRenderer === incoming &&
+        incoming.kind === "webgl2"
+      ) {
+        const plotCanvas = incomingCanvases[1];
+        if (plotCanvas !== undefined) {
+          this.#attachContextListeners(plotCanvas);
+        }
+      }
+    }
+
     return committedSeq;
   }
 
-  #mountFallbackCanvas2D(preRender: boolean): number {
+  #mountFallbackCanvas2D(preRender: boolean, ignoreOutgoingDisposeError = false): number {
     const surface = this.#stageCanvas("canvas2d", "canvas2d", false);
     const fallbackRenderer = this.#constructCanvas2D(surface);
     this.#replayState(fallbackRenderer);
     if (preRender) {
       fallbackRenderer.render();
     }
-    return this.#commitDomAndSwap(fallbackRenderer, [surface]);
+    return this.#commitDomAndSwap(fallbackRenderer, [surface], ignoreOutgoingDisposeError);
+  }
+
+  #fallbackFromBrokenWebGL2Restore(error: unknown): void {
+    this.#detachContextListeners();
+    this.#contextLost = false;
+    this.#webgl2Fallback = true;
+    this.#pendingKind = null;
+    this.#hysteresisDirty = false;
+
+    const preRender = this.#activeData !== null || this.#activeTraces !== null;
+    const fallbackSeq = this.#mountFallbackCanvas2D(preRender, true);
+
+    if (this.#rafHandle !== null) {
+      this.#cancelAnimationFrame(this.#rafHandle);
+      this.#rafHandle = null;
+    }
+
+    if (this.#disposed || this.#transitionSeq !== fallbackSeq) return;
+
+    const attemptedMode = this.#mode;
+    const fallbackSampleCount = this.#sampleCount;
+
+    this.#onWebGL2Fallback?.({
+      error,
+      attemptedMode,
+      sampleCount: fallbackSampleCount,
+    });
+
+    if (this.#disposed || this.#transitionSeq !== fallbackSeq) return;
+
+    this.#onEngineChange?.({
+      previousKind: "webgl2",
+      activeKind: "canvas2d",
+      sampleCount: fallbackSampleCount,
+      mode: attemptedMode,
+      reason: "webgl2-fallback",
+    });
   }
 
   #transitionTo(
@@ -828,15 +1142,32 @@ class SpectrumEngineControllerImpl implements SpectrumEngineController {
 
     // Step 1: Stage fresh unmounted <canvas> element(s) for the incoming engine.
     let incomingCanvases: HTMLCanvasElement[];
+    let stagedPlotCanvas: HTMLCanvasElement | null = null;
+    let incomingLost = false;
+    const onIncomingLost = (): void => {
+      incomingLost = true;
+    };
+
     if (targetKind === "webgl2") {
       incomingCanvases = [
         this.#stageCanvas("webgl2", "underlay", false),
         this.#stageCanvas("webgl2", "plot", false),
         this.#stageCanvas("webgl2", "overlay", true),
       ];
+      stagedPlotCanvas = incomingCanvases[1] ?? null;
+      if (stagedPlotCanvas !== null && typeof stagedPlotCanvas.addEventListener === "function") {
+        stagedPlotCanvas.addEventListener("webglcontextlost", onIncomingLost);
+      }
     } else {
       incomingCanvases = [this.#stageCanvas("canvas2d", "canvas2d", false)];
     }
+
+    const detachStagedListener = (): void => {
+      if (stagedPlotCanvas !== null && typeof stagedPlotCanvas.removeEventListener === "function") {
+        stagedPlotCanvas.removeEventListener("webglcontextlost", onIncomingLost);
+      }
+      stagedPlotCanvas = null;
+    };
 
     // Steps 2–4: Construct, replay authoritative state in strict order, and pre-paint.
     let incoming: FigureRenderer | null = null;
@@ -849,7 +1180,14 @@ class SpectrumEngineControllerImpl implements SpectrumEngineController {
       if (preRender) {
         incoming.render();
       }
+      if (targetKind === "webgl2") {
+        const handle = getRecoveryHandle(incoming);
+        if (incomingLost || (handle !== null && handle.isContextLost())) {
+          throw new Error("WebGL2 context was lost during engine switch.");
+        }
+      }
     } catch (error) {
+      detachStagedListener();
       // Clean up any partially constructed incoming renderer before discarding staged canvases.
       try {
         incoming?.dispose();
@@ -863,6 +1201,7 @@ class SpectrumEngineControllerImpl implements SpectrumEngineController {
 
       // Leak-free deterministic fallback to Canvas2D.
       this.#webgl2Fallback = true;
+      this.#contextLost = false;
       this.#pendingKind = null;
       this.#hysteresisDirty = false;
 
@@ -909,7 +1248,8 @@ class SpectrumEngineControllerImpl implements SpectrumEngineController {
       return;
     }
 
-    // Step 5: Atomic DOM swap, state update, outgoing disposal, and onEngineChange notification.
+    // Step 5: Atomic DOM swap, state update, outgoing disposal, active listener binding, and notification.
+    detachStagedListener();
     const nextSampleCount = this.#sampleCount;
     const nextMode = this.#mode;
     const nextKind = incoming.kind;

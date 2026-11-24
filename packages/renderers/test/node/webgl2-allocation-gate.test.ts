@@ -2,6 +2,7 @@
 import { commitPayloadRevision, createSpectrumDataPayload, type SpectrumDataPayload } from "@trace-kit/core";
 import { describe, expect, it } from "vitest";
 import type { OverlayDrawingContext } from "../../src/webgl2/surfaces.js";
+import { getRecoveryHandle } from "../../src/webgl2/rehydrate.js";
 import { WebGL2FigureRenderer } from "../../src/webgl2/webgl2-figure-renderer.js";
 import { asSurface, FakeSurface } from "./support/fake-surface.js";
 import { RecordingGl2Context } from "./support/recording-gl2-context.js";
@@ -83,6 +84,25 @@ describe("WebGL2FigureRenderer frame allocation gate", () => {
     const { renderer, gl } = build(false);
     renderer.render();
     expect(gl.liveCount("buffer")).toBeGreaterThan(0);
+    const events = await countGcEvents(() => {
+      renderer.render();
+    }, FRAMES);
+    expect(events).toBe(0);
+  }, 120_000);
+
+  it("reports 0 GC events over 1,000 steady-state render() calls after a context loss and rehydrate() cycle", async () => {
+    const { renderer, gl } = build(false);
+    renderer.render();
+    expect(gl.liveCount("buffer")).toBeGreaterThan(0);
+
+    gl.simulateContextLoss();
+    gl.simulateContextRestore();
+    const handle = getRecoveryHandle(renderer);
+    expect(handle).not.toBeNull();
+    handle!.rehydrate();
+    renderer.render();
+    expect(gl.liveCount("buffer")).toBeGreaterThan(0);
+
     const events = await countGcEvents(() => {
       renderer.render();
     }, FRAMES);
