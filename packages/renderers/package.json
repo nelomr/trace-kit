@@ -29,6 +29,11 @@
       "import": "./dist/webgl2/index.js",
       "require": "./dist/webgl2/index.cjs"
     },
+    "./controller": {
+      "types": "./dist/controller/index.d.ts",
+      "import": "./dist/controller/index.js",
+      "require": "./dist/controller/index.cjs"
+    },
     "./fixtures": {
       "types": "./dist/fixtures/scenarios.d.ts",
       "import": "./dist/fixtures/scenarios.js",

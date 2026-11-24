@@ -19,8 +19,8 @@ file `apps/playground/src/views/index.ts`.
 - **GIVEN**: the playground with every view module imported by
   `apps/playground/src/views/index.ts` registered
 - **WHEN**: the registry's list of resolvable paths is inspected
-- **THEN**: it equals exactly the set `/home`, `/core-math`, `/svg-export`, `/engine-parity`, and
-  `/streaming-transport`, and no other path
+- **THEN**: it equals exactly the set `/home`, `/core-math`, `/svg-export`, `/engine-parity`,
+  `/streaming-transport`, and `/engine-controller`, and no other path
 
 ### Requirement: Landing View and Default Route
 A `/home` view MUST be registered, listing every other registered view (read from the registry
@@ -118,3 +118,21 @@ landing view sources, and it MUST appear automatically as a link on `/home`.
 - **GIVEN**: `/home` mounted with all registered views
 - **WHEN**: its navigation links are enumerated
 - **THEN**: one link targets `/streaming-transport` without any edit to the `/home` view source
+
+### Requirement: The Engine Controller View Registers at `/engine-controller` Without Shell Edits
+The engine controller view (`playground-engine-controller-view`) MUST be registered through the
+registry's registration function at the path `/engine-controller` with a human-readable label
+(e.g., `"Engine Controller"`), a mount function, and an unmount function, from a `register.ts`
+under `apps/playground/src/views/engine-controller/` imported by
+`apps/playground/src/views/index.ts`. Registering it MUST require no edit to shell, router, or
+landing view sources, and it MUST appear automatically as a link on `/home`.
+
+#### Scenario: The route resolves to the engine controller view
+- **GIVEN**: the playground with all views registered
+- **WHEN**: the registry resolves `/engine-controller`
+- **THEN**: it returns the engine controller view's mount function
+
+#### Scenario: The landing view lists `/engine-controller` automatically
+- **GIVEN**: `/home` mounted with all registered views
+- **WHEN**: its navigation links are enumerated
+- **THEN**: one link targets `/engine-controller` without any edit to the `/home` view source

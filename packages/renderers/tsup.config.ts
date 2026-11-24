@@ -18,12 +18,18 @@ import { defineConfig } from "tsup";
 // `src/webgl2/index.ts` is a fourth separate entry for the same reason: the shader sources and GL
 // plumbing are dead weight for every consumer that only draws with Canvas2D, so they must not load
 // with the root entry. It does not reach the font data or the SVG exporter either.
+//
+// `src/controller/index.ts` is a fifth separate entry: it coordinates both `Canvas2DRenderer` and
+// `WebGL2FigureRenderer`, so keeping it off the root entry preserves root WebGL2 exclusion, while
+// keeping it isolated from `src/svg/` and `src/font/` avoids pulling SVG export or embedded font
+// payloads into interactive controller bundles.
 export default defineConfig({
   entry: [
     "src/index.ts",
     "src/font/index.ts",
     "src/svg/index.ts",
     "src/webgl2/index.ts",
+    "src/controller/index.ts",
     "src/fixtures/scenarios.ts",
   ],
   format: ["esm", "cjs"],

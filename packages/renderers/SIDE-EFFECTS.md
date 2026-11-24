@@ -55,6 +55,19 @@ The allocation-free lint block covers the four files that run on every frame: `f
 `surfaces`, `trace-slot` and the renderer class) are cold by construction: they compile programs,
 create GL objects, parse colors and grow scratch buffers, so they are exempt.
 
+## `src/controller/`
+
+Shipped only through the `@trace-kit/renderers/controller` subpath. Coordinates `Canvas2DRenderer`
+and `WebGL2FigureRenderer` without importing `src/svg/` or `src/font/`. No module touches a DOM
+global, acquires a rendering context, or registers an observer at import time.
+
+| File | Top-level content | Side effect |
+|---|---|---|
+| `controller/index.ts` | re-exports | none |
+| `controller/types.ts` | type declarations only | none |
+| `controller/hysteresis.ts` | type declarations, a frozen config literal, functions | none |
+| `controller/engine-controller.ts` | numeric constants, a frozen empty array literal, helper functions, one private class, one factory function | none |
+
 ## `src/layout/`
 
 | File | Top-level content | Side effect |

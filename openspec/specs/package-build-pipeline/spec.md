@@ -170,3 +170,50 @@ side effect.
 - **WHEN**: `packages/core/test/side-effects-audit.test.ts` runs
 - **THEN**: the file set listed in `SIDE_EFFECTS_AUDIT.md` equals the exact set of `.ts` files
   under `packages/core/src/` with zero missing and zero extraneous entries
+
+### Requirement: `@trace-kit/renderers` Exposes a `./controller` Subpath Built by tsup
+`packages/renderers/package.json` `exports` MUST declare a `"./controller"` entry with `types`, `import`, and `require` conditions pointing at `./dist/controller/index.d.ts`, `./dist/controller/index.js`, and `./dist/controller/index.cjs`, alongside the existing `"."`, `"./font"`, `"./svg"`, `"./webgl2"`, and `"./fixtures"` entries. `packages/renderers/tsup.config.ts` MUST include `src/controller/index.ts` as a separate entry emitting ESM (`.js`), CJS (`.cjs`), declarations (`.d.ts`, `.d.cts`), and sourcemaps, and `packages/renderers/tsconfig.svg-dts.json` MUST include `src/controller/index.ts` so the post-build `tsc` step emits `./dist/controller/index.d.ts.map`.
+
+The `./controller` subpath MUST export:
+- Concrete runtime values and functions: `createSpectrumEngineController`, `DEFAULT_HYSTERESIS_CONFIG`, `resolveHysteresisConfig`, `classifyHysteresisBand`, `evaluateHysteresisTarget`, `computePayloadSampleCount`, and `computeTracesSampleCount`.
+- TypeScript exported types in `dist/controller/index.d.ts`: `SpectrumEngineController`, `SpectrumEngineControllerOptions`, `ViewportDomain`, `EngineKind`, `EngineSelectionMode`, `HysteresisBand`, `HysteresisConfig`, `ResolvedHysteresisConfig`, `HysteresisEvaluationInput`, `HysteresisEvaluationResult`, `EngineChangeEvent`, `EngineChangeReason`, `WebGL2FallbackEvent`, `ResizeObserverLike`, `ResizeObserverEntryLike`, and `ResizeObserverCallbackLike`.
+
+The root `"."` entry of `@trace-kit/renderers` MUST NOT include the controller module, `WebGL2FigureRenderer`, shader sources, `exportToSvg`, or any GL code.
+
+#### Scenario: The ./controller subpath resolves under both ESM and CJS with concrete runtime exports
+- **GIVEN**: the built `@trace-kit/renderers` package
+- **WHEN**: Node evaluates `import('@trace-kit/renderers/controller')` and `require('@trace-kit/renderers/controller')`
+- **THEN**: both resolve and expose the concrete runtime exports `createSpectrumEngineController`, `DEFAULT_HYSTERESIS_CONFIG`, `resolveHysteresisConfig`, `classifyHysteresisBand`, `evaluateHysteresisTarget`, `computePayloadSampleCount`, and `computeTracesSampleCount`
+
+#### Scenario: Declarations, CJS declarations, and declaration maps are emitted for ./controller
+- **GIVEN**: the build output for `./controller`
+- **WHEN**: `packages/renderers/dist/controller/` is listed and `packages/renderers/dist/controller/index.d.ts` is inspected
+- **THEN**: `dist/controller/` contains `index.js`, `index.cjs`, `index.d.ts`, `index.d.cts`, and `index.d.ts.map`, and `index.d.ts` exports `SpectrumEngineController` as a TypeScript exported type
+
+#### Scenario: The root @trace-kit/renderers bundle excludes the controller and WebGL2 backend
+- **GIVEN**: the built root entry files `packages/renderers/dist/index.js` and `packages/renderers/dist/index.cjs`
+- **WHEN**: they are searched for `createSpectrumEngineController`, `WebGL2FigureRenderer`, `getContext("webgl2"`, `floatBitsToUint`, and `exportToSvg`
+- **THEN**: there is no match in either file
+
+#### Scenario: The ./controller subpath entry points are declared in package.json
+- **GIVEN**: `packages/renderers/package.json`
+- **WHEN**: `exports["./controller"]` is inspected
+- **THEN**: it declares `types: "./dist/controller/index.d.ts"`, `import: "./dist/controller/index.js"`, and `require: "./dist/controller/index.cjs"`
+
+### Requirement: The `./controller` Subpath Is Included in the `sideEffects` Audit and Reaches Neither the SVG Exporter Nor the Embedded Font Entry
+`packages/renderers/SIDE-EFFECTS.md` MUST list every file under `packages/renderers/src/controller/` (`controller/index.ts`, `controller/types.ts`, `controller/hysteresis.ts`, `controller/engine-controller.ts`) and state that none performs a top-level side effect (no import-time DOM creation, context acquisition, observer registration, or global mutation). The built `./controller` ESM/CJS outputs (`dist/controller/index.js`, `dist/controller/index.cjs`) and their reachable chunks MUST NOT import or inline the `./svg` exporter (`exportToSvg` or `svg/index`) or the `./font` entry (embedded base64 WOFF2 font data URL), and the built `./webgl2` output and its chunks MUST continue not to reach `exportToSvg` or `./font`.
+
+#### Scenario: The side-effects audit names every controller module
+- **GIVEN**: `packages/renderers/SIDE-EFFECTS.md` and `packages/renderers/src/controller/*.ts`
+- **WHEN**: the committed audit note is inspected
+- **THEN**: it names every `.ts` file under `src/controller/` with a no-side-effect statement
+
+#### Scenario: Importing ./controller in Node has no import-time side effect
+- **GIVEN**: a Node process with no DOM globals (`document`, `window`, `ResizeObserver`, `OffscreenCanvas` undefined)
+- **WHEN**: `import('@trace-kit/renderers/controller')` is evaluated
+- **THEN**: it resolves without throwing and without accessing any DOM global at import time
+
+#### Scenario: The ./controller bundle does not pull the SVG exporter or embedded font data URL
+- **GIVEN**: the built `./controller` outputs `packages/renderers/dist/controller/index.js`, `packages/renderers/dist/controller/index.cjs`, and their reachable chunks
+- **WHEN**: they are searched for `exportToSvg`, `svg/index`, `data:font/woff2;base64`, and `TRACEKIT_INTER_EMBEDDED_FONT`
+- **THEN**: there is no match in any file

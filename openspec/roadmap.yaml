@@ -476,7 +476,17 @@ changes:
     prerequisites:
       - renderers-webgl2
       - worker-streaming-transport
-    capabilities: not_yet_specified
+    capabilities:
+      - name: engine-hysteresis-policy
+        deltas: [ADDED]
+      - name: package-build-pipeline
+        deltas: [ADDED]
+      - name: playground-engine-controller-view
+        deltas: [ADDED]
+      - name: playground-routing
+        deltas: [ADDED, MODIFIED]
+      - name: renderer-lifecycle-manager
+        deltas: [ADDED]
     # Hand-off from renderers-webgl2 (archived as 2026-10-13-renderers-webgl2).
     #   Engine swap: a canvas that has produced a '2d' context can never yield 'webgl2', so the new
     #   engine needs fresh canvases. Build the new renderer, re-apply data, domain, size and
