@@ -67,6 +67,11 @@ global, acquires a rendering context, or registers an observer at import time.
 | `controller/types.ts` | type declarations only | none |
 | `controller/hysteresis.ts` | type declarations, a frozen config literal, functions | none |
 | `controller/engine-controller.ts` | numeric constants, a frozen empty array literal, helper functions, one private class, one factory function | none |
+| `controller/interaction-types.ts` | type declarations only | none |
+| `controller/input-normalizer.ts` | numeric constants, pure functions | none |
+| `controller/box-zoom-overlay.ts` | string constants, helper function, one class | none |
+| `controller/invalidation-scheduler.ts` | helper functions, type declarations, one class | none |
+| `controller/viewport-interaction-controller.ts` | helper functions, one private class, one factory function | none |
 
 ## `src/layout/`
 

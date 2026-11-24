@@ -69,11 +69,13 @@ export interface Canvas2DRendererOptions {
    * Other backends define their own default; a caller that selects nothing gets the backend's. */
   readonly decimation?: DecimationSelection;
   /**
-   * Explicit left-stacked Y axis registrations. `undefined` (the default) keeps today's
-   * behaviour verbatim: exactly one implicit linear left axis, whose domain is set via
-   * `setDomain`'s `yMin`/`yMax` arguments. When provided, each registration's own
-   * `domainMin`/`domainMax` is authoritative for that axis — a later change (roadmap 5.7) is
-   * what would make an axis's domain independently settable after construction.
+   * Explicit left-stacked Y axis registrations. `undefined` (the default) keeps one implicit
+   * linear left axis whose domain is set via `setDomain`'s `yMin`/`yMax` arguments. When a single
+   * explicit axis (`yAxes.length === 1`) is provided, its initial `[domainMin, domainMax]` seeds
+   * the Y domain and subsequent `setDomain` calls update its effective Y bounds while preserving
+   * `id`, `scaleKind` (including `Y_SCALE_KIND_LOG`), and `side`. When multiple axes
+   * (`yAxes.length > 1`) are provided, each registration's construction-time `[domainMin,
+   * domainMax]` remains fixed across `setDomain`.
    */
   readonly yAxes?: readonly YAxisRegistration[];
 }
@@ -104,8 +106,9 @@ export class Canvas2DRenderer implements FigureRenderer {
    * from `collection.xDomainMin`/`xDomainMax`; never an offset from any payload's `xOrigin`. */
   #xDomainMin = 0;
   #xDomainMax = 1;
-  /** Only meaningful for the default implicit single-axis case (`#yAxisRegistrations === null`);
-   * an explicit `yAxes` registration carries its own domain instead. */
+  /** Active Y domain for both the implicit linear axis (`#yAxisRegistrations === null`) and a
+   * single explicit Y axis (`#yAxisRegistrations.length === 1`). Ignored for multi-axis figures
+   * (`#yAxisRegistrations.length > 1`), whose per-axis domains stay fixed at construction. */
   #yDomainMin = -1;
   #yDomainMax = 1;
 
@@ -169,6 +172,13 @@ export class Canvas2DRenderer implements FigureRenderer {
     this.#axes = Object.freeze({ ...DEFAULT_AXIS_LAYOUT, ...options.axes });
     this.#decimation = options.decimation ?? DEFAULT_DECIMATION;
     this.#yAxisRegistrations = options.yAxes ?? null;
+    if (this.#yAxisRegistrations !== null && this.#yAxisRegistrations.length === 1) {
+      const single = this.#yAxisRegistrations[0];
+      if (single !== undefined) {
+        this.#yDomainMin = single.domainMin;
+        this.#yDomainMax = single.domainMax;
+      }
+    }
     this.#yAxisCount = this.#yAxisRegistrations?.length ?? 1;
 
     this.#deviceStyle = this.#style;
@@ -257,18 +267,38 @@ export class Canvas2DRenderer implements FigureRenderer {
     this.#ensureTraceIndexCapacities();
   }
 
-  /** `xMin`/`xMax` are absolute physical X, never offsets from a payload's `xOrigin`. */
+  /** `xMin`/`xMax` are absolute physical X, never offsets from a payload's `xOrigin`.
+   * `yMin`/`yMax` update the Y domain for implicit and single-axis (`yAxes.length === 1`) figures;
+   * multi-axis (`yAxes.length > 1`) registrations retain their construction-time Y bounds. */
   setDomain(xMin: number, xMax: number, yMin: number, yMax: number): void {
     if (this.#disposed) return;
+    const prevXMin = this.#xDomainMin;
+    const prevXMax = this.#xDomainMax;
+    const prevYMin = this.#yDomainMin;
+    const prevYMax = this.#yDomainMax;
+    const prevLayoutXMin = this.#layout.xDomainMin;
+    const prevLayoutXMax = this.#layout.xDomainMax;
     this.#xDomainMin = xMin;
     this.#xDomainMax = xMax;
-    // Only the default implicit single axis takes its domain from setDomain; an explicit `yAxes`
-    // registration owns its own domain instead (see the constructor option's doc comment).
     this.#yDomainMin = yMin;
     this.#yDomainMax = yMax;
-    this.#recomputeTransforms();
-    if (this.#traceCollection !== null) {
-      this.#recomputeTraceTransforms();
+    try {
+      this.#recomputeTransforms();
+      if (this.#traceCollection !== null) {
+        this.#recomputeTraceTransforms();
+      }
+    } catch (error) {
+      this.#xDomainMin = prevXMin;
+      this.#xDomainMax = prevXMax;
+      this.#yDomainMin = prevYMin;
+      this.#yDomainMax = prevYMax;
+      this.#recomputeTransforms();
+      if (this.#traceCollection !== null) {
+        this.#recomputeTraceTransforms();
+      }
+      this.#layout.xDomainMin = prevLayoutXMin;
+      this.#layout.xDomainMax = prevLayoutXMax;
+      throw error;
     }
   }
 
@@ -432,10 +462,27 @@ export class Canvas2DRenderer implements FigureRenderer {
     this.#traceCollection = null;
   }
 
-  /** The registered axes: the caller's explicit list, or — the default, pre-change behaviour —
-   * one synthetic implicit linear left axis tracking `setDomain`'s `yMin`/`yMax`. */
+  /** The registered axes: a single explicit axis projected with the current Y domain, multi-axis
+   * explicit registrations unchanged, or one synthetic implicit linear left axis. */
   #resolveYAxes(): readonly YAxisRegistration[] {
-    if (this.#yAxisRegistrations !== null) return this.#yAxisRegistrations;
+    const explicit = this.#yAxisRegistrations;
+    if (explicit !== null) {
+      if (explicit.length === 1) {
+        const single = explicit[0];
+        if (single !== undefined) {
+          return [
+            {
+              id: single.id,
+              scaleKind: single.scaleKind,
+              domainMin: this.#yDomainMin,
+              domainMax: this.#yDomainMax,
+              side: single.side,
+            },
+          ];
+        }
+      }
+      return explicit;
+    }
     return [
       {
         id: "y",

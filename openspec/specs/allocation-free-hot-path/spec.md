@@ -260,6 +260,31 @@ Per-settlement view re-mint counts MUST be strictly equal (zero tolerance) betwe
 - **THEN**: the counts are exactly `3`, `3`, and `4` at `4_096` and exactly `3`, `3`, and `4` at
   `262_144`, matching with zero tolerance
 
+### Requirement: Hot-Path Allocation Bans Extend to Pure Viewport Interaction Math and Windowed Invalidation
+`eslint.config.js`'s strict hot-path `no-restricted-syntax` block for `@trace-kit/core` MUST additionally cover:
+- `packages/core/src/viewport/interaction.ts`
+- `packages/core/src/transport/window-invalidation.ts`
+
+Forbidding inside loops all object/array literals, template literals, `new`, per-call closures, spread elements, allocating typed-array/array methods (`.map`/`.filter`/`.slice`/`.subarray` etc.), and transcendental `Math.*` calls inside loops, as well as module-wide `for...of`, rest parameters, `arguments`, generators, and `async`/`await`.
+
+In addition, steady-state `pointermove` and `wheel` hot paths inside `packages/renderers/src/controller/` MUST preallocate working domain records (`#scratchDomain`), gesture snapshots, 2-slot scalar pointer state, and bound event handler fields at construction time so zero objects, arrays, `Map`/`Set` entries, or closures are allocated per pointer or wheel event.
+
+#### Scenario: ESLint hot-path block rejects a banned construct in viewport interaction math
+- **GIVEN**: an inline fixture source linted against the `packages/core/src/viewport/interaction.ts` or `packages/core/src/transport/window-invalidation.ts` rule block containing an object literal or `.subarray(...)` inside a loop, or a `for...of` statement
+- **WHEN**: ESLint evaluates the fixture and the committed modules
+- **THEN**: ESLint fails on the fixture naming the offending construct, and reports zero violations on the committed `packages/core/src/viewport/interaction.ts` and `packages/core/src/transport/window-invalidation.ts`
+
+### Requirement: Zero-GC Gate Covers Viewport Interaction Math and Steady-State Invalidation Cycles
+Under `--expose-gc --no-concurrent-recompilation`, a `PerformanceObserver({ entryTypes: ["gc"] })` gate — paired in the same test run with a deliberately allocating control variant that records `> 0` GC events — MUST observe exactly `0` GC events across warmed-up steady-state runs of:
+1. `computeZoomDomain` (both `Y_SCALE_KIND_LINEAR` and `Y_SCALE_KIND_LOG`), `computePanDomain`, `computeBoxZoomDomain`, and `clampViewportDomain` driven across `100_000` invocations writing into a caller-owned `MutableViewportDomain`.
+2. `createStreamingInvalidationAdapter` driven across `1_000` `"gesture"` (`projectTier3` + `materializeTier3ToPayload`) and `"settled"` (`applyDomainChange` + `materializeBucketsToPayload`) cycles.
+3. `createWindowDecimationAdapter` backed by `createSyncDecimationPort` driven across `1_000` windowed `request`/`poll` cycles.
+
+#### Scenario: 100k viewport interaction math ticks and 1k invalidation cycles record zero GC events against a live control
+- **GIVEN**: warmed-up steady-state runs of `computeZoomDomain`, `computePanDomain`, `computeBoxZoomDomain`, `createStreamingInvalidationAdapter`, and `createWindowDecimationAdapter` under `--expose-gc --no-concurrent-recompilation`, plus an allocating control variant in the same test run (e.g. allocating a fresh `{ xMin, xMax, yMin, yMax }` object per iteration)
+- **WHEN**: `PerformanceObserver({ entryTypes: ["gc"] })` measures GC events during each measured window only
+- **THEN**: every real hot-path run records exactly `0` GC events, and the allocating control records `> 0` GC events proving the gate is live
+
 ## Contradiction Resolution (closed upstream)
 
 The contradiction recorded above has been **resolved at the source**, after this spec was

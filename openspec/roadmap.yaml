@@ -514,7 +514,27 @@ changes:
     name: viewport-interaction-controller
     prerequisites: 
       - engine-controller
-    capabilities: not_yet_specified
+    capabilities:
+      - name: allocation-free-hot-path
+        deltas: [ADDED]
+      - name: box-zoom-selection
+        deltas: [ADDED]
+      - name: decimation-invalidation
+        deltas: [ADDED]
+      - name: drag-pan-domain-mutation
+        deltas: [ADDED]
+      - name: figure-renderer-contract
+        deltas: [ADDED, MODIFIED]
+      - name: package-build-pipeline
+        deltas: [MODIFIED]
+      - name: playground-routing
+        deltas: [ADDED, MODIFIED]
+      - name: playground-viewport-interaction-view
+        deltas: [ADDED]
+      - name: pointer-input-normalization
+        deltas: [ADDED]
+      - name: wheel-zoom-anchoring
+        deltas: [ADDED]
     # Intended capability surface:
     #   pointer-input-normalization ADDED — framework- and device-agnostic; pointer events, not mouse
     #   wheel-zoom-anchoring        ADDED — cursor-anchored, per-axis, allocation-free

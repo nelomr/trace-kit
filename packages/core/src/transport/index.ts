@@ -86,3 +86,16 @@ export {
   materializeBucketsToPayload,
   materializeTier3ToPayload,
 } from "./materialize.js";
+
+export {
+  createStreamingInvalidationAdapter,
+  createWindowDecimationAdapter,
+} from "./window-invalidation.js";
+export type {
+  InvalidationPhase,
+  StreamingInvalidationAdapterOptions,
+  StreamingInvalidationAdapter,
+  WindowDecimationAcceptedCallback,
+  WindowDecimationAdapterOptions,
+  WindowDecimationAdapter,
+} from "./window-invalidation.js";

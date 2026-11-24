@@ -62,7 +62,9 @@ export interface WebGL2FigureRendererOptions {
    * selects nothing gets the backend's. */
   readonly decimation?: DecimationSelection;
   /** Explicit left-stacked Y axis registrations; `undefined` keeps one implicit linear axis whose
-   * domain follows `setDomain`. */
+   * domain follows `setDomain`. A single explicit axis (`yAxes.length === 1`) seeds initial Y
+   * bounds and updates on `setDomain` while preserving `id`, `scaleKind`, and `side`; multi-axis
+   * registrations (`yAxes.length > 1`) retain fixed construction-time Y domains. */
   readonly yAxes?: readonly YAxisRegistration[];
 }
 
@@ -139,6 +141,13 @@ export class WebGL2FigureRenderer implements FigureRenderer {
     this.#style = Object.freeze({ ...DEFAULT_FIGURE_STYLE, ...options.style });
     this.#axes = Object.freeze({ ...DEFAULT_AXIS_LAYOUT, ...options.axes });
     this.#yAxisRegistrations = options.yAxes ?? null;
+    if (this.#yAxisRegistrations !== null && this.#yAxisRegistrations.length === 1) {
+      const single = this.#yAxisRegistrations[0];
+      if (single !== undefined) {
+        this.#yDomainMin = single.domainMin;
+        this.#yDomainMax = single.domainMax;
+      }
+    }
     this.#deviceStyle = this.#style;
     this.#layout = createFigureLayout(this.#yAxisRegistrations?.length ?? 1);
     this.#updateGeometry();
@@ -238,14 +247,33 @@ export class WebGL2FigureRenderer implements FigureRenderer {
     this.#recomputeTraceTransforms();
   }
 
-  /** `xMin`/`xMax` are absolute physical X, never offsets from a payload's `xOrigin`. */
+  /** `xMin`/`xMax` are absolute physical X, never offsets from a payload's `xOrigin`.
+   * `yMin`/`yMax` update the Y domain for implicit and single-axis (`yAxes.length === 1`) figures;
+   * multi-axis (`yAxes.length > 1`) registrations retain their construction-time Y bounds. */
   setDomain(xMin: number, xMax: number, yMin: number, yMax: number): void {
     if (this.#disposed) return;
+    const prevXMin = this.#xDomainMin;
+    const prevXMax = this.#xDomainMax;
+    const prevYMin = this.#yDomainMin;
+    const prevYMax = this.#yDomainMax;
+    const prevLayoutXMin = this.#layout.xDomainMin;
+    const prevLayoutXMax = this.#layout.xDomainMax;
     this.#xDomainMin = xMin;
     this.#xDomainMax = xMax;
     this.#yDomainMin = yMin;
     this.#yDomainMax = yMax;
-    this.#recomputeTransforms();
+    try {
+      this.#recomputeTransforms();
+    } catch (error) {
+      this.#xDomainMin = prevXMin;
+      this.#xDomainMax = prevXMax;
+      this.#yDomainMin = prevYMin;
+      this.#yDomainMax = prevYMax;
+      this.#recomputeTransforms();
+      this.#layout.xDomainMin = prevLayoutXMin;
+      this.#layout.xDomainMax = prevLayoutXMax;
+      throw error;
+    }
   }
 
   resize(width: number, height: number, dpr: number): void {
@@ -381,7 +409,24 @@ export class WebGL2FigureRenderer implements FigureRenderer {
   }
 
   #resolveYAxes(): readonly YAxisRegistration[] {
-    if (this.#yAxisRegistrations !== null) return this.#yAxisRegistrations;
+    const explicit = this.#yAxisRegistrations;
+    if (explicit !== null) {
+      if (explicit.length === 1) {
+        const single = explicit[0];
+        if (single !== undefined) {
+          return [
+            {
+              id: single.id,
+              scaleKind: single.scaleKind,
+              domainMin: this.#yDomainMin,
+              domainMax: this.#yDomainMax,
+              side: single.side,
+            },
+          ];
+        }
+      }
+      return explicit;
+    }
     return [
       {
         id: "y",

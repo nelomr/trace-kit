@@ -111,11 +111,35 @@ async function lintInline(source: string, relativePath: string) {
 }
 
 describe("lint-hot-path glob covers the export, window, and streaming hot-path modules", () => {
+  // Lint the real committed viewport-interaction files first, before `lintInline` replaces
+  // their virtual text in typescript-eslint's shared project-service cache.
+  it(
+    "the committed interaction.ts and window-invalidation.ts report 0 violations",
+    async () => {
+      const eslint = new ESLint({
+        cwd: repoRoot,
+        overrideConfigFile: path.join(repoRoot, "eslint.config.js"),
+        ignore: false,
+      });
+      const results = await eslint.lintFiles([
+        "packages/core/src/viewport/interaction.ts",
+        "packages/core/src/transport/window-invalidation.ts",
+      ]);
+      const violations = results.flatMap((result) =>
+        result.messages.map((message) => `${result.filePath}:${message.line} ${message.message}`),
+      );
+      expect(violations).toEqual([]);
+    },
+    LINT_TIMEOUT_MS,
+  );
+
   for (const relativePath of [
     "packages/core/src/export/__hot-path-fixture-proof__.ts",
     "packages/core/src/viewport/window.ts",
     "packages/core/src/transport/streaming-contract.ts",
     "packages/core/src/transport/materialize.ts",
+    "packages/core/src/viewport/interaction.ts",
+    "packages/core/src/transport/window-invalidation.ts",
   ]) {
     it(
       `trips every loop-allocation selector at ${relativePath}`,
@@ -138,6 +162,8 @@ describe("lint-hot-path glob covers the export, window, and streaming hot-path m
   for (const relativePath of [
     "packages/core/src/transport/streaming-contract.ts",
     "packages/core/src/transport/materialize.ts",
+    "packages/core/src/viewport/interaction.ts",
+    "packages/core/src/transport/window-invalidation.ts",
   ]) {
     it(
       `rejects .subarray inside a loop at ${relativePath}`,
@@ -202,4 +228,67 @@ describe("lint-hot-path glob covers the export, window, and streaming hot-path m
     },
     LINT_TIMEOUT_MS,
   );
+});
+
+// The two viewport-interaction modules join the hot-path glob: the same fixtures that prove the
+// rule block is live must fail there, and the committed sources must stay violation-free.
+const VIEWPORT_INTERACTION_HOT_PATH_FILES = [
+  "packages/core/src/viewport/interaction.ts",
+  "packages/core/src/transport/window-invalidation.ts",
+] as const;
+
+describe("lint-hot-path glob covers the viewport interaction modules", () => {
+  const FOR_OF_BODY = [
+    "export function proof(values: Float32Array): number {",
+    "  let total = 0;",
+    "  for (const value of values) {",
+    "    total += value;",
+    "  }",
+    "  return total;",
+    "}",
+    "",
+  ].join("\n");
+
+  const TRANSCENDENTAL_BODY = [
+    "export function proof(count: number): number {",
+    "  let total = 0;",
+    "  for (let i = 0; i < count; i += 1) {",
+    "    total += Math.log10(i + 1);",
+    "  }",
+    "  return total;",
+    "}",
+    "",
+  ].join("\n");
+
+  for (const relativePath of VIEWPORT_INTERACTION_HOT_PATH_FILES) {
+    it(
+      `rejects for...of at ${relativePath}`,
+      async () => {
+        const messages = await lintInline(FOR_OF_BODY, relativePath);
+        const hit = messages.find(
+          (message) =>
+            message.ruleId === "no-restricted-syntax" &&
+            message.line === 3 &&
+            message.message.includes("for...of"),
+        );
+        expect(hit, `${relativePath}:3 for...of`).toBeDefined();
+      },
+      LINT_TIMEOUT_MS,
+    );
+
+    it(
+      `rejects a transcendental Math call inside a loop at ${relativePath}`,
+      async () => {
+        const messages = await lintInline(TRANSCENDENTAL_BODY, relativePath);
+        const hit = messages.find(
+          (message) =>
+            message.ruleId === "no-restricted-syntax" &&
+            message.line === 4 &&
+            message.message.includes("transcendental"),
+        );
+        expect(hit, `${relativePath}:4 Math.log10`).toBeDefined();
+      },
+      LINT_TIMEOUT_MS,
+    );
+  }
 });

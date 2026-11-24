@@ -29,23 +29,39 @@ function reachable(entry: string): string[] {
 
 const EXPECTED_RUNTIME_EXPORTS = [
   "DEFAULT_HYSTERESIS_CONFIG",
+  "DEFAULT_MIN_BOX_SIZE_CSS",
+  "DEFAULT_SETTLE_DEBOUNCE_MS",
+  "DEFAULT_WHEEL_LINE_HEIGHT_PX",
+  "DEFAULT_WHEEL_PAGE_FALLBACK_PX",
+  "DEFAULT_WHEEL_SENSITIVITY",
+  "MAX_WHEEL_DELTA_PX",
   "classifyHysteresisBand",
+  "classifyPointerRegion",
   "computePayloadSampleCount",
   "computeTracesSampleCount",
   "createSpectrumEngineController",
+  "createViewportInteractionController",
   "evaluateHysteresisTarget",
+  "normalizeWheelDeltaPx",
   "resolveHysteresisConfig",
+  "resolveWheelAxisMask",
 ];
 
 const EXPECTED_PUBLIC_TYPES = [
+  "BoxSelectEvent",
+  "BoxZoomState",
   "EngineChangeEvent",
   "EngineChangeReason",
   "EngineKind",
   "EngineSelectionMode",
+  "GestureStateChangeEvent",
   "HysteresisBand",
   "HysteresisConfig",
   "HysteresisEvaluationInput",
   "HysteresisEvaluationResult",
+  "InteractionDragMode",
+  "InteractionGestureState",
+  "PointerRegion",
   "ResizeObserverCallbackLike",
   "ResizeObserverEntryLike",
   "ResizeObserverLike",
@@ -53,7 +69,13 @@ const EXPECTED_PUBLIC_TYPES = [
   "SpectrumEngineController",
   "SpectrumEngineControllerOptions",
   "ViewportDomain",
+  "ViewportInteractionController",
+  "ViewportInteractionControllerOptions",
+  "ViewportInvalidationEvent",
+  "ViewportInvalidationPhase",
+  "ViewportMutationReason",
   "WebGL2FallbackEvent",
+  "WheelZoomAxis",
 ];
 
 // Run after `pnpm --filter @trace-kit/renderers build`; `pnpm run test` builds first.
@@ -66,7 +88,7 @@ describe("the ./controller subpath", () => {
     });
   });
 
-  it("builds ESM, CJS, declarations and declaration maps with all 16 public types", () => {
+  it("builds ESM, CJS, declarations and declaration maps with all 28 public types", () => {
     for (const file of ["index.js", "index.cjs", "index.d.ts", "index.d.cts", "index.d.ts.map"]) {
       expect(existsSync(dist("controller", file)), file).toBe(true);
     }
@@ -79,7 +101,7 @@ describe("the ./controller subpath", () => {
     }
   });
 
-  it("resolves under ESM and CJS in Node with no DOM globals and exposes exact 7 runtime keys", async () => {
+  it("resolves under ESM and CJS in Node with no DOM globals and exposes exact 17 runtime keys", async () => {
     expect(typeof document).toBe("undefined");
     expect(typeof window).toBe("undefined");
     expect(typeof ResizeObserver).toBe("undefined");
@@ -88,12 +110,14 @@ describe("the ./controller subpath", () => {
     const esm = (await import("@trace-kit/renderers/controller")) as Record<string, unknown>;
     expect(Object.keys(esm).sort()).toEqual(EXPECTED_RUNTIME_EXPORTS);
     expect(typeof esm["createSpectrumEngineController"]).toBe("function");
+    expect(typeof esm["createViewportInteractionController"]).toBe("function");
 
     const cjs = createRequire(import.meta.url)(
       "@trace-kit/renderers/controller",
     ) as Record<string, unknown>;
     expect(Object.keys(cjs).sort()).toEqual(EXPECTED_RUNTIME_EXPORTS);
     expect(typeof cjs["createSpectrumEngineController"]).toBe("function");
+    expect(typeof cjs["createViewportInteractionController"]).toBe("function");
   });
 
   it("keeps controller, WebGL2, and SVG exporter code out of the root entry", () => {
@@ -101,6 +125,7 @@ describe("the ./controller subpath", () => {
       const source = readFileSync(dist(file), "utf8");
       for (const banned of [
         "createSpectrumEngineController",
+        "createViewportInteractionController",
         "WebGL2FigureRenderer",
         'getContext("webgl2"',
         "floatBitsToUint",
@@ -137,10 +162,15 @@ describe("the ./controller subpath", () => {
       f.endsWith(".ts"),
     );
     expect(controllerFiles.sort()).toEqual([
+      "box-zoom-overlay.ts",
       "engine-controller.ts",
       "hysteresis.ts",
       "index.ts",
+      "input-normalizer.ts",
+      "interaction-types.ts",
+      "invalidation-scheduler.ts",
       "types.ts",
+      "viewport-interaction-controller.ts",
     ]);
     for (const file of controllerFiles) {
       const pattern = new RegExp(`controller/${file.replace(".", "\\.")}.*\\|\\s*none\\s*\\|`);

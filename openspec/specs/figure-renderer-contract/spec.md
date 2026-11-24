@@ -5,7 +5,7 @@
 > and `canvas2d-axes-grid`). The caller-selectable decimation surface (`setDecimation`, see
 > `selectable-decimation`) is part of the shared interface every backend inherits, not a Canvas2D-local option.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: `FigureRenderer` Is Lifecycle-Shaped and Excludes Interaction
 `@trace-kit/renderers` MUST export a `FigureRenderer` interface whose members are exactly:
@@ -119,7 +119,10 @@ issue any drawing-surface call. `setDomain(xMin, xMax, yMin, yMax)` MUST recompu
 for the new visible window and MUST NOT issue any drawing-surface call. `xMin` and `xMax` MUST be
 interpreted as absolute physical X, the space of `payload.xOrigin + payload.x[i]`, never as offsets
 from a payload's `xOrigin`; the same holds for the X domain a renderer seeds from
-`setTraces(collection)` (`collection.xDomainMin`/`xDomainMax`). The renderer MUST place every
+`setTraces(collection)` (`collection.xDomainMin`/`xDomainMax`). `yMin` and `yMax` MUST update the
+Y domain whenever `options.yAxes` is omitted or contains a single explicit axis (`yAxes.length === 1`,
+preserving its `id`, `scaleKind`, and `side`), and MUST leave registered Y domains unchanged when
+`options.yAxes.length > 1`. The renderer MUST place every
 trace by converting through that trace's own `xOrigin` (`viewport-transform`), so a payload with
 `xOrigin = 1550` is visible under `setDomain(1550, 1551, ...)`, and the same call shows a payload
 with `xOrigin = 0` only where its absolute X lies in `[1550, 1551]`. Both methods MUST invalidate
@@ -272,3 +275,38 @@ is unavailable. `Canvas2DRenderer` requirements on `Canvas2DSurface` are unchang
 - **WHEN**: both are scanned for `: any`, `as any`, `<any>`, `, any>`, `as never` and
   `as unknown as`
 - **THEN**: none of these patterns appears
+
+### Requirement: Single-Entry Explicit `yAxes` Honors `setDomain` Y Bounds While Multi-Axis Registrations Stay Fixed
+Both `Canvas2DRenderer` and `WebGL2FigureRenderer` MUST apply the following Y-domain resolution rules for `setDomain(xMin, xMax, yMin, yMax)` without adding, removing, or re-typing any member on the frozen 11-member `FigureRenderer` interface:
+1. **Implicit Y axis (`options.yAxes === undefined`)**: unchanged — a synthetic linear left axis tracks `setDomain`'s `yMin`/`yMax` (default `[-1, 1]`).
+2. **Single explicit Y axis (`options.yAxes.length === 1`)**:
+   - At construction, the renderer MUST seed its internal `#yDomainMin` and `#yDomainMax` from `options.yAxes[0].domainMin` and `options.yAxes[0].domainMax`, so callers that never invoke `setDomain` observe identical transforms and rendering.
+   - When `setDomain(xMin, xMax, yMin, yMax)` is subsequently called, `#resolveYAxes()` MUST project that single axis registration using the updated `[yMin, yMax]` while preserving its registered `id`, `scaleKind` (linear or `Y_SCALE_KIND_LOG`), and `side`.
+   - If the single explicit axis uses `scaleKind: Y_SCALE_KIND_LOG` and `setDomain` receives `yMin <= 0` or non-finite bounds, `createViewportTransform` MUST still throw `RangeError` (preserving `scale-logarithmic-transform`).
+3. **Multi-axis explicit registrations (`options.yAxes.length > 1`)**:
+   - Each registered axis MUST retain its construction-time `[domainMin, domainMax]` across `setDomain(xMin, xMax, yMin, yMax)` calls; `setDomain` updates only `[xMin, xMax]` across all axes.
+
+#### Scenario: Single explicit log-Y axis updates its transform on setDomain in both Canvas2D and WebGL2
+- **GIVEN**: a `Canvas2DRenderer` and a `WebGL2FigureRenderer`, each constructed with `yAxes: [{ id: "power", scaleKind: Y_SCALE_KIND_LOG, domainMin: 1e-3, domainMax: 1e3, side: AXIS_SIDE_LEFT }]`
+- **WHEN**: `setDomain(1550, 1551, 1e-1, 1e2)` is called on both renderers
+- **THEN**: both renderers' `transform` reflect `xDomainMin === 1550`, `xDomainMax === 1551`, `yDomainMin === 1e-1`, `yDomainMax === 1e2`, `yScaleKind === Y_SCALE_KIND_LOG`, `yLogDomainMin === -1`, and zero drawing-surface calls are issued
+
+#### Scenario: Single explicit log-Y axis preserves construction bounds before any setDomain call
+- **GIVEN**: a `Canvas2DRenderer` constructed with `yAxes: [{ id: "power", scaleKind: Y_SCALE_KIND_LOG, domainMin: 1e-2, domainMax: 1e4, side: AXIS_SIDE_LEFT }]`
+- **WHEN**: `resize(800, 400, 1)` is called without calling `setDomain`
+- **THEN**: `renderer.transform.yDomainMin === 1e-2` and `renderer.transform.yDomainMax === 1e4`
+
+#### Scenario: Single explicit log-Y axis rejects non-positive yMin via RangeError
+- **GIVEN**: a `Canvas2DRenderer` or `WebGL2FigureRenderer` constructed with a single `Y_SCALE_KIND_LOG` axis `[1, 1000]`
+- **WHEN**: `setDomain(0, 100, 0, 1000)` or `setDomain(0, 100, -5, 1000)` is called
+- **THEN**: `setDomain` throws `RangeError` from `createViewportTransform`
+
+#### Scenario: Multi-axis explicit yAxes retains construction-time Y domains across setDomain
+- **GIVEN**: a `Canvas2DRenderer` or `WebGL2FigureRenderer` constructed with two explicit Y axes `[{ id: "log", scaleKind: Y_SCALE_KIND_LOG, domainMin: 1, domainMax: 1000, side: AXIS_SIDE_LEFT }, { id: "lin", scaleKind: Y_SCALE_KIND_LINEAR, domainMin: -1, domainMax: 1, side: AXIS_SIDE_LEFT }]`
+- **WHEN**: `setDomain(0, 100, -1, 1)` is called
+- **THEN**: no `RangeError` is thrown, X updates to `[0, 100]`, and the primary log axis remains `[1, 1000]` while the secondary linear axis remains `[-1, 1]`
+
+#### Scenario: FigureRenderer interface remains strictly frozen at 11 members
+- **GIVEN**: `packages/renderers/src/figure-renderer.ts` after implementing single-axis explicit `yAxes` updates
+- **WHEN**: `packages/renderers/test/node/figure-renderer-shape.test.ts` runs
+- **THEN**: the member set of `FigureRenderer` is unchanged and equals `{kind, disposed, transform, setData, setTraces, setDomain, resize, render, clear, dispose, setDecimation}`

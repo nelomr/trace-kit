@@ -177,8 +177,10 @@ export default tseslint.config(
     files: [
       "packages/core/src/decimation/**/*.ts",
       "packages/core/src/viewport/window.ts",
+      "packages/core/src/viewport/interaction.ts",
       "packages/core/src/transport/streaming-contract.ts",
       "packages/core/src/transport/materialize.ts",
+      "packages/core/src/transport/window-invalidation.ts",
     ],
     rules: {
       "no-restricted-syntax": [

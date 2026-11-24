@@ -6,3 +6,4 @@ import "./svg-export/register.ts";
 import "./engine-parity/register.ts";
 import "./streaming-transport/register.ts";
 import "./engine-controller/register.ts";
+import "./viewport-interaction/register.ts";

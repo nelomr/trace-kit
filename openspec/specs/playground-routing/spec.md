@@ -20,7 +20,7 @@ file `apps/playground/src/views/index.ts`.
   `apps/playground/src/views/index.ts` registered
 - **WHEN**: the registry's list of resolvable paths is inspected
 - **THEN**: it equals exactly the set `/home`, `/core-math`, `/svg-export`, `/engine-parity`,
-  `/streaming-transport`, and `/engine-controller`, and no other path
+  `/streaming-transport`, `/engine-controller`, and `/viewport-interaction`, and no other path
 
 ### Requirement: Landing View and Default Route
 A `/home` view MUST be registered, listing every other registered view (read from the registry
@@ -136,3 +136,21 @@ landing view sources, and it MUST appear automatically as a link on `/home`.
 - **GIVEN**: `/home` mounted with all registered views
 - **WHEN**: its navigation links are enumerated
 - **THEN**: one link targets `/engine-controller` without any edit to the `/home` view source
+
+### Requirement: The Viewport Interaction View Registers at `/viewport-interaction` Without Shell Edits
+The viewport interaction view (`playground-viewport-interaction-view`) MUST be registered through the
+registry's registration function at the path `/viewport-interaction` with a human-readable label
+(e.g., `"Viewport Interaction"`), a mount function, and an unmount function, from a `register.ts`
+under `apps/playground/src/views/viewport-interaction/` imported by
+`apps/playground/src/views/index.ts`. Registering it MUST require no edit to shell, router, or
+landing view sources, and it MUST appear automatically as a link on `/home`.
+
+#### Scenario: The route resolves to the viewport interaction view
+- **GIVEN**: the playground with all views registered
+- **WHEN**: the registry resolves `/viewport-interaction`
+- **THEN**: it returns the viewport interaction view's mount function
+
+#### Scenario: The landing view lists `/viewport-interaction` automatically
+- **GIVEN**: `/home` mounted with all registered views
+- **WHEN**: its navigation links are enumerated
+- **THEN**: one link targets `/viewport-interaction` without any edit to the `/home` view source

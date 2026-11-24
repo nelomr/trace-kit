@@ -31,7 +31,7 @@ describe("route registry", () => {
 });
 
 describe("the real view registration", () => {
-  it("resolves exactly /home, /core-math, /svg-export, /engine-parity, /streaming-transport and /engine-controller once views/index.ts is imported, and nothing else it didn't already have", async () => {
+  it("resolves exactly /home, /core-math, /svg-export, /engine-parity, /streaming-transport, /engine-controller and /viewport-interaction once views/index.ts is imported, and nothing else it didn't already have", async () => {
     const before = registeredViews().map((view) => view.path);
     await import("../../src/views/index.js");
     const after = registeredViews().map((view) => view.path);
@@ -43,6 +43,10 @@ describe("the real view registration", () => {
       "/home",
       "/streaming-transport",
       "/svg-export",
+      "/viewport-interaction",
     ]);
+    const viewportView = resolveView(asRoutePath("/viewport-interaction"));
+    expect(viewportView).toBeDefined();
+    expect(typeof viewportView?.mount).toBe("function");
   });
 });

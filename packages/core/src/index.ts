@@ -85,6 +85,11 @@ export type {
   SharedViewportOptions,
   SampleSpan,
   SampleWindowOptions,
+  AxisMask,
+  MutableViewportDomain,
+  ViewportDomainBounds,
+  ViewportDomainConstraints,
+  PanGestureSnapshot,
 } from './viewport/index.js';
 export {
   createViewportTransform,
@@ -102,6 +107,22 @@ export {
   createAxisTransforms,
   createSampleSpan,
   resolveSampleWindow,
+  AXIS_MASK_NONE,
+  AXIS_MASK_X,
+  AXIS_MASK_Y,
+  AXIS_MASK_XY,
+  ULP_MIN_SPAN_FACTOR,
+  LOG_EXPONENT_MIN,
+  LOG_EXPONENT_MAX,
+  DEFAULT_MIN_LOG_DECADES_Y,
+  createMutableViewportDomain,
+  createPanGestureSnapshot,
+  capturePanGestureSnapshot,
+  computeUlpMinSpan,
+  clampViewportDomain,
+  computeZoomDomain,
+  computePanDomain,
+  computeBoxZoomDomain,
 } from './viewport/index.js';
 
 export type {
@@ -136,6 +157,12 @@ export type {
   Tier3Result,
   TierSelectionRequest,
   Tier3ProjectionTarget,
+  InvalidationPhase,
+  StreamingInvalidationAdapterOptions,
+  StreamingInvalidationAdapter,
+  WindowDecimationAcceptedCallback,
+  WindowDecimationAdapterOptions,
+  WindowDecimationAdapter,
 } from './transport/index.js';
 export {
   SATURATED,
@@ -171,6 +198,8 @@ export {
   projectTier3,
   materializeBucketsToPayload,
   materializeTier3ToPayload,
+  createStreamingInvalidationAdapter,
+  createWindowDecimationAdapter,
 } from './transport/index.js';
 
 export type {
