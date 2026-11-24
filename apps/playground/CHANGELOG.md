@@ -1,5 +1,17 @@
 # @trace-kit/playground
 
+## 0.0.11
+
+### Patch Changes
+
+- [`91bb692`](https://github.com/nelomr/trace-kit/commit/91bb6926d4349f149bbc6667e27d19d2755967d1) Thanks [@nelomr](https://github.com/nelomr)! - - Implement pure, DOM-free, allocation-free viewport interaction math (`computeZoomDomain`, `computePanDomain`, `computeBoxZoomDomain`, `clampViewportDomain`, `createPanGestureSnapshot`, `capturePanGestureSnapshot`, `computeUlpMinSpan`, `createMutableViewportDomain`) and decimation-invalidation bridge helpers (`createStreamingInvalidationAdapter`, `createWindowDecimationAdapter`) in `@trace-kit/core`.
+  - Implement Option 2A single-axis `yAxes.length === 1` `setDomain` support in `Canvas2DRenderer` and `WebGL2FigureRenderer`, preserving the frozen 11-member `FigureRenderer` contract and multi-axis registrations.
+  - Implement framework-agnostic `createViewportInteractionController` composing over `SpectrumEngineController` under `@trace-kit/renderers/controller` with pointer/wheel input normalization (`classifyPointerRegion`, `normalizeWheelDeltaPx`, `resolveWheelAxisMask`), CSS-composited sibling box-zoom overlay (`<div data-trace-kit-overlay="box-zoom">`) with 5-state machine, and frame-budget-debounced invalidation scheduler coordinating `gesture`/`settled` phases with `setGestureActive` hysteresis deferral.
+  - Add `/viewport-interaction` view to `@trace-kit/playground` demonstrating pan, cursor-anchored wheel zoom, axis-gutter gestures, Shift+drag box-zoom, deep zoom near 1550.0001 nm, single-axis log-Y interaction, live debounced re-decimation, and telemetry HUD.
+- Updated dependencies [[`91bb692`](https://github.com/nelomr/trace-kit/commit/91bb6926d4349f149bbc6667e27d19d2755967d1)]:
+  - @trace-kit/core@0.0.13
+  - @trace-kit/renderers@0.0.10
+
 ## 0.0.10
 
 ### Patch Changes
