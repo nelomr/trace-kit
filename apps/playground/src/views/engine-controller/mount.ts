@@ -28,7 +28,7 @@ const X_SPAN_NM = 40;
 const Y_MIN_DBM = -80;
 const Y_MAX_DBM = 0;
 const STAGE_HEIGHT_PX = 420;
-const LABEL_GUTTER_CSS = 18;
+const LABEL_GUTTER_CSS = 56;
 
 const SAMPLE_PRESETS: readonly number[] = [
   10_000,

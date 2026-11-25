@@ -19,7 +19,7 @@
 Prueba el rendimiento de renderizado de TraceKit directamente en el navegador:
 
 * **[Sandbox interactivo en Vue 3 (`OSA-1550`)](https://nelomr.github.io/trace-kit/vue/)**  
-  Panel de control de analizador de espectro óptico con simulación de barridos en tiempo real (hasta $250\text{k}$ muestras/barrido), modulación de parámetros físicos, telemetría del motor activo (intercambio atómico Canvas2D $\leftrightarrow$ WebGL2), pan/zoom fluido y recuperación de pérdida de contexto WebGL.
+  Analizador de espectro óptico con física en potencia lineal (muesca $\pi$-FBG en `1550.0001 nm`, rejilla oficial **ITU-T G.694.1** de 100 GHz en Banda C, barridos a 60 Hz y eje Log-Y en mW de 5 décadas), telemetría del motor activo (intercambio atómico Canvas2D $\leftrightarrow$ WebGL2), pipeline opcional en Web Worker, recuperación de contexto WebGL y exportación de la ventana visible a SVG, CSV crudo y NumPy `.npy`.
 * **[Laboratorio Vanilla (`apps/playground` — 7 vistas interactivas)](https://nelomr.github.io/trace-kit/)**  
   Banco de pruebas de algoritmos de decimación (LTTB frente a Envolvente Min-Max), paridad entre motores gráficos, buffers en streaming y exportación sin pérdida a SVG, CSV y formato binario NumPy `.npy`.
 

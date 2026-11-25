@@ -1,8 +1,22 @@
-import type {
-  DecimationSelection,
-  SpectrumDataPayload,
-  TraceCollection,
-  YAxisRegistration,
+import {
+  DecimationKind,
+  SATURATED,
+  StatCounter,
+  TransportHealth,
+  createTransportStatsView,
+  createWorkerDecimationPort,
+  detectTransportCapabilities,
+  exportCsv,
+  exportNpy,
+  type CsvTraceSource,
+  type DecimationPort,
+  type DecimationSelection,
+  type Lease,
+  type NpyArrayKind,
+  type SettlementSink,
+  type SpectrumDataPayload,
+  type TraceCollection,
+  type YAxisRegistration,
 } from "@trace-kit/core";
 import type { AxisLayout } from "@trace-kit/renderers";
 import {
@@ -44,6 +58,7 @@ import {
   SCENARIOS,
   SCENARIO_ORDER,
   buildDwdmCollection,
+  computeWindowOpticalMetrics,
   createSignalPool,
   populateFbgScenario,
   populateLiveGridX,
@@ -106,6 +121,35 @@ function formatSampleText(count: number): string {
 
 function formatPresetChip(count: number): string {
   return `${Math.round(count / 1_000)}k`;
+}
+
+const WORKER_HEALTH_NAMES: readonly string[] = [
+  "Ready",
+  "Saturated",
+  "Stalled",
+  "Recovering",
+  "Degraded",
+];
+
+function detectWorkerBacking(): "Shared" | "Transfer" {
+  const caps = detectTransportCapabilities();
+  if (caps.sharedMemory && caps.crossOriginIsolated && typeof Atomics !== "undefined") {
+    return "Shared";
+  }
+  return "Transfer";
+}
+
+function triggerBlobDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 1000);
 }
 
 /**
@@ -239,6 +283,18 @@ export const App = defineComponent({
     const measuredFrameMs = shallowRef<number | null>(null);
     const statusAnnouncement = shallowRef<string>("");
 
+    // Optional off-main-thread Web Worker decimation pipeline (WorkerDecimationPort)
+    const workerEnabled = shallowRef<boolean>(false);
+    const workerBacking = shallowRef<"Shared" | "Transfer">(detectWorkerBacking());
+    const workerHealthLabel = shallowRef<string>("Off");
+    const workerOutCount = shallowRef<number>(0);
+    const workerRoundtripMs = shallowRef<number | null>(null);
+
+    let workerPort: DecimationPort | null = null;
+    let workerPollRafId: number | null = null;
+    let workerSubmittedAtMs = 0;
+    const workerStatsView = createTransportStatsView();
+
     // Active WEBGL_lose_context extension retained across Lose -> Restore
     let activeLoseContextExt: WEBGL_lose_context | null = null;
     let rafStreamId: number | null = null;
@@ -271,6 +327,136 @@ export const App = defineComponent({
     });
 
     const domainIsShallow = isShallow(domainRef);
+
+    const activePrimaryPayload = computed<SpectrumDataPayload>(() => {
+      if (scenarioId.value === "dwdm-40ch") {
+        return signalPool.dwdmActivePayload;
+      }
+      return currentData.value ?? signalPool.fbgPayload;
+    });
+
+    const opticalMetrics = computed(() => {
+      // Track payloadRevision & domainRef so metrology refreshes cleanly on scenario/zoom changes
+      void payloadRevision.value;
+      const dom = domainRef.value;
+      const isLog = currentScenario.value.axisMode === "log";
+      return computeWindowOpticalMetrics(activePrimaryPayload.value, dom.xMin, dom.xMax, isLog);
+    });
+
+    function stopWorkerPoll(): void {
+      if (workerPollRafId !== null) {
+        window.cancelAnimationFrame(workerPollRafId);
+        workerPollRafId = null;
+      }
+    }
+
+    const workerSettlementSink: SettlementSink = {
+      onSettled(lease: Lease<"settled">, outCount: number): void {
+        const port = workerPort;
+        if (port === null) return;
+        const kind =
+          decimationChoice.value === "lttb"
+            ? DecimationKind.Lttb
+            : DecimationKind.MinMaxEnvelope;
+        if (kind === DecimationKind.MinMaxEnvelope) {
+          void port.viewOut(lease);
+        } else {
+          void port.viewIndices(lease);
+        }
+        workerOutCount.value = outCount;
+        workerRoundtripMs.value = Number(
+          Math.max(0.01, performance.now() - workerSubmittedAtMs).toFixed(2),
+        );
+        port.release(lease);
+        port.readStats(workerStatsView);
+        const hCode = workerStatsView.counters[StatCounter.Health] ?? TransportHealth.Ready;
+        workerHealthLabel.value = WORKER_HEALTH_NAMES[hCode] ?? "Ready";
+        stopWorkerPoll();
+      },
+    };
+
+    function disposeWorkerPort(): void {
+      stopWorkerPoll();
+      if (workerPort !== null) {
+        workerPort.dispose();
+        workerPort = null;
+      }
+      workerHealthLabel.value = "Off";
+      workerOutCount.value = 0;
+      workerRoundtripMs.value = null;
+    }
+
+    function runWorkerDecimationPass(): void {
+      if (!workerEnabled.value || workerPort === null) return;
+      const port = workerPort;
+      const payload = activePrimaryPayload.value;
+      const lease = port.acquire();
+      if (lease === SATURATED) {
+        workerHealthLabel.value = "Saturated";
+        return;
+      }
+
+      const count = Math.min(payload.sampleCount, port.transitCapacitySamples);
+      const vx = port.viewX(lease);
+      const vy = port.viewY(lease);
+      vx.set(payload.x.subarray(0, count));
+      vy.set(payload.y.subarray(0, count));
+
+      const kind =
+        decimationChoice.value === "lttb"
+          ? DecimationKind.Lttb
+          : DecimationKind.MinMaxEnvelope;
+      const buckets = Math.min(1024, Math.max(16, count >> 2));
+      port.setKind(lease, kind);
+      port.setSampleCount(lease, count);
+      port.setBucketCount(lease, buckets);
+      port.setDomain(lease, payload.xMin - payload.xOrigin, payload.xMax - payload.xOrigin);
+
+      workerSubmittedAtMs = performance.now();
+      port.submit(lease);
+
+      stopWorkerPoll();
+      const pollTick = (): void => {
+        if (workerPort === null || !workerEnabled.value) {
+          workerPollRafId = null;
+          return;
+        }
+        workerPort.poll(workerSettlementSink);
+        workerPort.readStats(workerStatsView);
+        const outstanding = workerStatsView.counters[StatCounter.LeasesOutstanding] ?? 0;
+        const hCode = workerStatsView.counters[StatCounter.Health] ?? TransportHealth.Ready;
+        workerHealthLabel.value = WORKER_HEALTH_NAMES[hCode] ?? "Ready";
+        if (outstanding > 0) {
+          workerPollRafId = window.requestAnimationFrame(pollTick);
+        } else {
+          workerPollRafId = null;
+        }
+      };
+      workerPollRafId = window.requestAnimationFrame(pollTick);
+    }
+
+    function setWorkerPipelineEnabled(enabled: boolean): void {
+      if (enabled === workerEnabled.value) return;
+      workerEnabled.value = enabled;
+      if (!enabled) {
+        disposeWorkerPort();
+        announce("Worker decimation pipeline disabled");
+        return;
+      }
+
+      workerBacking.value = detectWorkerBacking();
+      workerPort = createWorkerDecimationPort({
+        workerFactory: () =>
+          new Worker(new URL("./decimation.worker.ts", import.meta.url), {
+            type: "module",
+          }),
+        poolPairs: 2,
+        transitCapacitySamples: MAX_SAMPLES,
+      });
+      workerHealthLabel.value = "Ready";
+      runWorkerDecimationPass();
+      announce(`Web Worker decimation pipeline enabled (${workerBacking.value})`);
+    }
 
     function announce(message: string): void {
       statusAnnouncement.value = message;
@@ -357,6 +543,9 @@ export const App = defineComponent({
         domainRef.value = snapshotDomain(descriptor.homeDomain);
       }
       payloadRevision.value += 1;
+      if (workerEnabled.value) {
+        runWorkerDecimationPass();
+      }
     }
 
     // Initialize default FBG 1550 nm dataset immediately
@@ -401,7 +590,7 @@ export const App = defineComponent({
         selectScenario("fbg-1550");
       }
       domainRef.value = snapshotDomain(target);
-      announce("Zoomed to 1550.0001 nm pi-phase-shifted FBG notch (0.0004 nm span)");
+      announce("Zoomed to 4.0 pm pi-phase-shifted FBG notch at 1550.000100 nm (32 pm span)");
     }
 
     function resetView(): void {
@@ -493,19 +682,54 @@ export const App = defineComponent({
       );
 
       const blob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = "tracekit-spectrum.svg";
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => {
-        URL.revokeObjectURL(url);
-      }, 1000);
+      triggerBlobDownload(blob, `tracekit-${scenarioId.value}.svg`);
 
       announce(
         `Exported SVG (${sampleCount.value.toLocaleString("en-US")} samples, ${Math.round(svgMarkup.length / 1024)} KB)`,
+      );
+    }
+
+    function handleExportCsv(): void {
+      const ctrl = liveController.value;
+      const dom = ctrl !== null && !ctrl.disposed ? ctrl.domain : domainRef.value;
+      const source: CsvTraceSource =
+        currentTraces.value !== undefined
+          ? currentTraces.value
+          : { entries: [{ id: scenarioId.value, payload: activePrimaryPayload.value }] };
+
+      const parts: string[] = [];
+      let totalBytes = 0;
+      for (const chunk of exportCsv(source, dom.xMin, dom.xMax)) {
+        parts.push(chunk);
+        totalBytes += chunk.length;
+      }
+      triggerBlobDownload(
+        new Blob(parts, { type: "text/csv;charset=utf-8" }),
+        `tracekit-${scenarioId.value}-raw.csv`,
+      );
+      announce(
+        `Exported un-decimated CSV window (${Math.max(1, Math.round(totalBytes / 1024))} KB)`,
+      );
+    }
+
+    function handleExportNpy(axis: NpyArrayKind): void {
+      const ctrl = liveController.value;
+      const dom = ctrl !== null && !ctrl.disposed ? ctrl.domain : domainRef.value;
+      const payload = activePrimaryPayload.value;
+
+      const parts: Uint8Array<ArrayBuffer>[] = [];
+      let totalBytes = 0;
+      for (const chunk of exportNpy(payload, axis, dom.xMin, dom.xMax)) {
+        const copy = chunk.slice();
+        parts.push(copy);
+        totalBytes += copy.byteLength;
+      }
+      triggerBlobDownload(
+        new Blob(parts, { type: "application/octet-stream" }),
+        `tracekit-${scenarioId.value}-${axis}.npy`,
+      );
+      announce(
+        `Exported NumPy .npy ${axis.toUpperCase()} buffer (${Math.max(1, Math.round(totalBytes / 1024))} KB)`,
       );
     }
 
@@ -604,6 +828,7 @@ export const App = defineComponent({
 
     onBeforeUnmount(() => {
       stopLiveLoop();
+      disposeWorkerPort();
       if (stopRovingFallback !== null) {
         stopRovingFallback();
         stopRovingFallback = null;
@@ -648,6 +873,17 @@ export const App = defineComponent({
             ? "BELOW-DOWN (<=64k)"
             : "DEADBAND (64k-80k)";
 
+      const metrics = opticalMetrics.value;
+      const peakLambdaStr = Number.isFinite(metrics.peakXNm)
+        ? `${formatWavelength(metrics.peakXNm, spanNm)} nm`
+        : "--";
+      const peakPowerStr = Number.isFinite(metrics.peakY)
+        ? `${formatYValue(metrics.peakY, isLog)} ${currentScenario.value.yUnit}`
+        : "--";
+      const dynRangeStr = Number.isFinite(metrics.dynamicRangeDb)
+        ? `${metrics.dynamicRangeDb.toFixed(1)} dB`
+        : "--";
+
       return h("div", { class: "osa-overlay-hud" }, [
         h("div", { class: "osa-overlay-row" }, [
           h("div", { class: "osa-readout-block" }, [
@@ -664,11 +900,15 @@ export const App = defineComponent({
               h("span", { class: "osa-readout-val" }, formatSpanNm(spanNm)),
             ]),
             h("div", { class: "osa-readout-line" }, [
-              h("span", { class: "osa-readout-key" }, isLog ? "LOG" : "Y"),
+              h("span", { class: "osa-readout-key" }, "PK"),
+              h("span", { class: "osa-readout-val" }, `${peakLambdaStr} · ${peakPowerStr}`),
+            ]),
+            h("div", { class: "osa-readout-line" }, [
+              h("span", { class: "osa-readout-key" }, "DR"),
               h(
                 "span",
                 { class: "osa-readout-val" },
-                `${formatYValue(dom.yMin, isLog)} — ${formatYValue(dom.yMax, isLog)} ${currentScenario.value.yUnit}`,
+                `${dynRangeStr} · ${currentScenario.value.instrumentProfile}`,
               ),
             ]),
           ]),
@@ -684,11 +924,11 @@ export const App = defineComponent({
               h("div", { class: "osa-legend-strip" }, [
                 h("span", { class: "osa-legend-item" }, [
                   h("span", { class: "osa-legend-swatch", "data-variant": "active" }),
-                  "Active C-Band Sweep",
+                  "C-Band Active (Ch 34 −10 dB · Ch 48 +12 GHz)",
                 ]),
                 h("span", { class: "osa-legend-item" }, [
                   h("span", { class: "osa-legend-swatch", "data-variant": "ref" }),
-                  "Reference Comb",
+                  "ITU-T G.694.1 Ref (100 GHz)",
                 ]),
               ]),
             ])
@@ -915,6 +1155,10 @@ export const App = defineComponent({
                       );
                     }),
                   ),
+                  h("div", { class: "rack-spec-strip" }, [
+                    h("span", { class: "rack-spec-tag" }, currentScenario.value.standardRef),
+                    h("span", { class: "rack-spec-tag" }, currentScenario.value.instrumentProfile),
+                  ]),
                   h("p", { class: "rack-summary" }, currentScenario.value.summary),
                   scenarioId.value === "fbg-1550"
                     ? h(
@@ -924,7 +1168,7 @@ export const App = defineComponent({
                           class: "tk-btn tk-btn-accent",
                           onClick: zoomPrecision1550,
                         },
-                        "Inspect 1550.0001 nm (0.0004 nm span)",
+                        "Inspect 4.0 pm π-Notch (1550.0001 nm)",
                       )
                     : scenarioId.value === "live-60hz"
                       ? h(
@@ -1082,6 +1326,9 @@ export const App = defineComponent({
                             "aria-pressed": String(decimationChoice.value === choice),
                             onClick: () => {
                               decimationChoice.value = choice;
+                              if (workerEnabled.value) {
+                                runWorkerDecimationPass();
+                              }
                               announce(`Decimation kernel set to ${label}`);
                             },
                           },
@@ -1123,9 +1370,47 @@ export const App = defineComponent({
                       ),
                     ),
                   ]),
+                  h("div", { class: "tk-control-row" }, [
+                    h("span", { class: "tk-control-label" }, "Off-Main-Thread Worker"),
+                    h(
+                      "div",
+                      {
+                        role: "toolbar",
+                        "aria-label": "Web Worker decimation pipeline",
+                        focusgroup: "toolbar wrap",
+                        class: "tk-toolbar-grid-2",
+                      },
+                      [
+                        h(
+                          "button",
+                          {
+                            type: "button",
+                            class: "tk-btn",
+                            "aria-pressed": String(!workerEnabled.value),
+                            onClick: () => {
+                              setWorkerPipelineEnabled(false);
+                            },
+                          },
+                          "Main Thread",
+                        ),
+                        h(
+                          "button",
+                          {
+                            type: "button",
+                            class: "tk-btn",
+                            "aria-pressed": String(workerEnabled.value),
+                            onClick: () => {
+                              setWorkerPipelineEnabled(true);
+                            },
+                          },
+                          "Web Worker",
+                        ),
+                      ],
+                    ),
+                  ]),
                 ]),
 
-                // Section 4: GPU Context Recovery & Publication Export
+                // Section 4: GPU Context Recovery & Publication / Raw Export
                 h("section", { class: "rack-section" }, [
                   h("div", { class: "rack-section-head" }, [
                     h("h2", { class: "rack-section-title" }, "4. GPU Recovery & Export"),
@@ -1135,7 +1420,7 @@ export const App = defineComponent({
                     "div",
                     {
                       role: "toolbar",
-                      "aria-label": "GPU recovery and export actions",
+                      "aria-label": "GPU recovery and viewport actions",
                       focusgroup: "toolbar wrap",
                       class: "tk-toolbar-grid-2",
                     },
@@ -1153,7 +1438,6 @@ export const App = defineComponent({
                                 : "tk-btn-action",
                           ],
                           "aria-disabled": String(!isWebGL2),
-                          style: { gridColumn: "1 / -1" },
                           onClick: toggleGlContextLoss,
                         },
                         contextLostState.value ? "Restore GL Context" : "Lose GL Context",
@@ -1167,23 +1451,68 @@ export const App = defineComponent({
                         },
                         "Reset View",
                       ),
-                      h(
-                        "button",
-                        {
-                          type: "button",
-                          class: "tk-btn tk-btn-accent",
-                          onClick: handleExportSvg,
-                        },
-                        "Export SVG",
-                      ),
                     ],
                   ),
+                  h("div", { class: "tk-control-row" }, [
+                    h("span", { class: "tk-control-label" }, "Visible Window Export (Raw & Vector)"),
+                    h(
+                      "div",
+                      {
+                        role: "toolbar",
+                        "aria-label": "Export vector and raw data",
+                        focusgroup: "toolbar wrap",
+                        class: "tk-toolbar-grid-4",
+                      },
+                      [
+                        h(
+                          "button",
+                          {
+                            type: "button",
+                            class: "tk-btn tk-btn-accent",
+                            onClick: handleExportSvg,
+                          },
+                          "SVG",
+                        ),
+                        h(
+                          "button",
+                          {
+                            type: "button",
+                            class: "tk-btn tk-btn-action",
+                            onClick: handleExportCsv,
+                          },
+                          "CSV",
+                        ),
+                        h(
+                          "button",
+                          {
+                            type: "button",
+                            class: "tk-btn tk-btn-action",
+                            onClick: () => {
+                              handleExportNpy("x");
+                            },
+                          },
+                          ".npy X",
+                        ),
+                        h(
+                          "button",
+                          {
+                            type: "button",
+                            class: "tk-btn tk-btn-action",
+                            onClick: () => {
+                              handleExportNpy("y");
+                            },
+                          },
+                          ".npy Y",
+                        ),
+                      ],
+                    ),
+                  ]),
                 ]),
 
-                // Section 5: Vue Reactivity Isolation Telemetry
+                // Section 5: Vue Reactivity Isolation & Worker Telemetry
                 h("section", { class: "rack-section" }, [
                   h("div", { class: "rack-section-head" }, [
-                    h("h2", { class: "rack-section-title" }, "5. Reactivity Isolation"),
+                    h("h2", { class: "rack-section-title" }, "5. Isolation & Worker"),
                     h("span", { class: "rack-section-meta" }, "LIVE PROBE"),
                   ]),
                   h("div", { class: "tk-diag-grid" }, [
@@ -1237,6 +1566,29 @@ export const App = defineComponent({
                           "data-ok": glStatusTone,
                         },
                         glStatusText,
+                      ),
+                    ]),
+                    h("div", { class: "tk-diag-cell" }, [
+                      h("span", { class: "tk-diag-key" }, "Worker Port"),
+                      h(
+                        "span",
+                        {
+                          class: "tk-diag-val",
+                          "data-ok": workerEnabled.value ? "true" : "warn",
+                        },
+                        workerEnabled.value
+                          ? `${workerHealthLabel.value} · ${workerBacking.value}`
+                          : "OFF",
+                      ),
+                    ]),
+                    h("div", { class: "tk-diag-cell" }, [
+                      h("span", { class: "tk-diag-key" }, "Worker Out / RTT"),
+                      h(
+                        "span",
+                        { class: "tk-diag-val" },
+                        workerEnabled.value && workerRoundtripMs.value !== null
+                          ? `${workerOutCount.value} · ${workerRoundtripMs.value.toFixed(1)} ms`
+                          : "--",
                       ),
                     ]),
                   ]),

@@ -19,7 +19,7 @@
 Experience TraceKit's high-throughput rendering live in your browser:
 
 * **[Live Vue 3 Optical Instrument Sandbox (`OSA-1550`)](https://nelomr.github.io/trace-kit/vue/)**  
-  A full optical spectrum analyzer dashboard with real-time sweep simulation (up to $250\text{k}$ samples/sweep), live parameter modulation, active engine telemetry (Canvas2D $\leftrightarrow$ WebGL2 atomic swap), interactive pan/zoom, and WebGL context loss recovery.
+  Optical spectrum analyzer workbench featuring linear-power optical physics ($\pi$-phase-shifted FBG notch at `1550.0001 nm`, exact **ITU-T G.694.1** 100 GHz C-band DWDM grid, live 60 Hz sweeps, and 5-decade Log-Y mW), active engine telemetry (Canvas2D $\leftrightarrow$ WebGL2 atomic swap), optional off-main-thread Web Worker decimation, WebGL context recovery, and visible-window SVG / raw CSV / NumPy `.npy` export.
 * **[Live Vanilla Lab (`apps/playground` — 7 Interactive Views)](https://nelomr.github.io/trace-kit/)**  
   Benchmark workbench featuring decimation algorithm visualizations (LTTB vs. Min-Max Envelope), dual-engine rendering parity, streaming buffers, and lossless SVG / CSV / NumPy `.npy` export.
 

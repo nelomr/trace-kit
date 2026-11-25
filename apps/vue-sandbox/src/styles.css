@@ -515,6 +515,24 @@ body,
   line-height: 1.45;
 }
 
+.rack-spec-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.rack-spec-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-hairline);
+  background: var(--surface-chassis);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
 /* Toolbars, Groups, Separators, and Precision Instrument Buttons */
 [role="toolbar"] {
   display: flex;
@@ -532,6 +550,12 @@ body,
 .tk-toolbar-grid-3 {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.tk-toolbar-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
 }
 

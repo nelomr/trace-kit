@@ -43,7 +43,7 @@ const FALLBACK_BACKGROUND_COLOR = "#0b0f14";
  * `computeAxisInsets`'s own font-size term — kept larger than the library default (14) so the
  * bigger token-driven label font in `tokens.css` isn't clipped against the plot area.
  */
-const LABEL_GUTTER_CSS = 18;
+const LABEL_GUTTER_CSS = 56;
 
 /**
  * Reads the figure's CSS custom properties off `document.documentElement` exactly once, at

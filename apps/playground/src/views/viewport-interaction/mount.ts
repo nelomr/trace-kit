@@ -50,7 +50,7 @@ const INITIAL_SAMPLES = 10_000;
 const RING_CAPACITY = 16_384;
 const BUCKET_COUNT = 256;
 const STAGE_HEIGHT_PX = 420;
-const LABEL_GUTTER_CSS = 18;
+const LABEL_GUTTER_CSS = 56;
 const X_ORIGIN_NM = 1550;
 
 interface PresetConfig {

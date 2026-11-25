@@ -40,11 +40,16 @@ function parseBound(raw: string, fallback: number): number {
   return text.length === 0 ? fallback : Number(text);
 }
 
+const RAW_CONTROL_STYLE =
+  "padding:0.3rem 0.5rem;border:1px solid var(--tk-color-border,#1c2530);border-radius:4px;" +
+  "background:var(--tk-color-surface-raised,#161e27);color:var(--tk-color-text,#e6edf5);font-size:12px";
+
 function textInput(label: string): HTMLInputElement {
   const input = document.createElement("input");
   input.type = "text";
   input.size = 10;
   input.setAttribute("aria-label", label);
+  input.style.cssText = RAW_CONTROL_STYLE;
   return input;
 }
 
@@ -52,12 +57,14 @@ function button(label: string): HTMLButtonElement {
   const element = document.createElement("button");
   element.type = "button";
   element.textContent = label;
+  element.style.cssText = `${RAW_CONTROL_STYLE};cursor:pointer`;
   return element;
 }
 
 function select(label: string, values: readonly string[]): HTMLSelectElement {
   const element = document.createElement("select");
   element.setAttribute("aria-label", label);
+  element.style.cssText = RAW_CONTROL_STYLE;
   fillOptions(element, values);
   return element;
 }

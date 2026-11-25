@@ -45,8 +45,13 @@ export function mount(host: ViewHost): ViewTeardown {
   const controls = document.createElement("div");
   controls.style.cssText = "display:flex;flex-wrap:wrap;gap:1rem;align-items:center";
 
+  const controlStyle =
+    "padding:0.3rem 0.5rem;border:1px solid var(--tk-color-border,#1c2530);border-radius:4px;" +
+    "background:var(--tk-color-surface-raised,#161e27);color:var(--tk-color-text,#e6edf5);font-size:12px";
+
   const select = document.createElement("select");
   select.setAttribute("aria-label", "Scenario");
+  select.style.cssText = controlStyle;
   for (const fixture of SCENARIO_FIXTURES) {
     const option = document.createElement("option");
     option.value = fixture.id;
@@ -55,15 +60,18 @@ export function mount(host: ViewHost): ViewTeardown {
   }
 
   const targetLabel = document.createElement("label");
+  targetLabel.style.cssText = "display:inline-flex;align-items:center;gap:0.4rem;font-size:12px";
   targetLabel.textContent = "Decimation target ";
   const targetInput = document.createElement("input");
   targetInput.type = "number";
   targetInput.min = "2";
   targetInput.placeholder = "default";
   targetInput.setAttribute("aria-label", "Decimation target");
+  targetInput.style.cssText = `${controlStyle};width:6.5rem`;
   targetLabel.appendChild(targetInput);
 
   const fontLabel = document.createElement("label");
+  fontLabel.style.cssText = "display:inline-flex;align-items:center;gap:0.35rem;font-size:12px";
   const fontInput = document.createElement("input");
   fontInput.type = "checkbox";
   fontInput.checked = false;
@@ -72,6 +80,7 @@ export function mount(host: ViewHost): ViewTeardown {
 
   const download = document.createElement("a");
   download.textContent = "Download SVG";
+  download.style.cssText = `${controlStyle};text-decoration:none;border-color:var(--tk-color-accent,#3fb6ff);color:var(--tk-color-accent,#3fb6ff)`;
 
   controls.append(select, targetLabel, fontLabel, download);
 
