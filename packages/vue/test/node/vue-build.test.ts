@@ -299,6 +299,7 @@ describe("@trace-kit/vue build surface, packaging, and static audits (node)", ()
       const eslint = new ESLint({
         cwd: repoRoot,
         overrideConfigFile: path.join(repoRoot, "eslint.config.js"),
+        ignore: false,
       });
 
       const violatingCode = [
@@ -307,21 +308,31 @@ describe("@trace-kit/vue build surface, packaging, and static audits (node)", ()
         "}",
       ].join("\n");
 
-      for (const targetRelPath of [
-        "packages/vue/src/domain-sync.ts",
-        "packages/vue/test/node/ssr.test.ts",
-      ]) {
-        const results = await eslint.lintText(violatingCode, {
-          filePath: path.join(repoRoot, targetRelPath),
-        });
-        const ruleIds = results.flatMap((r) => r.messages.map((m) => m.ruleId));
-        expect(ruleIds, `${targetRelPath} should flag no-explicit-any`).toContain(
-          "@typescript-eslint/no-explicit-any",
-        );
-        expect(ruleIds, `${targetRelPath} should flag no-restricted-syntax`).toContain(
-          "no-restricted-syntax",
-        );
-      }
+      // `packages/vue/src/**` runs under `parserOptions.projectService`, which honors `lintText`.
+      const srcRelPath = "packages/vue/src/domain-sync.ts";
+      const srcResults = await eslint.lintText(violatingCode, {
+        filePath: path.join(repoRoot, srcRelPath),
+      });
+      const srcRuleIds = srcResults.flatMap((r) => r.messages.map((m) => m.ruleId));
+      expect(srcRuleIds, `${srcRelPath} should flag no-explicit-any`).toContain(
+        "@typescript-eslint/no-explicit-any",
+      );
+      expect(srcRuleIds, `${srcRelPath} should flag no-restricted-syntax`).toContain(
+        "no-restricted-syntax",
+      );
+
+      // `packages/vue/test/**` runs under classic `parserOptions.project`; under `CI=true`
+      // (`singleRun: true`), typescript-eslint builds its Program from disk, so mirror
+      // `packages/core/test/lint-rules.test.ts` and lint a committed fixture with `lintFiles`.
+      const testFixtureRelPath = "packages/vue/test/fixtures/lint-violation.ts";
+      const testResults = await eslint.lintFiles([path.join(repoRoot, testFixtureRelPath)]);
+      const testRuleIds = testResults.flatMap((r) => r.messages.map((m) => m.ruleId));
+      expect(testRuleIds, `${testFixtureRelPath} should flag no-explicit-any`).toContain(
+        "@typescript-eslint/no-explicit-any",
+      );
+      expect(testRuleIds, `${testFixtureRelPath} should flag no-restricted-syntax`).toContain(
+        "no-restricted-syntax",
+      );
     },
     LINT_TIMEOUT_MS,
   );
