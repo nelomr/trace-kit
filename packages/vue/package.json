@@ -1,6 +1,6 @@
 {
   "name": "@trace-kit/vue",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Zero-proxy, SSR-safe Vue 3 adapter for TraceKit spectrum visualization",
   "type": "module",
   "license": "MIT",
