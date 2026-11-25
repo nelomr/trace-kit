@@ -1,0 +1,82 @@
+name: Deploy GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    name: Build Dual-Surface Showcase
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build core, renderers, and vue packages
+        run: |
+          pnpm --filter @trace-kit/core build
+          pnpm --filter @trace-kit/renderers build
+          pnpm --filter @trace-kit/vue build
+
+      - name: Build Vanilla Playground for /trace-kit/
+        env:
+          PLAYGROUND_BASE: /trace-kit/
+        run: pnpm --filter @trace-kit/playground build
+
+      - name: Build Vue 3 Instrument Sandbox for /trace-kit/vue/
+        env:
+          SANDBOX_BASE: /trace-kit/vue/
+        run: pnpm --filter @trace-kit/vue-sandbox build
+
+      - name: Stage combined GitHub Pages artifact
+        run: |
+          rm -rf _site
+          mkdir -p _site/vue
+          cp -R apps/playground/dist/. _site/
+          cp -R apps/vue-sandbox/dist/. _site/vue/
+          touch _site/.nojekyll
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

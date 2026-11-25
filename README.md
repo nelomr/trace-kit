@@ -6,6 +6,7 @@
 > Engineered for mission-critical hardware characterization, massive time-series sweeps, and semiconductor wafer yield analytics.
 
 [![CI Status](https://github.com/nelomr/trace-kit/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nelomr/trace-kit/actions/workflows/ci.yml)
+[![Pages Deployment](https://github.com/nelomr/trace-kit/actions/workflows/pages.yml/badge.svg)](https://github.com/nelomr/trace-kit/actions/workflows/pages.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Status: pre-alpha](https://img.shields.io/badge/Status-pre--alpha-orange.svg?style=flat-square)](#-project-status)
 [![Version: pre-1.0](https://img.shields.io/badge/Version-pre--1.0_(unpublished)-lightgrey.svg?style=flat-square)](#-project-status)
@@ -13,40 +14,67 @@
 
 ---
 
+### 🌐 Live Interactive Demos (GitHub Pages)
+
+Experience TraceKit's high-throughput rendering live in your browser:
+
+* **[Live Vue 3 Optical Instrument Sandbox (`OSA-1550`)](https://nelomr.github.io/trace-kit/vue/)**  
+  A full optical spectrum analyzer dashboard with real-time sweep simulation (up to $250\text{k}$ samples/sweep), live parameter modulation, active engine telemetry (Canvas2D $\leftrightarrow$ WebGL2 atomic swap), interactive pan/zoom, and WebGL context loss recovery.
+* **[Live Vanilla Lab (`apps/playground` — 7 Interactive Views)](https://nelomr.github.io/trace-kit/)**  
+  Benchmark workbench featuring decimation algorithm visualizations (LTTB vs. Min-Max Envelope), dual-engine rendering parity, streaming buffers, and lossless SVG / CSV / NumPy `.npy` export.
+
+---
+
 ## 🚧 Project Status
 
-> **TraceKit is pre-alpha. Nothing is published to npm yet.** This README documents both the
-> current implementation and, where marked `[PLANNED]`, the intended architecture and API.
->
-> **What exists today:**
-> - `packages/core` — substantial: branded typed buffers, LTTB and Min-Max Envelope decimation
->   (allocation-free hot path, benchmarked), the zero-copy Web Worker transport contract
->   (ownership protocol, `SharedArrayBuffer` capability detection, backpressure), and the
->   viewport transform layer — linear and logarithmic (base-10) Y-axis projection, multi-axis
->   viewport support (N independent left-stacked Y axes sharing one X domain), and tick
->   selection for both scales.
-> - `packages/renderers` — a Canvas2D renderer (`Canvas2DRenderer`, Path2D batching,
->   multi-axis-aware gutters, decade gridlines for log axes), a **WebGL2 renderer**
->   (`WebGL2FigureRenderer`, the `@trace-kit/renderers/webgl2` subpath, full-resolution instanced
->   lines on three stacked canvases) and the headless `FigureRenderer` contract. **Automatic engine
->   switching between the two does not exist yet.**
-> - `apps/playground` — a running Vite app with a home route, a `core-math` route
->   visualizing the decimation algorithms and an `/engine-parity` route drawing one fixture on
->   Canvas2D and WebGL2 side by side.
-> - The pnpm + Turborepo workspace, hundreds of passing Vitest unit/integration tests, a
->   Chromium-based visual regression suite (Linux-CI-only by design), Node-side zero-GC
->   allocation gates, and a CI quality gate (typecheck, lint, unit tests, visual regression,
->   dependency-deprecation checks) that runs and passes on `main`.
->
-> **What does not exist yet:** `packages/vue`, `packages/react`, `apps/docs`, and automatic
-> engine switching. Every package is still unpublished (pre-1.0 patch versions, private). The Vue/React Quickstart
-> examples below describe an API that does not exist yet; the install commands will not work.
->
-> Development follows Spec-Driven Development; progress is tracked in
-> [`openspec/roadmap.yaml`](openspec/roadmap.yaml). As of this writing, roadmap steps 1 through
-> **7.6** (`canvas2d-parity-fixes` — Canvas2D clipping, ±Infinity and log-axis parity with SVG
-> and WebGL2) are archived and complete. The next planned step is **8**
-> (`worker-streaming-transport`), not yet started.
+> [!IMPORTANT]
+> **TraceKit is pre-alpha. Packages are not published to the public npm registry yet.**  
+> Changesets manage in-repo versioning (`0.0.x`). This README documents implemented components and marks upcoming milestones as `[PLANNED]`.
+
+### Roadmap Milestones Implemented (Steps 1 through 10 Archived)
+
+TraceKit follows strict **Spec-Driven Development (SDD)**. Steps 1 through **10** are complete, fully verified, and archived in [`openspec/roadmap.yaml`](openspec/roadmap.yaml):
+
+* **`@trace-kit/core` (Steps 1–4, 7–9.5)**:
+  * Branded typed memory buffers (`XBuffer`, `YBuffer`, `IndexBuffer`, `Retained<T>`, `Transit<T>`, `asXBuffer`, `asYBuffer`, `asIndexBuffer`).
+  * Pure, allocation-free hot-path decimation: **Largest Triangle Three Buckets (LTTB)** and **Min-Max Envelope** ($0$-GC verified under continuous execution).
+  * `WorkerDecimationPort`: Zero-copy pooled Web Worker transport supporting transferable `ArrayBuffer`s, `SharedArrayBuffer` SPSC ring buffers, and Node.js `worker_threads`.
+  * Tiered streaming decimation pipeline (`Tier 1/2/3`), high-precision `xOrigin` offset handling for dense sub-nanometer grids, and `NaN` gap handling with `BREAK_INDEX = -1`.
+  * Multi-axis viewport projection: linear and base-10 logarithmic Y-axis scales, multi-axis stacked layouts, tick selection, and pure mathematical viewport mutation helpers (`computeZoomDomain`, `computePanDomain`, `computeBoxZoomDomain`).
+  * Full-resolution, non-decimated raw viewport export: lazy streaming tidy CSV (`exportCsv`) and zero-allocation NumPy v1.0 binary format (`exportNpy`).
+* **`@trace-kit/renderers` (Steps 5–7.6, 9.3)**:
+  * Headless `FigureRenderer` lifecycle contract (`setData`, `setTransform`, `resize`, `render`, `dispose`).
+  * `Canvas2DRenderer`: Batch rendering with `Path2D`, multi-axis gutters, and decade gridlines.
+  * `WebGL2FigureRenderer` (`@trace-kit/renderers/webgl2`): Dual-VBO GPU pipeline with 3-canvas stack (underlay, plot, overlay), dynamic vertex buffers, and primitive restart.
+  * `@trace-kit/renderers/controller`:
+    * `SpectrumEngineController`: Atomic canvas swap ($1 \leftrightarrow 3$ canvases), hysteresis-stabilized auto-switching ($64\text{k} \leftrightarrow 80\text{k}$ sample threshold band), WebGL2 runtime feature fallback, and robust `webglcontextlost` / `webglcontextrestored` in-place GL rehydration.
+    * `createViewportInteractionController`: Decoupled gesture controller supporting pointer drag panning, cursor-anchored wheel zooming, multi-touch pinch-to-zoom, rubber-band box zoom selection, and debounced decimation invalidation.
+  * Standalone vector exporter (`@trace-kit/renderers/svg`) and bundled zero-dependency font (`@trace-kit/renderers/font`).
+* **`@trace-kit/vue` (Step 10)**:
+  * Zero-proxy Vue 3 adapter bypassing deep reactive wrappers via `shallowReadonly(shallowRef)` / `markRaw` / `toRaw` isolation.
+  * `<TraceSpectrumViewer>` component and `useSpectrumEngine` composable.
+  * Two-way `v-model:domain` synchronization with a 4-scalar + `WeakSet` dual echo guard preventing render feedback loops.
+  * Scoped `#overlay` slot, non-colliding `figureStyle` prop, and SSR isomorphic `renderToString` safety.
+* **Demonstration Applications**:
+  * `apps/playground`: Vanilla bench with 7 interactive testing routes.
+  * `apps/vue-sandbox`: Optical Spectrum Analyzer (`OSA-1550`) real-time instrument sandbox.
+* **Verification & CI Quality Gate**:
+  * 100% strict TypeScript (`typecheck`), ESLint, 1,640+ unit/DOM/SSR/worker tests passing across all packages.
+  * Linux CI Chromium-based Playwright visual regression harness.
+  * Node `--expose-gc` allocation test gates verifying $0$ GC events on critical hot paths.
+
+### Planned Milestones
+
+* `[PLANNED]` **Step 11**: `@trace-kit/react` — React 18/19 zero-overhead unmanaged canvas hooks and SSR wrappers (matching Vue's contract 1:1).
+* `[PLANNED]` **Step 11.5**: `dom-a11y-layer` — Accessible DOM overlay layer for screen readers and keyboard navigation.
+* `[PLANNED]` **Step 12**: `package-exports-and-treeshaking-gates` — Release packaging, automated bundle size, and tree-shaking gates.
+* `[PLANNED]` **Step 13**: `crosshair-sync-bus` — Multi-chart synchronized telemetry bus over `BroadcastChannel` / `EventTarget`.
+* `[PLANNED]` **Step 13.3**: `range-selection-events` — Analytical range selection events and UI integration.
+* `[PLANNED]` **Step 13.5**: `analytical-measurement-markers` — Peak detection, FWHM, and delta markers.
+* `[PLANNED]` **Step 14**: `wafer-die-map` — Semiconductor wafer die map instanced WebGL2 engine ($60\text{k}+$ dies).
+* `[PLANNED]` **Step 14.5**: `spectral-heatmap-engine` — 2D spectral waterfall / density heatmap renderer.
+* `[PLANNED]` **Step 15**: `docs-portal` — Interactive VitePress documentation portal.
+* `[PLANNED]` **Step 16**: `benchmark-ci-and-deployment` — Automated continuous benchmarking CI and tracking dashboard.
 
 ---
 
@@ -58,139 +86,149 @@ Built upon a decoupled architecture, **TraceKit** isolates computational decimat
 
 ### Key Performance Pillars
 
-* **Zero-Copy Ingestion with Explicit Ownership:** Dedicated Web Workers execute decimation over transferred `ArrayBuffer`s, eliminating serialization cost. Because a transfer *detaches* the buffer in the sender, transport is a pooled round trip with a single owner at any instant and back-pressure that drops rather than allocates — the main thread always retains an authoritative copy, which is what makes WebGL context restoration possible at all.
-* **Hybrid Dual-Engine Strategy `[PARTIAL]`:** The design targets hysteresis-stabilized switching between a **Canvas 2D batch renderer** and a high-density **WebGL2 pipeline** using dual Vertex Buffer Objects to avoid CPU interleaving, with a switch threshold evaluated on the *decimated* point count and a minimum dwell time so a live stream cannot oscillate between engines. **Both renderers exist today, but the automatic switch does not**: the caller picks the engine, so there is no hybrid yet.
-* **Physics-Preserving Decimation:** Combines standard **LTTB** (perceptual trace fidelity) with **Min-Max Envelope** algorithms to prevent the suppression of sub-picometer resonance dips, insertion losses, and high-frequency noise floors. Implemented and benchmarked in `@trace-kit/core`.
-* **Logarithmic & Multi-Axis Viewport:** `@trace-kit/core`'s projection layer supports base-10 logarithmic Y-axis transforms (with decade/mantissa tick selection) alongside the linear transform, and multi-axis viewports with N independent, left-stacked Y axes sharing one X domain — direct groundwork for dBm-scale instrumentation and multi-trace comparison.
-* **Visual Regression Harness:** A Chromium-based visual regression suite (`packages/renderers/test/visual/`) compares rendered Canvas2D output against committed golden screenshots. Goldens are generated and compared exclusively on `ubuntu-latest` in CI (a platform guard prevents local runs from being treated as authoritative), and can only be regenerated through a separate, human-triggered workflow — an ordinary test run can never silently overwrite a golden.
-* **Semiconductor Wafer Map Engine:** Instanced rendering pipeline (`gl.drawArraysInstanced`) for multi-die inspection targeting 60,000 active dies, with analytical hit-testing that is $O(1)$ for a uniform reticle and degrades to $O(\log n)$ via cumulative pitch tables when street widths are non-uniform. Circular wafers and partial edge dies stay $O(1)$ through a dense occupancy grid.
-* **Cross-Chart Synchronized Telemetry:** Decoupled `BroadcastChannel` / `EventTarget` bus syncing multiple telemetry channels (e.g., optical power, temperature, bias currents) across isolated canvases with GPU-accelerated CSS crosshair transforms.
-* **Lossless Vector Reporting:** Standalone mathematical generator exporting sub-sampled views to clean, publication-grade SVG paths without canvas rasterization artifacts.
-* **Raw-Data Viewport Export:** `@trace-kit/core` resolves an X window to a source index span on the authoritative samples (`resolveSampleWindow`, allocation-free, binary search) and streams it at full resolution, never decimated: a lazy tidy CSV generator (`exportCsv`, absolute f64 X, `NaN` gaps, RFC 4180 ids) and a NumPy `.npy` v1.0 writer (`exportNpy`, little-endian, one reused scratch buffer). Implemented, with a download control in the playground `/svg-export` view.
+* **Zero-Copy Ingestion with Explicit Ownership:** Dedicated Web Workers execute decimation over transferred `ArrayBuffer`s, eliminating serialization cost. The main thread retains an authoritative buffer copy, ensuring instant rehydration upon WebGL context loss.
+* **Hysteresis-Stabilized Dual-Engine Controller:** `SpectrumEngineController` orchestrates seamless runtime transitions between Canvas2D (ideal for light traces and sub-decimated data) and WebGL2 (instanced GPU rendering for dense sweeps), using an asymmetric hysteresis band ($64\text{k} \leftrightarrow 80\text{k}$ samples) to prevent rapid oscillating flips.
+* **Physics-Preserving Decimation:** Combines perceptual **LTTB** with **Min-Max Envelope** algorithms to protect narrow spectral absorption notches, resonance peaks, and high-frequency noise floors from decimation artifacts.
+* **Logarithmic & Multi-Axis Viewport:** Mathematical projection engine supporting linear and base-10 logarithmic scales, decade/mantissa tick generation, and $N$ independent stacked Y axes sharing a synchronized X domain.
+* **Continuous Visual Regression & 0-GC Verification:** Automated test harness validating zero allocations on hot paths via Node.js garbage collection hooks and pixel-exact golden screenshots on headless Linux Chromium.
+* **Lossless Vector & Raw Data Reporting:** Standalone mathematical generator exporting sub-sampled views to clean SVG paths alongside full-resolution CSV and binary NumPy `.npy` exporters.
 
 ---
 
 ## 🏛️ Architecture
 
-TraceKit is structured as an enterprise-grade monorepo powered by `pnpm` workspaces and `Turborepo`:
-
 ```text
 trace-kit/
 ├── packages/
-│   ├── core/           # [IMPLEMENTED] Isomorphic TS. Decimation (LTTB, Min-Max), transport
-│   │                   #   contract, viewport transform (linear + logarithmic, multi-axis),
-│   │                   #   window resolution, CSV / .npy raw-data export
-│   ├── renderers/      # [IMPLEMENTED] Canvas2D (Path2D batching, multi-axis gutters) and
-│   │                   #   WebGL2 (`./webgl2`). No automatic engine switch yet.
-│   ├── vue/            # [PLANNED] Vue 3: shallowRef/markRaw, useSpectrumEngine composable
-│   └── react/          # [PLANNED] React: canvas hooks, Next.js SSR-safe
+│   ├── core/           # [IMPLEMENTED] Isomorphic TS: Typed buffers, LTTB/Min-Max decimation,
+│   │                   #   WorkerDecimationPort, streaming tier pipeline, viewport projection,
+│   │                   #   CSV and .npy raw-data exporters.
+│   ├── renderers/      # [IMPLEMENTED] Canvas2D, WebGL2 (dual-VBO), SVG exporter, embedded font,
+│   │                   #   and controller (SpectrumEngineController + ViewportInteractionController).
+│   ├── vue/            # [IMPLEMENTED] Vue 3: useSpectrumEngine, TraceSpectrumViewer,
+│   │                   #   shallowRef/markRaw isolation, 2-way v-model:domain echo guard.
+│   └── react/          # [PLANNED - Step 11] React unmanaged canvas hooks & 1:1 parity wrappers.
 ├── apps/
-│   ├── docs/           # [PLANNED] VitePress docs with a runtime framework switcher
-│   └── playground/     # [IMPLEMENTED] Vite app: home route + core-math visualization route
-└── tests/              # Tests live beside each package, not under a shared root
-    ├── unit/           # [IMPLEMENTED] Vitest over core and renderers (hundreds of tests)
-    └── visual/          # [IMPLEMENTED] Playwright/Chromium Canvas2D visual regression,
-                          #   Linux-CI-only, human-triggered golden updates
+│   ├── playground/     # [IMPLEMENTED] Vanilla laboratory workbench (7 interactive routes).
+│   ├── vue-sandbox/    # [IMPLEMENTED] OSA-1550 Optical Spectrum Analyzer Vue 3 sandbox.
+│   └── docs/           # [PLANNED - Step 15] VitePress documentation portal.
+└── tests/              # Package-level unit, DOM, visual regression, and 0-GC allocation tests.
 ```
 
 ### Decoupled Graphics Pipeline
 
-> The diagram below shows the intended full pipeline. Today both renderer branches
-> exist (`Canvas2DRenderer`, `WebGL2FigureRenderer`) but the automatic switch is `[PLANNED]`, as
-> are `@trace-kit/vue` and `@trace-kit/react`.
+```mermaid
+flowchart TD
+    subgraph Data Layer ["Data Ingestion & Decimation"]
+        DS["Raw Telemetry / Physical Sweeps"] -->|"ArrayBuffer Transfer / SharedArrayBuffer"| CoreWorker["@trace-kit/core Decimation Worker"]
+        CoreWorker -->|"Decimated Samples / Indices"| Payload["SpectrumDataPayload / TraceCollection"]
+    end
 
-```text
-[ Data Source / Stream ]
-          │
-          ▼  (ArrayBuffer Transfer)
-┌──────────────────────────────────────┐
-│        @trace-kit/core Worker        │  ← Zero-Copy LTTB & Min-Max Decimation
-└──────────────────┬───────────────────┘
-                   │  Float32Array
-                   ▼
-┌──────────────────────────────────────┐
-│       @trace-kit/renderers           │  ← Headless Interface (FigureRenderer)
-│   - setData()  [Memory Upload]       │
-│   - render()   [Draw Call Only]      │
-└──────────┬────────────────┬──────────┘
-           │                │
-           ▼                ▼
-┌────────────────────┐   ┌────────────────────┐
-│  Canvas2DRenderer  │   │   WebGL2Renderer   │  ← Dual-VBO, GPU-side ClipSpace Math
-│  (below threshold) │   │  (above threshold) │
-└────────────────────┘   └────────────────────┘
-           ▲                        ▲
-           └────────────┬───────────┘
-                        │ Controlled Lifecycle
-┌───────────────────────┴───────────────────────┐
-│     @trace-kit/vue   |   @trace-kit/react     │  ← Reactive isolation (shallowRef / useRef)
-└───────────────────────────────────────────────┘
+    subgraph Controller Layer ["@trace-kit/renderers/controller"]
+        Payload --> EngineCtrl["SpectrumEngineController"]
+        Interact["createViewportInteractionController"] <-->|"Pan / Wheel Zoom / Pinch / Box-Zoom"| EngineCtrl
+        EngineCtrl -->|"Hysteresis Switch (< 64k samples)"| CanvasEngine["Canvas2DRenderer (1 Canvas)"]
+        EngineCtrl -->|"Hysteresis Switch (> 80k samples)"| WebGLEngine["WebGL2FigureRenderer (3 Canvases)"]
+    end
+
+    subgraph Presentation Layer ["UI & Framework Adapters"]
+        CanvasEngine --> Viewport["Display Surface"]
+        WebGLEngine --> Viewport
+        VueAdapter["@trace-kit/vue (<TraceSpectrumViewer>)"] -.->|"shallowRef / markRaw"| EngineCtrl
+        ReactAdapter["@trace-kit/react [PLANNED]"] -.->|"useRef unmanaged"| EngineCtrl
+    end
 ```
 
 ---
 
-## 📦 Packages & Subpath Exports
+## 📦 Packages
 
-All modules feature strict tree-shaking flags (`"sideEffects": false`) and support dual ESM (`.mjs`) and CommonJS (`.cjs`) builds:
-
-> **None of these packages are published yet.** The commands below will fail with a
-> registry 404. They document the intended install surface.
+> [!NOTE]
+> Packages are versioned internally using Changesets (`0.0.x`). Public npm publishing is planned post-stabilization.
 
 ```bash
-# Core mathematical engine (zero dependencies, Node.js and SSR safe)
+# Core mathematical and decimation engine (zero DOM dependencies, Node.js & browser safe)
 pnpm add @trace-kit/core
 
-# Headless Canvas2D and WebGL2 renderers
+# Headless Canvas2D and WebGL2 rendering engines & controllers
 pnpm add @trace-kit/renderers
 
-# Framework-specific integrations
+# Reactive framework adapters
 pnpm add @trace-kit/vue
-pnpm add @trace-kit/react
+pnpm add @trace-kit/react # [PLANNED]
 ```
 
 ---
 
 ## 🚀 Quickstart
 
-> **The examples in this section are not runnable yet.** They describe the intended
-> API and serve as a design reference. Names and signatures may still change; the
-> current contract lives in the specs under `openspec/changes/`.
+### 1. Vue 3 Integration (`@trace-kit/vue`)
 
-
-### 1. Vue 3 Integration (Composition API)
-
-The component relies on `shallowRef` to bypass deep Vue Proxies, keeping telemetry data out of the Virtual DOM reconciliation loop:
+The `<TraceSpectrumViewer>` component provides high-performance rendering by isolating the underlying graphics controller from Vue's deep reactivity system:
 
 ```vue
 <script setup lang="ts">
-import { shallowRef, onMounted } from 'vue';
+import { markRaw, shallowRef } from 'vue';
 import { TraceSpectrumViewer } from '@trace-kit/vue';
-import type { WavelengthBuffer, PowerDbmBuffer } from '@trace-kit/core';
+import {
+  createSpectrumDataPayload,
+  commitPayloadRevision,
+} from '@trace-kit/core';
+import type { ViewportDomain } from '@trace-kit/renderers/controller';
 
-// Branded typed buffers
-const wavelengths = shallowRef<WavelengthBuffer>(new Float32Array(150_000) as WavelengthBuffer);
-const powers = shallowRef<PowerDbmBuffer>(new Float32Array(150_000) as PowerDbmBuffer);
+// 1. Allocate a fixed-capacity retained payload (X stored as f32 offsets from xOrigin)
+const sampleCount = 100_000;
+const payload = markRaw(
+  createSpectrumDataPayload({
+    capacity: sampleCount,
+    xOrigin: 1520,
+    xUnit: 'nm',
+    yUnit: 'dBm',
+  })
+);
 
-onMounted(async () => {
-  // Ingest high-density optical sweep
-  const response = await fetch('/api/telemetry/sweep-01');
-  const buffer = await response.arrayBuffer();
-  // Decode directly into typed buffers...
+for (let i = 0; i < sampleCount; i++) {
+  payload.x[i] = (i / (sampleCount - 1)) * 80;
+  payload.y[i] = -60 + Math.sin(i * 0.05) * 20;
+}
+commitPayloadRevision(payload, sampleCount);
+
+// 2. Wrap payload & revision in shallowRef to bypass Vue's deep Proxy system
+const spectrumData = shallowRef(payload);
+const revision = shallowRef(payload.revision);
+
+// 3. Viewport domain with two-way binding
+const domain = shallowRef<ViewportDomain>({
+  xMin: 1520,
+  xMax: 1600,
+  yMin: -80,
+  yMax: 0,
 });
+
+// Update data in-place without triggering garbage collection
+function pushNewSweep(newPowers: Float32Array) {
+  payload.y.set(newPowers);
+  commitPayloadRevision(payload, newPowers.length);
+  revision.value = payload.revision;
+}
 </script>
 
 <template>
-  <div class="h-[500px] w-full bg-slate-950">
+  <div style="width: 100%; height: 500px; position: relative; background: #0b0f19;">
     <TraceSpectrumViewer
-      :domain-x="[1500, 1600]"
-      :domain-y="[-60, 5]"
-      :powers="powers"
-      :wavelengths="wavelengths"
-      threshold-mode="auto"
+      :data="spectrumData"
+      :revision="revision"
+      v-model:domain="domain"
+      mode="auto"
+      :interactive="true"
+      :figure-style="{ backgroundColor: '#0b0f19', gridColor: '#1e293b' }"
     >
-      <template #overlay="{ cursorX, cursorY }">
-        <div class="pointer-events-none absolute top-2 right-2 text-xs font-mono text-cyan-400">
-          λ: {{ cursorX?.toFixed(3) }} nm | P: {{ cursorY?.toFixed(2) }} dBm
+      <!-- Non-interfering slot overlay for status & telemetry -->
+      <template #overlay="{ domain: activeDomain, activeKind, contextLost }">
+        <div style="position: absolute; top: 12px; right: 12px; font-family: monospace; color: #38bdf8;">
+          Engine: {{ activeKind.toUpperCase() }} |
+          Span: {{ activeDomain.xMin.toFixed(1) }} - {{ activeDomain.xMax.toFixed(1) }} nm
+          <span v-if="contextLost" style="color: #ef4444; font-weight: bold;">[GL CONTEXT LOST]</span>
         </div>
       </template>
     </TraceSpectrumViewer>
@@ -198,148 +236,143 @@ onMounted(async () => {
 </template>
 ```
 
-### 2. React Integration (TSX)
+> [!TIP]
+> For headless composable usage, `useSpectrumEngine(containerRef, options)` provides direct access to the underlying `SpectrumEngineController` and `ViewportInteractionController` handles.
+
+---
+
+### 2. Vanilla JS Controller + Interaction Quickstart
+
+For framework-free environments or custom canvas hosts, use `createSpectrumEngineController` paired with `createViewportInteractionController`:
+
+```ts
+import {
+  createSpectrumDataPayload,
+  commitPayloadRevision,
+} from '@trace-kit/core';
+import {
+  createSpectrumEngineController,
+  createViewportInteractionController,
+} from '@trace-kit/renderers/controller';
+
+const container = document.getElementById('chart-container') as HTMLDivElement;
+
+// 1. Initialize the dual-engine controller
+const engineController = createSpectrumEngineController({
+  container,
+  mode: 'auto', // Hysteresis-managed switching between Canvas2D & WebGL2
+  autoResize: true,
+  style: {
+    backgroundColor: '#090d16',
+    gridColor: '#1e293b',
+  },
+  onEngineChange: ({ activeKind, sampleCount }) => {
+    console.log(`Engine switched to ${activeKind} (${sampleCount} samples)`);
+  },
+});
+
+// 2. Attach pointer, wheel, and gesture interactions
+const interactionController = createViewportInteractionController({
+  controller: engineController,
+  enabled: true,
+  dragMode: 'pan', // 'pan' | 'box-zoom'
+  onDomainChange: (domain, reason) => {
+    // Synchronize secondary views or URL state
+  },
+});
+
+// 3. Ingest typed signal data
+const sampleCount = 200_000;
+const payload = createSpectrumDataPayload({
+  capacity: sampleCount,
+  xOrigin: 1520,
+  xUnit: 'nm',
+  yUnit: 'dBm',
+});
+
+// ... populate payload.x[i] (offsets from xOrigin) and payload.y[i] ...
+commitPayloadRevision(payload, sampleCount);
+
+engineController.setData(payload);
+engineController.render();
+```
+
+---
+
+### 3. React Integration `[PLANNED — Roadmap Step 11]`
 
 ```tsx
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { TraceSpectrumViewer } from '@trace-kit/react';
-import type { WavelengthBuffer, PowerDbmBuffer } from '@trace-kit/core';
+import type { SpectrumDataPayload } from '@trace-kit/core';
+import type { ViewportDomain } from '@trace-kit/renderers/controller';
 
-export const OpticalBenchMonitor: React.FC = () => {
-  const xData = useRef<WavelengthBuffer>(new Float32Array(500_000) as WavelengthBuffer);
-  const yData = useRef<PowerDbmBuffer>(new Float32Array(500_000) as PowerDbmBuffer);
+export const SpectrumView: React.FC<{ data: SpectrumDataPayload }> = ({ data }) => {
+  const [domain, setDomain] = useState<ViewportDomain>({
+    xMin: 1520,
+    xMax: 1580,
+    yMin: -70,
+    yMax: 10,
+  });
 
   return (
-    <div style={{ width: '100%', height: '450px' }}>
+    <div style={{ width: '100%', height: '500px' }}>
       <TraceSpectrumViewer
-        domainX={[1520, 1580]}
-        domainY={[-50, 0]}
-        wavelengths={xData.current}
-        powers={yData.current}
-        thresholdMode="webgl"
+        data={data}
+        domain={domain}
+        onDomainChange={setDomain}
+        mode="auto"
+        interactive={true}
       />
     </div>
   );
 };
 ```
 
-### 3. Headless Vanilla JS / Node.js Usage
-
-The decimation and viewport math in `@trace-kit/core` and the `Canvas2DRenderer` in
-`@trace-kit/renderers` are real and implemented today; this example is closer to the actual API
-surface than the Vue/React examples above, though names and signatures may still change before a
-publish. The WebGL2 renderer is shown in its own section below:
-
-```ts
-import { minMaxEnvelope } from '@trace-kit/core';
-import { Canvas2DRenderer } from '@trace-kit/renderers';
-
-// Server-side decimation (100% isomorphic, Node.js compatible)
-const { reducedX, reducedY } = minMaxEnvelope(rawX, rawY, { targetPoints: 2000 });
-
-// Client-side direct renderer mounting (Canvas2D)
-const canvas = document.getElementById('plot') as HTMLCanvasElement;
-const renderer = new Canvas2DRenderer();
-renderer.initialize(canvas);
-renderer.setData({ id: 'trace-1', wavelengths: rawX, powers: rawY });
-renderer.setTransform({
-  width: 1024,
-  height: 600,
-  dpr: window.devicePixelRatio,
-  domainX: [1500, 1600],
-  domainY: [-40, 10], // also supports a logarithmic (base-10) Y scale
-});
-renderer.render();
-```
-
-#### WebGL2 renderer (`@trace-kit/renderers/webgl2`)
-
-`WebGL2FigureRenderer` draws every sample on the GPU. It is constructed from **three canvases you
-create and stack** in one CSS box (underlay below, plot, overlay above); it creates no DOM itself:
-
-```ts
-import { WebGL2FigureRenderer } from '@trace-kit/renderers/webgl2';
-
-// Same CSS box, position: absolute, in this order: underlay, plot, overlay.
-const renderer = new WebGL2FigureRenderer({ surfaces: { underlay, plot, overlay } });
-renderer.setData(payload);
-renderer.resize(800, 400, window.devicePixelRatio);
-renderer.render();
-```
-
-* **Default decimation differs per engine.** With nothing selected, Canvas2D decimates with LTTB to
-  about `2 × plot width` vertices and WebGL2 draws the full payload; `setDecimation(undefined)`
-  restores each backend's own default. An explicit selection runs the same core decimators on both.
-* **A plot canvas is single-use:** a canvas that produced a `2d` context can never yield `webgl2`,
-  and a disposed one has lost its context. Create fresh canvases to switch engine or remount.
-* **Recorded divergence from Canvas2D:** a trace `dash` style is ignored (the line is solid).
-* The playground `/engine-parity` route draws any shared fixture on both engines side by side, with
-  each engine's vertex count.
-
 ---
 
 ## 📊 Benchmarks & Technical Verification
 
-No benchmark *numbers* are published yet. Allocation behaviour is already continuously verified,
-just not reported as figures: Node `--expose-gc` + `PerformanceObserver({entryTypes:["gc"]})`
-gates assert zero GC events over N iterations for hot-path decimation functions, with positive
-controls proving the gate can actually fail.
+TraceKit adheres to strict verification principles: **zero fabricated benchmarks**. Performance claims are validated through executable CI gates rather than theoretical marketing numbers:
 
-A previous revision of this README contained a performance table with specific frame times, a
-`JS Heap Delta` column reading `0.0 MB`, and sustained framerates, described as measured on
-Apple Silicon under continuous pan/zoom. Those figures were never measured — the renderers they
-described do not exist. The table has been removed rather than corrected.
-
-Two commitments for when real numbers arrive:
-
-- Every published figure will name the exact hardware, browser build, dataset and methodology
-  (warm-up, iteration count, median and p95), and will be reproducible from a committed
-  benchmark script.
-- Allocation behaviour will **not** be reported via `performance.memory`. It is Chromium-only,
-  non-standard, and deliberately quantized, so it cannot demonstrate zero allocation per frame.
-  Node-side measurements assert zero GC events over N iterations; browser-side measurements
-  assert zero bytes attributed to the named hot-path function in a CDP sampling profile. Both
-  approaches are already demonstrated by re-runnable probes under
-  `openspec/changes/00-roadmap-decomposition/evidence/`.
-
-Interactive benchmarks are planned for the playground's `/stress-test-lab` route.
+* **0-GC Hot Path Allocation Gates**:
+  Node.js tests run with `--expose-gc` and `PerformanceObserver({ entryTypes: ['gc'] })` to prove that core decimation (`lttb`, `minMaxEnvelope`, `resolveSampleWindow`) and viewport transforms generate **exactly zero GC cycles** during steady-state processing.
+* **Deterministic Visual Regression**:
+  Chromium-based Playwright visual regression tests compare Canvas2D and WebGL2 render outputs against pixel-perfect golden captures generated in isolated headless Linux environments.
+* **WebGL2 Context Recovery Assurance**:
+  Live test suites simulate `WEBGL_lose_context` events via the debug extension, verifying that `SpectrumEngineController` successfully rehydrates GPU buffers from authoritative host memory upon context restoration without dropping traces.
 
 ---
 
 ## 🛠️ Development & Tooling Workflow
 
-This project strictly adheres to **Spec-Driven Development (SDD)** and **Test-Driven Development (TDD)**.
+TraceKit is configured as a `pnpm` monorepo driven by `Turborepo`:
 
 ```bash
-# Install dependencies across all workspace packages
+# Install workspace dependencies
 pnpm install
 
-# Type-check the whole workspace
+# Run type-checking across all packages
 pnpm typecheck
 
-# Build the workspace packages
+# Build all packages (core, renderers, vue, apps)
 pnpm build
 
-# Unit and integration tests (Vitest, hundreds of passing tests across core and renderers)
-pnpm run test
+# Execute all unit, DOM, and SSR test suites (>1,640 tests)
+pnpm test
 
-# Lint
-pnpm exec turbo run lint
+# Run ESLint across workspace
+pnpm lint
 
-# Run the playground app locally
-pnpm --filter playground dev
+# Start the Vanilla Playground workbench (7 interactive views)
+pnpm --filter @trace-kit/playground dev
 
-# --- Not available yet: these workspaces do not exist ---
-# pnpm --filter docs dev        (VitePress documentation — apps/docs is [PLANNED])
-
-# --- CI-only by design, not locally authoritative ---
-# Visual regression (Chromium via Playwright) runs against goldens generated on ubuntu-latest;
-# see .github/workflows/ci.yml. Goldens are only ever (re)generated by the separate,
-# human-triggered update-visual-goldens.yml workflow.
+# Start the Vue 3 OSA-1550 Instrument Sandbox
+pnpm --filter @trace-kit/vue-sandbox dev
 ```
 
 ---
 
 ## 📄 License
 
-Distributed under the **MIT License**. See [LICENSE](LICENSE) for complete terms.
+Distributed under the **MIT License**. See [LICENSE](LICENSE) for details.

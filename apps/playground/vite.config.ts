@@ -1,4 +1,5 @@
 import path from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
@@ -9,6 +10,7 @@ import { defineConfig } from "vite";
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  base: process.env.PLAYGROUND_BASE ?? "/",
   resolve: {
     alias: {
       "@trace-kit/bench-harness": path.join(
