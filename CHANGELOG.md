@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.0.13](https://github.com/nelomr/trace-kit/releases/tag/v0.0.13) (2026-11-25)
 
+### ⚛️ React Components (`@trace-kit/react` @ 0.0.3)
+
+**Patch Changes**
+
+- [`d22963e`](https://github.com/nelomr/trace-kit/commit/d22963ec282e6943039484ab7a7a1d15e8595e71) Thanks [@nelomr](https://github.com/nelomr)! - Harden `@trace-kit/react` lifecycle, reactivity isolation, and tree-shaking: remove top-level `.displayName` side effect to preserve `/*#__PURE__*/` tree-shaking, reconcile dynamic `containerRef.current` transitions without leaks, declare `useSyncExternalStore` before passive effects for zero wasted mount renders under `subscribeState: false`, stabilize forwarded `useImperativeHandle` callback refs, batch prop-sync store notifications, and expand the parity test suite to 63 tests with `SIDE-EFFECTS.md`.
+
+
+## [0.0.13](https://github.com/nelomr/trace-kit/releases/tag/v0.0.13) (2026-11-25)
+
 ### ⚛️ React Components (`@trace-kit/react` @ 0.0.2)
 
 **Patch Changes**
