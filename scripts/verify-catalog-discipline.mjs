@@ -9,11 +9,14 @@
 // keys, never a hardcoded two-name list.
 //
 // Rule 1 (catalog-only): for every package.json matched by the workspace globs, every
-// dependency/devDependency/peerDependency/optionalDependency entry whose name is a governed
-// catalog key must have the specifier exactly `catalog:`. Anything else — a literal range,
-// `catalog:named`, `workspace:*` — fails, naming the package, the field and the offending
-// specifier. Internal `@trace-kit/*` cross-dependencies use `workspace:*` and are never
-// governed, since they are not catalog entries.
+// dependency/devDependency/optionalDependency entry whose name is a governed catalog key
+// must have the specifier exactly `catalog:`. `peerDependencies` is intentionally exempt so
+// publishable framework adapters (e.g., `@trace-kit/vue`, `@trace-kit/react`) can declare
+// consumer-facing semver compatibility ranges (`"^3.4.0"`, `"^18.3.0 || ^19.0.0"`). Anything
+// else in governed fields — a literal range, `catalog:named`, `workspace:*` — fails, naming
+// the package, the field and the offending specifier. Internal `@trace-kit/*`
+// cross-dependencies use `workspace:*` and are never governed, since they are not catalog
+// entries.
 //
 // Rule 2 (no `false` override of a governed strictness flag): for every package tsconfig.json
 // matched by the workspace globs, no key present in `tsconfig.base.json`'s `compilerOptions`
@@ -109,10 +112,14 @@ export function findWorkspacePackageDirs(workspaceYamlText) {
   return dirs;
 }
 
+// `peerDependencies` is intentionally exempt: publishable framework adapters
+// (e.g., `@trace-kit/vue` declaring `"vue": "^3.4.0"`, `@trace-kit/react` declaring
+// `"react": "^18.3.0 || ^19.0.0"`) express consumer compatibility semver ranges,
+// not exact workspace install pins. Workspace test/build pins remain strictly
+// governed through `dependencies`, `devDependencies`, and `optionalDependencies`.
 const DEPENDENCY_FIELDS = [
   "dependencies",
   "devDependencies",
-  "peerDependencies",
   "optionalDependencies",
 ];
 

@@ -255,6 +255,24 @@ export default defineConfig({
           },
         },
       },
+      {
+        extends: true,
+        test: {
+          name: "vue",
+          root: path.join(rootDir, "packages/vue"),
+          environment: "node",
+          include: ["test/node/**/*.test.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "vue-dom",
+          root: path.join(rootDir, "packages/vue"),
+          environment: "happy-dom",
+          include: ["test/dom/**/*.test.ts"],
+        },
+      },
     ],
   },
 });

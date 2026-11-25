@@ -55,6 +55,7 @@ describe("catalog discipline (real workspace on disk)", () => {
   it("holds catalog discipline across the real workspace", () => {
     const workspaceYamlText = readWorkspaceYamlText();
     const packageDirs = findWorkspacePackageDirs(workspaceYamlText);
+    expect(packageDirs).toContain("packages/vue");
     const violations = checkCatalogDiscipline(
       workspaceYamlText,
       packageDirs,
@@ -83,21 +84,48 @@ describe("catalog discipline (real workspace on disk)", () => {
 });
 
 describe("catalog discipline (negative fixtures)", () => {
-  it("fails checkCatalogDiscipline when a governed catalog dep uses a literal version", () => {
-    const workspaceYamlText = readWorkspaceYamlText();
+  it("permits consumer semver peer ranges in peerDependencies for catalog-governed packages", () => {
+    const fixtureWorkspaceYaml = `packages:\n  - 'packages/*'\ncatalog:\n  'vue': '3.5.46'\n`;
     const fixturePackageJson: Record<string, unknown> = {
-      name: "fixture-pkg",
-      dependencies: {
-        vitest: "1.2.3",
+      name: "@trace-kit/vue-fixture",
+      peerDependencies: {
+        vue: "^3.4.0",
+      },
+      devDependencies: {
+        vue: "catalog:",
       },
     };
     const violations = checkCatalogDiscipline(
-      workspaceYamlText,
+      fixtureWorkspaceYaml,
       ["fixture-dir"],
       (dir: string) => (dir === "fixture-dir" ? fixturePackageJson : null),
     );
-    expect(violations.length).toBeGreaterThan(0);
-    expect(violations[0]).toContain("vitest");
+    expect(violations).toEqual([]);
+  });
+
+  it("fails checkCatalogDiscipline when a governed catalog dep uses a literal version in dependencies, devDependencies, or optionalDependencies", () => {
+    const fixtureWorkspaceYaml = `packages:\n  - 'packages/*'\ncatalog:\n  'vue': '3.5.46'\n  'vitest': '5.1.0'\n`;
+    for (const [field, pkgName, literal] of [
+      ["dependencies", "vitest", "1.2.3"],
+      ["devDependencies", "vue", "^3.4.0"],
+      ["optionalDependencies", "vue", "^3.4.0"],
+    ] as const) {
+      const fixturePackageJson: Record<string, unknown> = {
+        name: "fixture-pkg",
+        [field]: {
+          [pkgName]: literal,
+        },
+      };
+      const violations = checkCatalogDiscipline(
+        fixtureWorkspaceYaml,
+        ["fixture-dir"],
+        (dir: string) => (dir === "fixture-dir" ? fixturePackageJson : null),
+      );
+      expect(violations.length, `${field}.${pkgName}`).toBeGreaterThan(0);
+      expect(violations[0]).toContain(field);
+      expect(violations[0]).toContain(pkgName);
+      expect(violations[0]).toContain("catalog:");
+    }
   });
 
   it("fails checkTsconfigStrictness when a governed flag is overridden to false", () => {

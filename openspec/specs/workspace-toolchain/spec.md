@@ -489,3 +489,59 @@ therefore be reshaped rather than the coverage reduced.
   and `as never` bans fire
 - **WHEN**: it is run under the upgraded toolchain
 - **THEN**: it passes, and `pnpm run test` reports the full suite passing (**F14**)
+
+### Requirement: Vue Runtime Is Catalog-Pinned at `3.5.46` and Excluded Dependencies Remain Absent
+`pnpm-workspace.yaml`'s `catalog:` block MUST pin `'vue': '3.5.46'` (a stable release published at least two days before the change cutoff with no prerelease identifier, shipping both `vue` and `vue/server-renderer`). `packages/vue/package.json` MUST declare `"devDependencies": { "vue": "catalog:" }` for workspace testing/typechecking and `"peerDependencies": { "vue": "^3.4.0" }` for consumer compatibility. `packages/vue/package.json` MUST NOT depend on `d3-scale`, `@vue/test-utils`, `vue-tsc`, `@vitejs/plugin-vue`, `vue-eslint-parser`, or `eslint-plugin-vue`.
+
+#### Scenario: pnpm-workspace.yaml pins vue at 3.5.46 and packages/vue declares catalog devDependency and ^3.4.0 peerDependency
+- **GIVEN**: `pnpm-workspace.yaml` and `packages/vue/package.json`
+- **WHEN**: `packages/core/test/catalog-discipline.test.ts` and `packages/vue/test/node/vue-build.test.ts` inspect both files
+- **THEN**: `catalog["vue"]` is `"3.5.46"` (matching the no-prerelease freshness test), `packages/vue/package.json` has `devDependencies.vue === "catalog:"` and `peerDependencies.vue === "^3.4.0"`, and `pnpm install` resolves cleanly
+
+#### Scenario: packages/vue declares zero excluded SFC, test-utils, or d3-scale dependencies
+- **GIVEN**: `packages/vue/package.json`
+- **WHEN**: all dependency maps (`dependencies`, `devDependencies`, `peerDependencies`, `optionalDependencies`) are inspected in `packages/vue/test/node/vue-build.test.ts`
+- **THEN**: none contains `d3-scale`, `@vue/test-utils`, `vue-tsc`, `@vitejs/plugin-vue`, `vue-eslint-parser`, or `eslint-plugin-vue`
+
+### Requirement: `scripts/verify-catalog-discipline.mjs` Exempts `peerDependencies` From Exact `"catalog:"` Enforcement
+`scripts/verify-catalog-discipline.mjs` MUST continue enforcing exact `"catalog:"` specifiers for every catalog-governed package name across `dependencies`, `devDependencies`, and `optionalDependencies`, and MUST exempt `peerDependencies` from exact `"catalog:"` enforcement so publishable framework adapters (`@trace-kit/vue` and downstream `@trace-kit/react`) can declare consumer semver peer ranges (e.g., `"vue": "^3.4.0"`, `"react": "^18.3.0 || ^19.0.0"`). `packages/core/test/catalog-discipline.test.ts` MUST cover this rule with both positive (`peerDependencies` semver range allowed) and negative (`dependencies`, `devDependencies`, `optionalDependencies` literal versions still rejected) unit tests.
+
+#### Scenario: checkCatalogDiscipline permits semver peer ranges in peerDependencies for catalog-governed packages
+- **GIVEN**: a fixture `package.json` declaring `"peerDependencies": { "vue": "^3.4.0" }` and `"devDependencies": { "vue": "catalog:" }` while `vue` is present in `pnpm-workspace.yaml`'s `catalog:`
+- **WHEN**: `checkCatalogDiscipline` in `packages/core/test/catalog-discipline.test.ts` evaluates the fixture
+- **THEN**: it returns zero violations (`[]`)
+
+#### Scenario: checkCatalogDiscipline still rejects literal versions in dependencies, devDependencies, and optionalDependencies
+- **GIVEN**: fixture `package.json` objects declaring a catalog-governed package (`vue` or `vitest`) with a literal version range (`"^3.4.0"` or `"1.2.3"`) in `dependencies`, `devDependencies`, or `optionalDependencies`
+- **WHEN**: `checkCatalogDiscipline` in `packages/core/test/catalog-discipline.test.ts` evaluates each fixture
+- **THEN**: each fixture produces at least one violation naming the field, the package name, and requiring `"catalog:"`
+
+#### Scenario: Real workspace catalog discipline passes with packages/vue present
+- **GIVEN**: the live workspace on disk including `packages/vue/package.json`
+- **WHEN**: `packages/core/test/catalog-discipline.test.ts` runs `checkCatalogDiscipline` across all `findWorkspacePackageDirs(...)`
+- **THEN**: `packages/vue` is included in the checked workspace directories and `checkCatalogDiscipline` returns `[]`
+
+### Requirement: `packages/vue` Type-Aware ESLint Coverage, Strict `tsconfig` Inheritance, and Turbo Integration
+`packages/vue/tsconfig.json` MUST extend `../../tsconfig.base.json`, declare `"lib": ["ES2022", "DOM"]`, declare neither `baseUrl` nor `allowImportingTsExtensions`, and MUST NOT relax any governed strictness flag (`strict`, `noUncheckedIndexedAccess`, etc.). `packages/vue/tsconfig.test.json` and `packages/vue/tsconfig.dts.json` MUST likewise declare no `baseUrl` and no relaxed strictness flags.
+
+`eslint.config.js` MUST wire `packages/vue` for full type-aware linting under `typescript@6.0.3` and `eslint@10.14.0`:
+- Add `"packages/vue/tsup.config.ts"` to `projectService.allowDefaultProject` and raise `maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING` from `8` to `10` (providing headroom for both `@trace-kit/vue` and parallel Change `11` `@trace-kit/react`).
+- Add `"packages/vue/test/**"` to the `projectService` block's `ignores`.
+- Add `"packages/vue/test/**/*.ts"` to the classic `parserOptions.project` block's `files` and `"packages/vue/tsconfig.test.json"` to its `parserOptions.project` array.
+
+`packages/vue/package.json` MUST declare `build`, `typecheck`, `typecheck:test`, `lint`, and `test` scripts so `pnpm exec turbo run build`, `pnpm exec turbo run typecheck`, `pnpm exec turbo run lint`, `pnpm run test`, and `scripts/verify-turbo-ran.mjs` automatically execute `@trace-kit/vue` with zero `.github/workflows/ci.yml` modifications and zero Node deprecation warnings.
+
+#### Scenario: packages/vue tsconfigs inherit base strictness without baseUrl or allowImportingTsExtensions
+- **GIVEN**: `packages/vue/tsconfig.json`, `packages/vue/tsconfig.dts.json`, and `packages/vue/tsconfig.test.json`
+- **WHEN**: `packages/core/test/catalog-discipline.test.ts` (`checkTsconfigStrictness`) and `packages/vue/test/node/vue-build.test.ts` inspect all three configs
+- **THEN**: `checkTsconfigStrictness` returns `[]`, `packages/vue/tsconfig.json` extends `../../tsconfig.base.json` with `"lib": ["ES2022", "DOM"]`, and none of the three configs sets `baseUrl` or `allowImportingTsExtensions`
+
+#### Scenario: ESLint enforces type-aware no-explicit-any and no-restricted-syntax across packages/vue/src, test, and tsup.config.ts
+- **GIVEN**: `eslint.config.js` configured for `packages/vue`
+- **WHEN**: `pnpm exec turbo run lint --filter=@trace-kit/vue` runs, AND an ESLint Node-API check lints inline fixtures containing `: any` and `as unknown as` under virtual paths in `packages/vue/src/` and `packages/vue/test/`
+- **THEN**: `turbo run lint --filter=@trace-kit/vue` exits `0` cleanly, and the negative checks report `@typescript-eslint/no-explicit-any` and `no-restricted-syntax` with full type information
+
+#### Scenario: Turbo build, typecheck, lint, and test execute @trace-kit/vue cleanly without ci.yml changes
+- **GIVEN**: `packages/vue/package.json` scripts and an untouched `.github/workflows/ci.yml`
+- **WHEN**: `pnpm exec turbo run build`, `pnpm exec turbo run typecheck`, `pnpm exec turbo run lint`, and `pnpm run test` run across the workspace
+- **THEN**: every command exits `0`, includes `@trace-kit/vue` in its executed task summary, passes `scripts/verify-turbo-ran.mjs`, and emits zero repository-caused Node deprecation warnings

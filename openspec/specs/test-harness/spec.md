@@ -202,3 +202,37 @@ so browser-only worker specs execute only under `core-worker-transfer` and `core
 - **THEN**: `core`, `playground`, `renderers`, `renderers-dom`, `visual`, and `engine-bench` keep
   their exact pre-change settings (with `core` excluding `test/browser/**`), and browser-only
   worker specs execute only under `core-worker-transfer` and `core-worker-shared`
+
+### Requirement: Dedicated `vue` (Node) and `vue-dom` (Happy-DOM) Vitest Projects
+Root `vitest.config.ts`'s `test.projects` array MUST add two dedicated projects for `@trace-kit/vue`, each using an absolute config-relative `root` computed via `path.join(rootDir, "packages/vue")`:
+1. **`vue` (Node SSR & build-contract project)**: `environment: "node"`, `include: ["test/node/**/*.test.ts"]` — executes pure Node import-time DOM-free isomorphism checks, `vue/server-renderer` `renderToString` SSR markup assertions, ESM/CJS export resolution, `vue` externalization, zero SVG/font reachability, `/*#__PURE__*/` preservation, and bidirectional `packages/vue/SIDE-EFFECTS.md` coverage.
+2. **`vue-dom` (Happy-DOM component & composable project)**: `environment: "happy-dom"`, `include: ["test/dom/**/*.test.ts"]` — executes `useSpectrumEngine` and `<TraceSpectrumViewer>` tests using Vue 3's built-in `createApp`, `createSSRApp`, `h`, `nextTick`, and `effectScope` (with zero `@vue/test-utils` dependency), covering reactivity isolation, dual streaming seam, `v-model:domain` echo suppression, `ViewportInteractionController` coordination, `createSSRApp` client hydration, and 20-cycle mount/unmount leak checks.
+
+`packages/vue/package.json` MUST declare:
+- `"test": "vitest run --config ../../vitest.config.ts --project vue --project vue-dom"`
+- `"typecheck": "tsc --noEmit && tsc -p tsconfig.test.json --noEmit"`
+- `"typecheck:test": "tsc -p tsconfig.test.json --noEmit"`
+- `"lint": "eslint ."`
+
+#### Scenario: vitest.config.ts declares vue (node) and vue-dom (happy-dom) projects with absolute config-relative roots
+- **GIVEN**: root `vitest.config.ts` after `vue-adapter` lands
+- **WHEN**: `packages/vue/test/node/vue-build.test.ts` inspects `vitest.config.ts`
+- **THEN**: `test.projects` contains a `"vue"` project with `environment: "node"`, `include: ["test/node/**/*.test.ts"]`, and `root` computed via `path.join(rootDir, "packages/vue")`, AND a `"vue-dom"` project with `environment: "happy-dom"`, `include: ["test/dom/**/*.test.ts"]`, and `root` computed via `path.join(rootDir, "packages/vue")`
+
+#### Scenario: vue project enforces DOM-free Node isolation while vue-dom provides Happy-DOM globals
+- **GIVEN**: a test under `packages/vue/test/node/` running in the `vue` project and a test under `packages/vue/test/dom/` running in the `vue-dom` project
+- **WHEN**: both projects execute via `pnpm --filter @trace-kit/vue test`
+- **THEN**: inside `vue`, `typeof window === "undefined"` and `typeof document === "undefined"` hold; inside `vue-dom`, `document.createElement("div")` and `createApp(...)` succeed without throwing
+
+#### Scenario: packages/vue test script executes both projects cleanly through Turbo
+- **GIVEN**: `packages/vue/package.json`'s `test`, `typecheck`, `typecheck:test`, and `lint` scripts
+- **WHEN**: `pnpm --filter @trace-kit/vue test` and `pnpm --filter @trace-kit/vue typecheck` run
+- **THEN**: both exit `0` and execute real test cases across both `vue` and `vue-dom` projects (zero vacuous passes)
+
+### Requirement: All Eight Pre-Existing Vitest Projects Remain Byte-for-Byte Unchanged
+Adding the `vue` and `vue-dom` entries to `vitest.config.ts` MUST NOT modify the `name`, `root`, `environment`, `include`, `exclude`, `setupFiles`, `pool`, `execArgv`, `testTimeout`, `browser`, `worker`, `server`, `plugins`, `resolve`, or `define` configuration of any of the eight pre-existing Vitest projects (`core`, `playground`, `renderers`, `renderers-dom`, `visual`, `engine-bench`, `core-worker-transfer`, `core-worker-shared`).
+
+#### Scenario: All eight pre-existing Vitest project entries remain identical after adding vue and vue-dom
+- **GIVEN**: root `vitest.config.ts` after appending `vue` and `vue-dom`
+- **WHEN**: `test.projects` is inspected against the eight pre-existing entries
+- **THEN**: `test.projects` contains `10` entries in total, and the first `8` entries (`core`, `playground`, `renderers`, `renderers-dom`, `visual`, `engine-bench`, `core-worker-transfer`, `core-worker-shared`) retain their exact pre-change configurations with zero modifications

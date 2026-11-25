@@ -232,3 +232,52 @@ The root `"."` entry of `@trace-kit/renderers` MUST NOT include `createSpectrumE
 - **GIVEN**: the built `./controller` outputs `packages/renderers/dist/controller/index.js`, `packages/renderers/dist/controller/index.cjs`, and their reachable chunks
 - **WHEN**: they are searched for `exportToSvg`, `svg/index`, `data:font/woff2;base64`, and `TRACEKIT_INTER_EMBEDDED_FONT`
 - **THEN**: there is no match in any file
+
+### Requirement: `@trace-kit/vue` Dual ESM/CJS Build, Declarations, and `exports` Map
+`packages/vue/package.json` MUST declare `"name": "@trace-kit/vue"`, `"type": "module"`, `"sideEffects": false`, `"peerDependencies": { "vue": "^3.4.0" }`, `"build": "tsup && tsc -p tsconfig.dts.json"`, and `exports["."]` with exact `types` (`"./dist/index.d.ts"`), `import` (`"./dist/index.js"`), and `require` (`"./dist/index.cjs"`) conditions. `packages/vue/tsup.config.ts` MUST build `src/index.ts` emitting dual ESM (`dist/index.js`), CJS (`dist/index.cjs`), TypeScript declarations (`dist/index.d.ts`, `dist/index.d.cts`), sourcemaps, and post-build declaration maps (`dist/index.d.ts.map` emitted by `tsc -p tsconfig.dts.json`), without declaring a `target` override that contradicts `tsconfig.base.json`'s `ES2022` target.
+
+The `@trace-kit/vue` entry MUST resolve cleanly under both ESM (`import('@trace-kit/vue')`) and CJS (`require('@trace-kit/vue')`) in Node and expose the exact sorted runtime export set `["TraceSpectrumViewer", "snapshotDomain", "useSpectrumEngine"]`.
+
+#### Scenario: `@trace-kit/vue` resolves under both ESM and CJS with exact runtime exports
+- **GIVEN**: the built `@trace-kit/vue` package (`pnpm exec turbo run build --filter=@trace-kit/vue`)
+- **WHEN**: `packages/vue/test/node/vue-build.test.ts` evaluates both `import("@trace-kit/vue")` and `require("@trace-kit/vue")` in Node
+- **THEN**: both resolve cleanly and expose the exact sorted runtime export list `["TraceSpectrumViewer", "snapshotDomain", "useSpectrumEngine"]`
+
+#### Scenario: Built dist/ contains ESM, CJS, .d.ts, .d.cts, .d.ts.map, and sourcemaps with valid exports map
+- **GIVEN**: `packages/vue/dist/` and `packages/vue/package.json` after building `@trace-kit/vue`
+- **WHEN**: `packages/vue/test/node/vue-build.test.ts` inspects `packages/vue/dist/` and `packages/vue/package.json`
+- **THEN**: `dist/` contains `index.js`, `index.cjs`, `index.d.ts`, `index.d.cts`, `index.d.ts.map`, `index.js.map`, and `index.cjs.map`; `exports["."]` has exact `types`, `import`, and `require` paths; `"sideEffects"` is `false`; `"peerDependencies"` declares `"vue": "^3.4.0"`; and `packages/vue/tsup.config.ts` declares no `target` override
+
+### Requirement: `@trace-kit/vue` Externalizes Vue and Workspace Packages With Zero SVG/Font Reachability
+`packages/vue/tsup.config.ts` MUST externalize `vue`, `@trace-kit/core`, `@trace-kit/renderers`, and `@trace-kit/renderers/controller` so neither Vue's runtime nor TraceKit renderer implementations are bundled into `packages/vue/dist/`. `@trace-kit/vue` MUST consume `@trace-kit/renderers/controller` for runtime controller factories and type-only imports from `@trace-kit/core` and `@trace-kit/renderers`, and MUST NEVER import or pull `@trace-kit/renderers/svg` or `@trace-kit/renderers/font` (`0` bytes of SVG exporter or embedded base64 WOFF2 font reachable).
+
+#### Scenario: Built outputs externalize vue and @trace-kit/renderers/controller
+- **GIVEN**: the built `packages/vue/dist/index.js` and `packages/vue/dist/index.cjs` files
+- **WHEN**: `packages/vue/test/node/vue-build.test.ts` inspects their import/require statements and file contents
+- **THEN**: both files keep `"vue"` and `"@trace-kit/renderers/controller"` as external module imports/requires and do NOT inline Vue runtime internals (`createBaseVNode`, `reactiveEffect`) or `Canvas2DRenderer`/`WebGL2FigureRenderer` implementations
+
+#### Scenario: Built outputs reach zero SVG exporter or embedded font payloads
+- **GIVEN**: `packages/vue/dist/index.js`, `packages/vue/dist/index.cjs`, and any emitted chunks under `packages/vue/dist/`
+- **WHEN**: `packages/vue/test/node/vue-build.test.ts` searches all emitted files for `@trace-kit/renderers/svg`, `exportToSvg`, `@trace-kit/renderers/font`, `data:font/woff2;base64`, and `TRACEKIT_INTER_EMBEDDED_FONT`
+- **THEN**: zero matches appear in any emitted file
+
+### Requirement: `@trace-kit/vue` Pure Component Annotation and Bidirectional `SIDE-EFFECTS.md` Audit
+`TraceSpectrumViewer` MUST be annotated with `/*#__PURE__*/` directly on its `defineComponent(...)` invocation in `packages/vue/src/trace-spectrum-viewer.ts`, and that `/*#__PURE__*/` annotation MUST survive bundling into `packages/vue/dist/index.js` and `packages/vue/dist/index.cjs` so downstream bundlers cleanly tree-shake `<TraceSpectrumViewer>` when a consumer imports only `useSpectrumEngine`. `packages/vue/SIDE-EFFECTS.md` MUST maintain exact bidirectional set equality with all `.ts` files matching `packages/vue/src/**/*.ts` and document `| none |` for every module.
+
+#### Scenario: `/*#__PURE__*/` annotation is preserved on defineComponent in source and built outputs
+- **GIVEN**: `packages/vue/src/trace-spectrum-viewer.ts`, `packages/vue/dist/index.js`, and `packages/vue/dist/index.cjs`
+- **WHEN**: `packages/vue/test/node/vue-build.test.ts` inspects the `defineComponent(` call in source and built ESM/CJS outputs
+- **THEN**: `/*#__PURE__*/` (or `/* @__PURE__ */`) immediately precedes `defineComponent(` in source and in both built outputs
+
+#### Scenario: `packages/vue/SIDE-EFFECTS.md` matches `packages/vue/src/**/*.ts` bidirectionally with none side effects
+- **GIVEN**: all `.ts` files under `packages/vue/src/` and the committed `packages/vue/SIDE-EFFECTS.md` audit table
+- **WHEN**: `packages/vue/test/node/vue-build.test.ts` parses every table row from `packages/vue/SIDE-EFFECTS.md` and compares the listed file set against `packages/vue/src/**/*.ts`
+- **THEN**: both sets are equal with zero missing and zero extraneous entries, and every listed row records `none` in its side-effect column
+
+### Requirement: Upstream Packages and Playground Remain Untouched by `vue-adapter`
+Implementing `vue-adapter` MUST NOT modify `packages/core/src/**`, `packages/core/package.json`, `packages/core/SIDE_EFFECTS_AUDIT.md`, any file under `packages/renderers/**`, or any file under `apps/playground/**`. `@trace-kit/core` MUST remain 100% DOM-free and GL-free, and `apps/playground` MUST remain pure vanilla TypeScript with zero Vue runtime dependency.
+
+#### Scenario: `packages/core/src`, `packages/renderers`, and `apps/playground` remain untouched and Vue-free
+- **GIVEN**: `packages/core/package.json`, `packages/renderers/package.json`, and `apps/playground/package.json` after `vue-adapter` lands
+- **WHEN**: `packages/vue/test/node/vue-build.test.ts` (and `git diff --name-only` verification) inspects dependencies and touched paths
+- **THEN**: none of `packages/core/package.json`, `packages/renderers/package.json`, or `apps/playground/package.json` lists `vue` in any dependency field, and zero files under `packages/core/src/**`, `packages/renderers/**`, or `apps/playground/**` are modified

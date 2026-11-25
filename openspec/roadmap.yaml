@@ -581,7 +581,21 @@ changes:
     name: vue-adapter
     prerequisites: 
       - engine-controller
-    capabilities: not_yet_specified
+    capabilities:
+      - name: package-build-pipeline
+        deltas: [ADDED]
+      - name: test-harness
+        deltas: [ADDED]
+      - name: vue-reactivity-isolation
+        deltas: [ADDED]
+      - name: vue-spectrum-component
+        deltas: [ADDED]
+      - name: vue-spectrum-composable
+        deltas: [ADDED]
+      - name: vue-ssr-and-lifecycle
+        deltas: [ADDED]
+      - name: workspace-toolchain
+        deltas: [ADDED]
 
   - order: 11
     name: react-adapter
