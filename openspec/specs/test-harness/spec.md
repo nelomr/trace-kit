@@ -236,3 +236,11 @@ Adding the `vue` and `vue-dom` entries to `vitest.config.ts` MUST NOT modify the
 - **GIVEN**: root `vitest.config.ts` after appending `vue` and `vue-dom`
 - **WHEN**: `test.projects` is inspected against the eight pre-existing entries
 - **THEN**: `test.projects` contains `10` entries in total, and the first `8` entries (`core`, `playground`, `renderers`, `renderers-dom`, `visual`, `engine-bench`, `core-worker-transfer`, `core-worker-shared`) retain their exact pre-change configurations with zero modifications
+
+### Requirement: Vitest Node and DOM Projects for @trace-kit/react
+Root `vitest.config.ts` MUST register two projects for `@trace-kit/react`: `react` (`environment: "node"`, `include: ["test/node/**/*.test.ts"]`) and `react-dom` (`environment: "happy-dom"`, `include: ["test/dom/**/*.test.ts"]`), bringing the root project roster to 12 projects while preserving all 10 pre-existing projects.
+
+#### Scenario: Root Vitest executes react and react-dom projects cleanly
+- **GIVEN**: Root `vitest.config.ts` with `react` and `react-dom` projects registered
+- **WHEN**: `pnpm --filter @trace-kit/react test` executes
+- **THEN**: Both Node SSR/build tests (`react`) and DOM/StrictMode/reactivity tests (`react-dom`) execute and pass

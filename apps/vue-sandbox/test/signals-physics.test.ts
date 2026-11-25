@@ -59,11 +59,15 @@ describe("OSA-1550 optical physics and ITU-T G.694.1 compliance", () => {
     // Exact linear-to-dBm conversion agreement at the Bragg stopband peak
     expect(mwToDbm(notchWindowMw.peakY)).toBeCloseTo(notchWindowDbm.peakY, 2);
 
-    // Confirm zero NaN/Infinity across the full buffer
+    // Confirm zero NaN/Infinity across the full buffer without 240k Chai assertion allocations
+    let nonFiniteCount = 0;
+    let nonPositiveCount = 0;
     for (let i = 0; i < pool.fbgDbm.sampleCount; i += 1) {
-      expect(Number.isFinite(pool.fbgDbm.y[i]!)).toBe(true);
-      expect(pool.fbgMw.y[i]!).toBeGreaterThan(0);
+      if (!Number.isFinite(pool.fbgDbm.y[i]!)) nonFiniteCount += 1;
+      if (!(pool.fbgMw.y[i]! > 0)) nonPositiveCount += 1;
     }
+    expect(nonFiniteCount).toBe(0);
+    expect(nonPositiveCount).toBe(0);
   });
 
   it("models DWDM ITU Ch 34 (−10 dB fault) and Ch 48 (+12 GHz drift) in both dBm and mW modes", () => {

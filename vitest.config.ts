@@ -273,6 +273,24 @@ export default defineConfig({
           include: ["test/dom/**/*.test.ts"],
         },
       },
+      {
+        extends: true,
+        test: {
+          name: "react",
+          root: path.join(rootDir, "packages/react"),
+          environment: "node",
+          include: ["test/node/**/*.test.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "react-dom",
+          root: path.join(rootDir, "packages/react"),
+          environment: "happy-dom",
+          include: ["test/dom/**/*.test.ts"],
+        },
+      },
     ],
   },
 });

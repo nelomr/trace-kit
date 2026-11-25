@@ -281,3 +281,11 @@ Implementing `vue-adapter` MUST NOT modify `packages/core/src/**`, `packages/cor
 - **GIVEN**: `packages/core/package.json`, `packages/renderers/package.json`, and `apps/playground/package.json` after `vue-adapter` lands
 - **WHEN**: `packages/vue/test/node/vue-build.test.ts` (and `git diff --name-only` verification) inspects dependencies and touched paths
 - **THEN**: none of `packages/core/package.json`, `packages/renderers/package.json`, or `apps/playground/package.json` lists `vue` in any dependency field, and zero files under `packages/core/src/**`, `packages/renderers/**`, or `apps/playground/**` are modified
+
+### Requirement: @trace-kit/react Dual ESM/CJS Build and Declaration Surface
+`packages/react` (`@trace-kit/react`) MUST build dual ESM (`dist/index.js`), CJS (`dist/index.cjs`), `.d.ts` (`dist/index.d.ts`), and `.d.ts.map` (`dist/index.d.ts.map`) artifacts via `tsup && tsc -p tsconfig.dts.json`, declare `"sideEffects": false`, externalize `react` and all `@trace-kit/*` workspace packages, and export the exact sorted 3-symbol runtime set `["TraceSpectrumViewer", "snapshotDomain", "useSpectrumEngine"]`.
+
+#### Scenario: ESM and CJS Node resolution exposes exact 3-symbol export set with externalized react
+- **GIVEN**: A built `packages/react/dist/` output
+- **WHEN**: Imported via Node ESM (`import`) and CJS (`require`) and inspected statically
+- **THEN**: Both entrypoints expose exact sorted keys `["TraceSpectrumViewer", "snapshotDomain", "useSpectrumEngine"]`, and `dist/index.js` / `dist/index.cjs` contain zero bundled React runtime code

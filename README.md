@@ -31,9 +31,9 @@ Experience TraceKit's high-throughput rendering live in your browser:
 > **TraceKit is pre-alpha. Packages are not published to the public npm registry yet.**  
 > Changesets manage in-repo versioning (`0.0.x`). This README documents implemented components and marks upcoming milestones as `[PLANNED]`.
 
-### Roadmap Milestones Implemented (Steps 1 through 10 Archived)
+### Roadmap Milestones Implemented (Steps 1 through 11 Archived)
 
-TraceKit follows strict **Spec-Driven Development (SDD)**. Steps 1 through **10** are complete, fully verified, and archived in [`openspec/roadmap.yaml`](openspec/roadmap.yaml):
+TraceKit follows strict **Spec-Driven Development (SDD)**. Steps 1 through **11** are complete, fully verified, and archived in [`openspec/roadmap.yaml`](openspec/roadmap.yaml):
 
 * **`@trace-kit/core` (Steps 1–4, 7–9.5)**:
   * Branded typed memory buffers (`XBuffer`, `YBuffer`, `IndexBuffer`, `Retained<T>`, `Transit<T>`, `asXBuffer`, `asYBuffer`, `asIndexBuffer`).
@@ -55,6 +55,10 @@ TraceKit follows strict **Spec-Driven Development (SDD)**. Steps 1 through **10*
   * `<TraceSpectrumViewer>` component and `useSpectrumEngine` composable.
   * Two-way `v-model:domain` synchronization with a 4-scalar + `WeakSet` dual echo guard preventing render feedback loops.
   * Scoped `#overlay` slot, non-colliding `figureStyle` prop, and SSR isomorphic `renderToString` safety.
+* **`@trace-kit/react` (Step 11)**:
+  * Unmanaged-canvas React 18 & 19 adapter (`react: "^18.2.0 || ^19.0.0"`) with 1:1 parity to `@trace-kit/vue`.
+  * `useSpectrumEngine` hook and `forwardRef` `<TraceSpectrumViewer>` component built with pure `createElement` (`"sideEffects": false`, zero JSX runtime dependency).
+  * `useRef` handle/payload isolation + selective `useSyncExternalStore` + isolated `<OverlayHost>` sustaining 0 React re-renders during 60 Hz Path A streaming, `<React.StrictMode>` double-invoke safety, and pure Node SSR `renderToString` isomorphism.
 * **Demonstration Applications**:
   * `apps/playground`: Vanilla bench with 7 interactive testing routes.
   * `apps/vue-sandbox`: Optical Spectrum Analyzer (`OSA-1550`) real-time instrument sandbox.
@@ -65,7 +69,6 @@ TraceKit follows strict **Spec-Driven Development (SDD)**. Steps 1 through **10*
 
 ### Planned Milestones
 
-* `[PLANNED]` **Step 11**: `@trace-kit/react` — React 18/19 zero-overhead unmanaged canvas hooks and SSR wrappers (matching Vue's contract 1:1).
 * `[PLANNED]` **Step 11.5**: `dom-a11y-layer` — Accessible DOM overlay layer for screen readers and keyboard navigation.
 * `[PLANNED]` **Step 12**: `package-exports-and-treeshaking-gates` — Release packaging, automated bundle size, and tree-shaking gates.
 * `[PLANNED]` **Step 13**: `crosshair-sync-bus` — Multi-chart synchronized telemetry bus over `BroadcastChannel` / `EventTarget`.
@@ -107,7 +110,8 @@ trace-kit/
 │   │                   #   and controller (SpectrumEngineController + ViewportInteractionController).
 │   ├── vue/            # [IMPLEMENTED] Vue 3: useSpectrumEngine, TraceSpectrumViewer,
 │   │                   #   shallowRef/markRaw isolation, 2-way v-model:domain echo guard.
-│   └── react/          # [PLANNED - Step 11] React unmanaged canvas hooks & 1:1 parity wrappers.
+│   └── react/          # [IMPLEMENTED] React 18/19: useSpectrumEngine, TraceSpectrumViewer,
+│                       #   useRef unmanaged canvas, useSyncExternalStore & StrictMode parity.
 ├── apps/
 │   ├── playground/     # [IMPLEMENTED] Vanilla laboratory workbench (7 interactive routes).
 │   ├── vue-sandbox/    # [IMPLEMENTED] OSA-1550 Optical Spectrum Analyzer Vue 3 sandbox.
@@ -135,7 +139,7 @@ flowchart TD
         CanvasEngine --> Viewport["Display Surface"]
         WebGLEngine --> Viewport
         VueAdapter["@trace-kit/vue (<TraceSpectrumViewer>)"] -.->|"shallowRef / markRaw"| EngineCtrl
-        ReactAdapter["@trace-kit/react [PLANNED]"] -.->|"useRef unmanaged"| EngineCtrl
+        ReactAdapter["@trace-kit/react (<TraceSpectrumViewer>)"] -.->|"useRef / useSyncExternalStore"| EngineCtrl
     end
 ```
 
@@ -155,7 +159,7 @@ pnpm add @trace-kit/renderers
 
 # Reactive framework adapters
 pnpm add @trace-kit/vue
-pnpm add @trace-kit/react # [PLANNED]
+pnpm add @trace-kit/react
 ```
 
 ---
@@ -299,15 +303,16 @@ engineController.render();
 
 ---
 
-### 3. React Integration `[PLANNED — Roadmap Step 11]`
+### 3. React 18 / 19 Integration (`@trace-kit/react`)
 
 ```tsx
 import React, { useRef, useState } from 'react';
-import { TraceSpectrumViewer } from '@trace-kit/react';
+import { TraceSpectrumViewer, type SpectrumEngineHandle } from '@trace-kit/react';
 import type { SpectrumDataPayload } from '@trace-kit/core';
 import type { ViewportDomain } from '@trace-kit/renderers/controller';
 
 export const SpectrumView: React.FC<{ data: SpectrumDataPayload }> = ({ data }) => {
+  const viewerRef = useRef<SpectrumEngineHandle | null>(null);
   const [domain, setDomain] = useState<ViewportDomain>({
     xMin: 1520,
     xMax: 1580,
@@ -316,15 +321,22 @@ export const SpectrumView: React.FC<{ data: SpectrumDataPayload }> = ({ data }) 
   });
 
   return (
-    <div style={{ width: '100%', height: '500px' }}>
-      <TraceSpectrumViewer
-        data={data}
-        domain={domain}
-        onDomainChange={setDomain}
-        mode="auto"
-        interactive={true}
-      />
-    </div>
+    <TraceSpectrumViewer
+      ref={viewerRef}
+      data={data}
+      domain={domain}
+      onDomainChange={setDomain}
+      mode="auto"
+      interactive={true}
+      style={{ width: '100%', height: '500px' }}
+      figureStyle={{ backgroundColor: '#0b0f19', gridColor: '#1e293b' }}
+      renderOverlay={({ activeKind, domain: activeDomain, contextLost }) => (
+        <div style={{ position: 'absolute', top: 12, right: 12, fontFamily: 'monospace', color: '#38bdf8' }}>
+          Engine: {activeKind.toUpperCase()} | {activeDomain.xMin.toFixed(1)}–{activeDomain.xMax.toFixed(1)} nm
+          {contextLost ? ' [GL CONTEXT LOST]' : null}
+        </div>
+      )}
+    />
   );
 };
 ```

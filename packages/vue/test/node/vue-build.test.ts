@@ -250,7 +250,7 @@ describe("@trace-kit/vue build surface, packaging, and static audits (node)", ()
     }
   });
 
-  it("verifies vitest.config.ts declares 10 projects (8 pre-existing + vue & vue-dom)", () => {
+  it("verifies vitest.config.ts declares vue & vue-dom alongside workspace projects", () => {
     const vitestConfigText = readFileSync(path.join(repoRoot, "vitest.config.ts"), "utf8");
     const projectNames = [...vitestConfigText.matchAll(/name:\s*"([^"]+)"/g)]
       .map((m) => m[1])
@@ -267,6 +267,8 @@ describe("@trace-kit/vue build surface, packaging, and static audits (node)", ()
       "core-worker-shared",
       "vue",
       "vue-dom",
+      "react",
+      "react-dom",
     ]);
     expect(vitestConfigText).toContain('root: path.join(rootDir, "packages/vue")');
     expect(vitestConfigText).toContain('include: ["test/node/**/*.test.ts"]');

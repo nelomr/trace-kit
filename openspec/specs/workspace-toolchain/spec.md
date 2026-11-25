@@ -545,3 +545,11 @@ therefore be reshaped rather than the coverage reduced.
 - **GIVEN**: `packages/vue/package.json` scripts and an untouched `.github/workflows/ci.yml`
 - **WHEN**: `pnpm exec turbo run build`, `pnpm exec turbo run typecheck`, `pnpm exec turbo run lint`, and `pnpm run test` run across the workspace
 - **THEN**: every command exits `0`, includes `@trace-kit/vue` in its executed task summary, passes `scripts/verify-turbo-ran.mjs`, and emits zero repository-caused Node deprecation warnings
+
+### Requirement: Catalog Discipline and ESLint Coverage for @trace-kit/react
+`react`, `react-dom`, `@types/react`, and `@types/react-dom` MUST be pinned in `pnpm-workspace.yaml` under `catalog:` and referenced via `"catalog:"` in `packages/react/package.json`. Root `eslint.config.js` MUST type-check and enforce `@typescript-eslint/no-explicit-any` and `no-restricted-syntax` across `packages/react/src/**`, `packages/react/test/**`, and `packages/react/tsup.config.ts`. `packages/core`, `packages/renderers`, `packages/vue`, and `apps/playground` MUST NOT declare any `react` or `react-dom` dependency.
+
+#### Scenario: Catalog discipline, zero React leakage, and ESLint rules are verified in CI
+- **GIVEN**: The monorepo workspace with `packages/react` added
+- **WHEN**: `verify-catalog-discipline.mjs`, `CI=true turbo run lint`, and `@trace-kit/react` static build/lint meta-tests run
+- **THEN**: All checks exit 0, `packages/core`, `packages/renderers`, `packages/vue`, and `apps/playground` have zero `react`/`react-dom` dependencies, and ESLint flags violations in `packages/react/src` and `packages/react/test`

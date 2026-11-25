@@ -38,6 +38,7 @@ export default tseslint.config(
       "packages/renderers/test/**",
       "packages/renderers/bench/**",
       "packages/vue/test/**",
+      "packages/react/test/**",
     ],
     extends: [
       ...tseslint.configs.recommendedTypeChecked,
@@ -54,6 +55,7 @@ export default tseslint.config(
             "packages/core/tsup.config.ts",
             "packages/renderers/tsup.config.ts",
             "packages/vue/tsup.config.ts",
+            "packages/react/tsup.config.ts",
             // Not a real file on disk: `lint-hot-path.test.ts` lints the committed
             // `test/fixtures/hot-path-violation.ts` source under this virtual `filePath` so it
             // is evaluated against the `src/decimation/**`-scoped hot-path rules without moving
@@ -69,7 +71,7 @@ export default tseslint.config(
             "packages/core/src/export/__hot-path-fixture-proof__.ts",
           ],
           defaultProject: "packages/core/tsconfig.test.json",
-          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 10,
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 12,
         },
         tsconfigRootDir: import.meta.dirname,
       },
@@ -125,6 +127,7 @@ export default tseslint.config(
       "packages/renderers/test/**/*.ts",
       "packages/renderers/bench/**/*.ts",
       "packages/vue/test/**/*.ts",
+      "packages/react/test/**/*.ts",
     ],
     extends: [
       ...tseslint.configs.recommendedTypeChecked,
@@ -136,6 +139,7 @@ export default tseslint.config(
           "packages/core/tsconfig.test.json",
           "packages/renderers/tsconfig.test.json",
           "packages/vue/tsconfig.test.json",
+          "packages/react/tsconfig.test.json",
         ],
         tsconfigRootDir: import.meta.dirname,
       },

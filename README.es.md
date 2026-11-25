@@ -31,9 +31,9 @@ Prueba el rendimiento de renderizado de TraceKit directamente en el navegador:
 > **TraceKit se encuentra en fase pre-alpha. Los paquetes aún no están publicados en el registro público de npm.**  
 > El versionado interno se gestiona con Changesets (`0.0.x`). Este README documenta los componentes implementados y marca los próximos hitos como `[PREVISTO]`.
 
-### Hitos del Roadmap implementados (Pasos 1 al 10 archivados)
+### Hitos del Roadmap implementados (Pasos 1 al 11 archivados)
 
-TraceKit sigue un riguroso proceso de **Desarrollo Guiado por Especificaciones (SDD)**. Los pasos 1 al **10** están completos, verificados y archivados en [`openspec/roadmap.yaml`](openspec/roadmap.yaml):
+TraceKit sigue un riguroso proceso de **Desarrollo Guiado por Especificaciones (SDD)**. Los pasos 1 al **11** están completos, verificados y archivados en [`openspec/roadmap.yaml`](openspec/roadmap.yaml):
 
 * **`@trace-kit/core` (Pasos 1–4, 7–9.5)**:
   * Buffers de memoria tipados con marca (`XBuffer`, `YBuffer`, `IndexBuffer`, `Retained<T>`, `Transit<T>`, `asXBuffer`, `asYBuffer`, `asIndexBuffer`).
@@ -55,6 +55,10 @@ TraceKit sigue un riguroso proceso de **Desarrollo Guiado por Especificaciones (
   * Componente `<TraceSpectrumViewer>` y composable `useSpectrumEngine`.
   * Sincronización bidireccional `v-model:domain` protegida por un filtro dual de 4 escalares + `WeakSet` que evita bucles de renderizado.
   * Slot `#overlay` tipado, prop `figureStyle` no conflictiva e isomorfismo seguro para SSR con `renderToString`.
+* **`@trace-kit/react` (Paso 11)**:
+  * Adaptador React 18 y 19 de canvas no gestionado (`react: "^18.2.0 || ^19.0.0"`) con paridad 1:1 frente a `@trace-kit/vue`.
+  * Hook `useSpectrumEngine` y componente `forwardRef` `<TraceSpectrumViewer>` en TypeScript puro con `createElement` (`"sideEffects": false`, sin dependencia de runtime JSX).
+  * Aislamiento con `useRef` + `useSyncExternalStore` selectivo + `<OverlayHost>` aislado logrando 0 re-renderizados de React en streaming Path A a 60 Hz, seguridad total bajo `<React.StrictMode>` e isomorfismo SSR con `renderToString`.
 * **Aplicaciones de demostración**:
   * `apps/playground`: Laboratorio Vanilla con 7 rutas interactivas de pruebas.
   * `apps/vue-sandbox`: Entorno interactivo de analizador de espectro óptico (`OSA-1550`) en Vue 3.
@@ -65,7 +69,6 @@ TraceKit sigue un riguroso proceso de **Desarrollo Guiado por Especificaciones (
 
 ### Próximos hitos planificados
 
-* `[PREVISTO]` **Paso 11**: `@trace-kit/react` — Hooks desacoplados y wrappers para React 18/19 seguros para SSR (paridad 1:1 con el contrato de Vue).
 * `[PREVISTO]` **Paso 11.5**: `dom-a11y-layer` — Capa de accesibilidad DOM para lectores de pantalla y navegación por teclado.
 * `[PREVISTO]` **Paso 12**: `package-exports-and-treeshaking-gates` — Empaquetado final de distribución con barreras automatizadas de tamaño y tree-shaking.
 * `[PREVISTO]` **Paso 13**: `crosshair-sync-bus` — Bus de sincronización de crucetas multicanal vía `BroadcastChannel` / `EventTarget`.
@@ -107,7 +110,8 @@ trace-kit/
 │   │                   #   y controladores (SpectrumEngineController + ViewportInteractionController).
 │   ├── vue/            # [IMPLEMENTADO] Vue 3: useSpectrumEngine, TraceSpectrumViewer,
 │   │                   #   aislamiento shallowRef/markRaw, filtro dual para v-model:domain.
-│   └── react/          # [PREVISTO - Paso 11] Hooks desacoplados y wrappers con paridad 1:1.
+│   └── react/          # [IMPLEMENTADO] React 18/19: useSpectrumEngine, TraceSpectrumViewer,
+│                       #   canvas no gestionado con useRef, useSyncExternalStore y StrictMode.
 ├── apps/
 │   ├── playground/     # [IMPLEMENTADO] Laboratorio Vanilla (7 rutas interactivas).
 │   ├── vue-sandbox/    # [IMPLEMENTADO] Sandbox interactivo OSA-1550 en Vue 3.
@@ -135,7 +139,7 @@ flowchart TD
         CanvasEngine --> Viewport["Superficie de Visualización"]
         WebGLEngine --> Viewport
         VueAdapter["@trace-kit/vue (<TraceSpectrumViewer>)"] -.->|"shallowRef / markRaw"| EngineCtrl
-        ReactAdapter["@trace-kit/react [PREVISTO]"] -.->|"useRef desacoplado"| EngineCtrl
+        ReactAdapter["@trace-kit/react (<TraceSpectrumViewer>)"] -.->|"useRef / useSyncExternalStore"| EngineCtrl
     end
 ```
 
@@ -155,7 +159,7 @@ pnpm add @trace-kit/renderers
 
 # Adaptadores para frameworks reactivos
 pnpm add @trace-kit/vue
-pnpm add @trace-kit/react # [PREVISTO]
+pnpm add @trace-kit/react
 ```
 
 ---
@@ -299,15 +303,16 @@ engineController.render();
 
 ---
 
-### 3. Integración con React `[PREVISTO — Paso 11 del Roadmap]`
+### 3. Integración con React 18 / 19 (`@trace-kit/react`)
 
 ```tsx
 import React, { useRef, useState } from 'react';
-import { TraceSpectrumViewer } from '@trace-kit/react';
+import { TraceSpectrumViewer, type SpectrumEngineHandle } from '@trace-kit/react';
 import type { SpectrumDataPayload } from '@trace-kit/core';
 import type { ViewportDomain } from '@trace-kit/renderers/controller';
 
 export const SpectrumView: React.FC<{ data: SpectrumDataPayload }> = ({ data }) => {
+  const viewerRef = useRef<SpectrumEngineHandle | null>(null);
   const [domain, setDomain] = useState<ViewportDomain>({
     xMin: 1520,
     xMax: 1580,
@@ -316,15 +321,22 @@ export const SpectrumView: React.FC<{ data: SpectrumDataPayload }> = ({ data }) 
   });
 
   return (
-    <div style={{ width: '100%', height: '500px' }}>
-      <TraceSpectrumViewer
-        data={data}
-        domain={domain}
-        onDomainChange={setDomain}
-        mode="auto"
-        interactive={true}
-      />
-    </div>
+    <TraceSpectrumViewer
+      ref={viewerRef}
+      data={data}
+      domain={domain}
+      onDomainChange={setDomain}
+      mode="auto"
+      interactive={true}
+      style={{ width: '100%', height: '500px' }}
+      figureStyle={{ backgroundColor: '#0b0f19', gridColor: '#1e293b' }}
+      renderOverlay={({ activeKind, domain: activeDomain, contextLost }) => (
+        <div style={{ position: 'absolute', top: 12, right: 12, fontFamily: 'monospace', color: '#38bdf8' }}>
+          Motor: {activeKind.toUpperCase()} | {activeDomain.xMin.toFixed(1)}–{activeDomain.xMax.toFixed(1)} nm
+          {contextLost ? ' [GL CONTEXT LOST]' : null}
+        </div>
+      )}
+    />
   );
 };
 ```

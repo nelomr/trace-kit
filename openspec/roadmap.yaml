@@ -601,7 +601,21 @@ changes:
     name: react-adapter
     prerequisites: 
       - engine-controller
-    capabilities: not_yet_specified
+    capabilities:
+      - name: package-build-pipeline
+        deltas: [ADDED]
+      - name: react-reactivity-isolation
+        deltas: [ADDED]
+      - name: react-spectrum-component
+        deltas: [ADDED]
+      - name: react-spectrum-hook
+        deltas: [ADDED]
+      - name: react-ssr-and-lifecycle
+        deltas: [ADDED]
+      - name: test-harness
+        deltas: [ADDED]
+      - name: workspace-toolchain
+        deltas: [ADDED]
 
   # Inserted at revision 6.
   #
