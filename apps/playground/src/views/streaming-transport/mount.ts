@@ -276,7 +276,7 @@ function createHud(parent: HTMLElement): HudFields {
   hud.setAttribute("data-role", "transport-hud");
   hud.style.cssText =
     "display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:0.5rem;" +
-    "padding:0.75rem;border:1px solid var(--tk-color-border,#1c2530);border-radius:6px;" +
+    "padding:0.75rem;margin-inline-end:276px;border:1px solid var(--tk-color-border,#1c2530);border-radius:6px;" +
     "background:var(--tk-color-surface,#10161d);font-family:ui-monospace,monospace;font-size:12px";
 
   function metric(label: string, initial: string): HTMLElement {

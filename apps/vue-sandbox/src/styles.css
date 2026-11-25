@@ -281,6 +281,27 @@ body,
   height: 100%;
 }
 
+.osa-split-stage {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  gap: 2px;
+  background: var(--border-strong);
+}
+
+.osa-split-pane {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  background: var(--surface-canvas);
+}
+
+.osa-split-pane > [data-trace-kit-viewer] {
+  width: 100%;
+  height: 100%;
+}
+
 /* Corner Telemetry Overlays inside #overlay slot (clear of 56px Y-axis gutter) */
 .osa-overlay-hud {
   position: absolute;

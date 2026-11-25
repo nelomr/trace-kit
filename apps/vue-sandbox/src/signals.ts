@@ -14,7 +14,7 @@ import { markRaw } from "vue";
 import type { ResolvedScheme } from "./theme.ts";
 
 export type ScenarioId = "fbg-1550" | "dwdm-40ch" | "live-60hz" | "log-y-mw";
-export type AxisMode = "linear" | "log";
+export type YScaleMode = "dbm" | "mw-log";
 
 /** Exact SI vacuum speed of light in nm * THz (c = 299,792,458 m/s). */
 export const C_NM_THZ = 299_792.458;
@@ -64,26 +64,52 @@ export function mwToDbm(powerMw: number): number {
   return 10 * Math.log10(powerMw > 1e-12 ? powerMw : 1e-12);
 }
 
+/** Linear dBm axis with top headroom (+6 dBm) so the 0 dBm tick clears the top plot border. */
 export const LINEAR_Y_AXES: readonly YAxisRegistration[] = Object.freeze([
   Object.freeze({
     id: "power-dbm",
     scaleKind: Y_SCALE_KIND_LINEAR,
     domainMin: -68,
-    domainMax: 4,
+    domainMax: 6,
+    side: AXIS_SIDE_LEFT,
+  }),
+]);
+
+/** High-power linear dBm axis for the +14.5 dBm carrier scenario (−36 to +22 dBm). */
+export const HIGH_POWER_DBM_Y_AXES: readonly YAxisRegistration[] = Object.freeze([
+  Object.freeze({
+    id: "power-dbm",
+    scaleKind: Y_SCALE_KIND_LINEAR,
+    domainMin: -36,
+    domainMax: 22,
     side: AXIS_SIDE_LEFT,
   }),
 ]);
 
 /**
- * 5-decade linear optical power axis (0.001 mW = -30 dBm to 100 mW = +20 dBm).
- * Every decade tick formats cleanly (0.001..100 mW) under the renderer's 3-decimal tick formatter.
+ * 5-decade linear optical power axis (0.001 mW to 100 mW; domainMax 160 gives clean top margin
+ * so the 100 mW tick never clips against the top border).
  */
 export const LOG_Y_AXES: readonly YAxisRegistration[] = Object.freeze([
   Object.freeze({
-    id: "power",
+    id: "power-mw",
     scaleKind: Y_SCALE_KIND_LOG,
     domainMin: 1e-3,
-    domainMax: 100,
+    domainMax: 160,
+    side: AXIS_SIDE_LEFT,
+  }),
+]);
+
+/**
+ * 4-decade linear optical power axis for nominal C-band signals (−30 dBm to +5 dBm:
+ * 0.001 mW to 3.2 mW) where every rendered tick (0.001, 0.01, 0.1, 1 mW) formats cleanly.
+ */
+export const LOG_SIGNAL_Y_AXES: readonly YAxisRegistration[] = Object.freeze([
+  Object.freeze({
+    id: "power-mw",
+    scaleKind: Y_SCALE_KIND_LOG,
+    domainMin: 1e-3,
+    domainMax: 3.2,
     side: AXIS_SIDE_LEFT,
   }),
 ]);
@@ -95,12 +121,47 @@ export interface ScenarioDescriptor {
   readonly instrumentProfile: string;
   readonly standardRef: string;
   readonly summary: string;
-  readonly axisMode: AxisMode;
+  readonly defaultScaleMode: YScaleMode;
   readonly defaultSamples: number;
-  readonly yUnit: string;
-  readonly homeDomain: ViewportDomain;
-  readonly yAxes: readonly YAxisRegistration[];
-  readonly precisionZoomDomain?: ViewportDomain;
+  readonly xMin: number;
+  readonly xMax: number;
+  readonly dbmYMin: number;
+  readonly dbmYMax: number;
+  readonly mwYMin: number;
+  readonly mwYMax: number;
+  readonly dbmYAxes: readonly YAxisRegistration[];
+  readonly mwYAxes: readonly YAxisRegistration[];
+  readonly precisionZoomX?: readonly [number, number];
+}
+
+export function scenarioHomeDomain(
+  descriptor: ScenarioDescriptor,
+  scaleMode: YScaleMode,
+): ViewportDomain {
+  return scaleMode === "mw-log"
+    ? {
+        xMin: descriptor.xMin,
+        xMax: descriptor.xMax,
+        yMin: descriptor.mwYMin,
+        yMax: descriptor.mwYMax,
+      }
+    : {
+        xMin: descriptor.xMin,
+        xMax: descriptor.xMax,
+        yMin: descriptor.dbmYMin,
+        yMax: descriptor.dbmYMax,
+      };
+}
+
+export function scenarioYAxes(
+  descriptor: ScenarioDescriptor,
+  scaleMode: YScaleMode,
+): readonly YAxisRegistration[] {
+  return scaleMode === "mw-log" ? descriptor.mwYAxes : descriptor.dbmYAxes;
+}
+
+export function scenarioYUnit(scaleMode: YScaleMode): "dBm" | "mW" {
+  return scaleMode === "mw-log" ? "mW" : "dBm";
 }
 
 export const SCENARIOS: Readonly<Record<ScenarioId, ScenarioDescriptor>> = Object.freeze({
@@ -112,17 +173,17 @@ export const SCENARIOS: Readonly<Record<ScenarioId, ScenarioDescriptor>> = Objec
     standardRef: "π-Shifted FBG (4 pm Notch)",
     summary:
       "Single C-band π-phase-shifted Fiber Bragg Grating (180 pm stopband, 4.0 pm notch at 1550.000100 nm) summed in linear mW.",
-    axisMode: "linear",
+    defaultScaleMode: "dbm",
     defaultSamples: 120_000,
-    yUnit: "dBm",
-    homeDomain: Object.freeze({ xMin: 1549.74, xMax: 1550.26, yMin: -68, yMax: 4 }),
-    yAxes: LINEAR_Y_AXES,
-    precisionZoomDomain: Object.freeze({
-      xMin: 1549.984,
-      xMax: 1550.016,
-      yMin: -66,
-      yMax: 2,
-    }),
+    xMin: 1549.74,
+    xMax: 1550.26,
+    dbmYMin: -68,
+    dbmYMax: 6,
+    mwYMin: 1e-3,
+    mwYMax: 3.2,
+    dbmYAxes: LINEAR_Y_AXES,
+    mwYAxes: LOG_SIGNAL_Y_AXES,
+    precisionZoomX: Object.freeze([1549.984, 1550.016] as const),
   }),
   "dwdm-40ch": Object.freeze({
     id: "dwdm-40ch",
@@ -132,11 +193,16 @@ export const SCENARIOS: Readonly<Record<ScenarioId, ScenarioDescriptor>> = Objec
     standardRef: "ITU-T G.694.1 (100 GHz)",
     summary:
       "Exact 100 GHz ITU-T C-band grid (Ch 21–60, λ = c/f anchored at 193.10 THz) with EDFA ASE floor, Ch 34 loss, and Ch 48 +12 GHz drift.",
-    axisMode: "linear",
+    defaultScaleMode: "dbm",
     defaultSamples: 72_000,
-    yUnit: "dBm",
-    homeDomain: Object.freeze({ xMin: 1528.6, xMax: 1561.8, yMin: -68, yMax: 4 }),
-    yAxes: LINEAR_Y_AXES,
+    xMin: 1528.6,
+    xMax: 1561.8,
+    dbmYMin: -68,
+    dbmYMax: 6,
+    mwYMin: 1e-3,
+    mwYMax: 3.2,
+    dbmYAxes: LINEAR_Y_AXES,
+    mwYAxes: LOG_SIGNAL_Y_AXES,
   }),
   "live-60hz": Object.freeze({
     id: "live-60hz",
@@ -146,11 +212,16 @@ export const SCENARIOS: Readonly<Record<ScenarioId, ScenarioDescriptor>> = Objec
     standardRef: "DFB + SMSR Linear Power",
     summary:
       "In-place Retained buffer acquisition via commitPayloadRevision + requestRender with linear-power ASE noise floor.",
-    axisMode: "linear",
+    defaultScaleMode: "dbm",
     defaultSamples: 96_000,
-    yUnit: "dBm",
-    homeDomain: Object.freeze({ xMin: 1549.8, xMax: 1554.2, yMin: -68, yMax: 4 }),
-    yAxes: LINEAR_Y_AXES,
+    xMin: 1549.8,
+    xMax: 1554.2,
+    dbmYMin: -68,
+    dbmYMax: 6,
+    mwYMin: 1e-3,
+    mwYMax: 3.2,
+    dbmYAxes: LINEAR_Y_AXES,
+    mwYAxes: LOG_SIGNAL_Y_AXES,
   }),
   "log-y-mw": Object.freeze({
     id: "log-y-mw",
@@ -159,12 +230,17 @@ export const SCENARIOS: Readonly<Record<ScenarioId, ScenarioDescriptor>> = Objec
     instrumentProfile: "Optical Power Density (mW)",
     standardRef: "5-Decade Log10 (0.001–100 mW)",
     summary:
-      "5-decade linear optical power spectrum (0.001 to 100 mW; −30 to +20 dBm) with base-10 log pan and zoom.",
-    axisMode: "log",
+      "5-decade linear optical power spectrum (0.001 to 100 mW; −30 to +20 dBm) toggleable live between Log10 mW and linear dBm.",
+    defaultScaleMode: "mw-log",
     defaultSamples: 48_000,
-    yUnit: "mW",
-    homeDomain: Object.freeze({ xMin: 1549.6, xMax: 1570.4, yMin: 1e-3, yMax: 100 }),
-    yAxes: LOG_Y_AXES,
+    xMin: 1549.6,
+    xMax: 1570.4,
+    dbmYMin: -36,
+    dbmYMax: 22,
+    mwYMin: 1e-3,
+    mwYMax: 160,
+    dbmYAxes: HIGH_POWER_DBM_Y_AXES,
+    mwYAxes: LOG_Y_AXES,
   }),
 });
 
@@ -184,76 +260,68 @@ function nextXorShift32(state: number): number {
 }
 
 export interface SignalPool {
-  readonly fbgPayload: SpectrumDataPayload;
-  readonly dwdmRefPayload: SpectrumDataPayload;
-  readonly dwdmActivePayload: SpectrumDataPayload;
-  readonly livePayload: SpectrumDataPayload;
-  readonly logPayload: SpectrumDataPayload;
+  readonly fbgDbm: SpectrumDataPayload;
+  readonly fbgMw: SpectrumDataPayload;
+  readonly dwdmRefDbm: SpectrumDataPayload;
+  readonly dwdmActiveDbm: SpectrumDataPayload;
+  readonly dwdmRefMw: SpectrumDataPayload;
+  readonly dwdmActiveMw: SpectrumDataPayload;
+  readonly liveDbm: SpectrumDataPayload;
+  readonly liveMw: SpectrumDataPayload;
+  readonly logDbm: SpectrumDataPayload;
+  readonly logMw: SpectrumDataPayload;
 }
 
 /**
  * Allocates all Retained signal buffers once up front (marked raw so Vue never proxies them).
- * Sample-count adjustments and 60 Hz streaming mutate these buffers in place via
- * `commitPayloadRevision(...)` with zero heap reallocations.
+ * Separate dBm / mW pools ensure `payload.yUnit` always matches the active physical unit
+ * across tick formatting, SVG export, and CSV export with zero runtime reallocations.
  */
 export function createSignalPool(): SignalPool {
   const halfCapacity = Math.ceil(MAX_SAMPLES / 2);
   return markRaw({
-    fbgPayload: markRaw(
-      createSpectrumDataPayload({
-        capacity: MAX_SAMPLES,
-        xOrigin: 1549.74,
-        xUnit: "nm",
-        yUnit: "dBm",
-      }),
+    fbgDbm: markRaw(
+      createSpectrumDataPayload({ capacity: MAX_SAMPLES, xOrigin: 1549.74, xUnit: "nm", yUnit: "dBm" }),
     ),
-    dwdmRefPayload: markRaw(
-      createSpectrumDataPayload({
-        capacity: halfCapacity,
-        xOrigin: 1528.6,
-        xUnit: "nm",
-        yUnit: "dBm",
-      }),
+    fbgMw: markRaw(
+      createSpectrumDataPayload({ capacity: MAX_SAMPLES, xOrigin: 1549.74, xUnit: "nm", yUnit: "mW" }),
     ),
-    dwdmActivePayload: markRaw(
-      createSpectrumDataPayload({
-        capacity: halfCapacity,
-        xOrigin: 1528.6,
-        xUnit: "nm",
-        yUnit: "dBm",
-      }),
+    dwdmRefDbm: markRaw(
+      createSpectrumDataPayload({ capacity: halfCapacity, xOrigin: 1528.6, xUnit: "nm", yUnit: "dBm" }),
     ),
-    livePayload: markRaw(
-      createSpectrumDataPayload({
-        capacity: MAX_SAMPLES,
-        xOrigin: 1549.8,
-        xUnit: "nm",
-        yUnit: "dBm",
-      }),
+    dwdmActiveDbm: markRaw(
+      createSpectrumDataPayload({ capacity: halfCapacity, xOrigin: 1528.6, xUnit: "nm", yUnit: "dBm" }),
     ),
-    logPayload: markRaw(
-      createSpectrumDataPayload({
-        capacity: MAX_SAMPLES,
-        xOrigin: 1549.6,
-        xUnit: "nm",
-        yUnit: "mW",
-      }),
+    dwdmRefMw: markRaw(
+      createSpectrumDataPayload({ capacity: halfCapacity, xOrigin: 1528.6, xUnit: "nm", yUnit: "mW" }),
+    ),
+    dwdmActiveMw: markRaw(
+      createSpectrumDataPayload({ capacity: halfCapacity, xOrigin: 1528.6, xUnit: "nm", yUnit: "mW" }),
+    ),
+    liveDbm: markRaw(
+      createSpectrumDataPayload({ capacity: MAX_SAMPLES, xOrigin: 1549.8, xUnit: "nm", yUnit: "dBm" }),
+    ),
+    liveMw: markRaw(
+      createSpectrumDataPayload({ capacity: MAX_SAMPLES, xOrigin: 1549.8, xUnit: "nm", yUnit: "mW" }),
+    ),
+    logDbm: markRaw(
+      createSpectrumDataPayload({ capacity: MAX_SAMPLES, xOrigin: 1549.6, xUnit: "nm", yUnit: "dBm" }),
+    ),
+    logMw: markRaw(
+      createSpectrumDataPayload({ capacity: MAX_SAMPLES, xOrigin: 1549.6, xUnit: "nm", yUnit: "mW" }),
     ),
   });
 }
 
 /**
  * Single C-band π-phase-shifted Fiber Bragg Grating (reflection spectrum, BOSA 0.08 pm profile).
- *
- * Physics:
- * - Stopband centered at exact 1550.000100 nm (offset 0.260100 nm from xOrigin = 1549.740 nm),
- *   stopband FWHM ≈ 180 pm (half-width 90 pm), peak reflection ≈ −2.0 dBm (0.631 mW).
- * - Central π-phase-shift transmission notch at exact 1550.000100 nm with FWHM = 4.0 pm
- *   (HWHM = 2.0 pm), applied multiplicatively in linear optical power to drop ~34 dB to ~−36 dBm.
- * - Apodized Bragg side-lobes outside the stopband + linear ASE/detector floor (~−62 dBm).
- * - All powers are combined in linear mW before converting to dBm via 10 * log10(P_mW).
+ * Computes linear optical power (mW) and emits either dBm or linear mW into `payload`.
  */
-export function populateFbgScenario(payload: SpectrumDataPayload, sampleCount: number): void {
+export function populateFbgScenario(
+  payload: SpectrumDataPayload,
+  sampleCount: number,
+  scaleMode: YScaleMode = "dbm",
+): void {
   const n = Math.max(MIN_SAMPLES, Math.min(payload.capacity, sampleCount));
   const x = payload.x;
   const y = payload.y;
@@ -262,6 +330,7 @@ export function populateFbgScenario(payload: SpectrumDataPayload, sampleCount: n
   const centerOffset = 1550.0001 - payload.xOrigin; // 0.260100 nm
   const peakPowerMw = 0.631; // −2.0 dBm
   const aseFloorMw = 6.31e-7; // −62.0 dBm
+  const isLogMw = scaleMode === "mw-log";
   let prng = 0x1550_f8a1;
 
   for (let i = 0; i < n; i += 1) {
@@ -276,26 +345,28 @@ export function populateFbgScenario(payload: SpectrumDataPayload, sampleCount: n
     const stopbandRefl = 1 / (1 + uStop2 * uStop2 * uStop2);
 
     // Multiplicative π-phase-shift notch (FWHM = 4.0 pm -> HWHM = 2.0 pm = 0.002 nm)
-    // Depth factor 0.99962 yields ~34.2 dB central rejection inside the reflection band
     const uNotch = delta / 0.002;
     const notchTransmission = 1 - 0.99962 / (1 + uNotch * uNotch);
 
-    // Apodized Bragg grating side-lobes decaying outside the stopband (~−24 to −40 dB)
+    // Apodized Bragg grating side-lobes outside the stopband
     const arg = delta * 135;
     const sinc = Math.abs(arg) < 1e-6 ? 1 : Math.sin(arg) / arg;
     const sideLobeEnvelope = 1 / (1 + (delta / 0.19) * (delta / 0.19));
     const sideLobePowerMw = 0.0085 * sinc * sinc * sideLobeEnvelope;
 
-    // Detector shot/ASE noise in linear power (prominent at −62 dBm floor, quiet at −2 dBm peak)
     prng = nextXorShift32(prng);
     const u1 = prng / 4_294_967_296;
     prng = nextXorShift32(prng);
     const u2 = prng / 4_294_967_296;
     const floorNoiseMw = aseFloorMw * (0.65 + 0.7 * u1);
-    const rinFactor = 1 + (u2 - 0.5) * 0.018; // ~±0.04 dB laser RIN on peak
+    const rinFactor = 1 + (u2 - 0.5) * 0.018;
 
-    const signalMw = (peakPowerMw * stopbandRefl * notchTransmission + sideLobePowerMw) * rinFactor;
-    y[i] = mwToDbm(signalMw + floorNoiseMw);
+    const totalMw =
+      (peakPowerMw * stopbandRefl + sideLobePowerMw * (1 - stopbandRefl)) *
+        notchTransmission *
+        rinFactor +
+      floorNoiseMw;
+    y[i] = isLogMw ? (totalMw > 1e-6 ? totalMw : 1e-6) : mwToDbm(totalMw);
   }
 
   commitPayloadRevision(payload, n);
@@ -309,13 +380,18 @@ export function buildDwdmCollection(
   pool: SignalPool,
   totalSamples: number,
   scheme: ResolvedScheme,
+  scaleMode: YScaleMode = "dbm",
 ): TraceCollection {
   const clamped = Math.max(MIN_SAMPLES, Math.min(MAX_SAMPLES, totalSamples));
   const refCount = Math.floor(clamped / 2);
   const activeCount = clamped - refCount;
+  const refPayload = scaleMode === "mw-log" ? pool.dwdmRefMw : pool.dwdmRefDbm;
+  const activePayload = scaleMode === "mw-log" ? pool.dwdmActiveMw : pool.dwdmActiveDbm;
+  const yAxes = scaleMode === "mw-log" ? LOG_SIGNAL_Y_AXES : LINEAR_Y_AXES;
+  const yAxisId = scaleMode === "mw-log" ? "power-mw" : "power-dbm";
 
-  populateDwdmTrace(pool.dwdmRefPayload, refCount, false);
-  populateDwdmTrace(pool.dwdmActivePayload, activeCount, true);
+  populateDwdmTrace(refPayload, refCount, false, scaleMode);
+  populateDwdmTrace(activePayload, activeCount, true, scaleMode);
 
   const activeColor = scheme === "dark" ? "#38bdf8" : "#0284c7";
   const refColor = scheme === "dark" ? "#f59e0b" : "#d97706";
@@ -325,8 +401,8 @@ export function buildDwdmCollection(
       [
         {
           id: "itu-reference",
-          payload: pool.dwdmRefPayload,
-          yAxisId: "power-dbm",
+          payload: refPayload,
+          yAxisId,
           style: {
             color: refColor,
             lineWidthCss: 1.2,
@@ -335,15 +411,15 @@ export function buildDwdmCollection(
         },
         {
           id: "c-band-active",
-          payload: pool.dwdmActivePayload,
-          yAxisId: "power-dbm",
+          payload: activePayload,
+          yAxisId,
           style: {
             color: activeColor,
             lineWidthCss: 1.5,
           },
         },
       ],
-      LINEAR_Y_AXES,
+      yAxes,
       1528.6,
       1561.8,
     ),
@@ -354,6 +430,7 @@ function populateDwdmTrace(
   payload: SpectrumDataPayload,
   sampleCount: number,
   isActive: boolean,
+  scaleMode: YScaleMode,
 ): void {
   const n = Math.max(1000, Math.min(payload.capacity, sampleCount));
   const x = payload.x;
@@ -361,6 +438,7 @@ function populateDwdmTrace(
   const span = 33.2;
   const xOrigin = payload.xOrigin;
   const invDenom = span / Math.max(1, n - 1);
+  const isLogMw = scaleMode === "mw-log";
   let prng = isActive ? 0x40c4_a11e : 0x40c4_00ef;
 
   for (let i = 0; i < n; i += 1) {
@@ -370,7 +448,7 @@ function populateDwdmTrace(
     const lambdaNm = xOrigin + offset;
     const freqThz = C_NM_THZ / lambdaNm;
 
-    // EDFA ASE floor in linear mW (~−45 dBm = 3.16e-5 mW across C-band with gain curvature)
+    // EDFA ASE floor in linear mW (~−45 dBm = 3.16e-5 mW across C-band)
     const norm = offset / span;
     const aseDbm = -46.2 + 2.4 * Math.sin(norm * Math.PI) + (isActive ? (norm - 0.5) * 1.8 : 0);
     const aseMw = Math.pow(10, aseDbm * 0.1);
@@ -380,22 +458,16 @@ function populateDwdmTrace(
     let channelMw = 0;
     if (idx >= 0 && idx < ITU_G694_1_C_BAND_100GHZ.length) {
       const entry = ITU_G694_1_C_BAND_100GHZ[idx]!;
-      // Simulate +12 GHz laser frequency drift on ITU Ch 48 (194.80 THz, 1538.98 nm)
       const channelFreqThz = isActive && entry.channel === 48 ? entry.freqThz + 0.012 : entry.freqThz;
       const dfGhz = (freqThz - channelFreqThz) * 1000;
-      // 32 Gbaud DP-QPSK optical spectrum convolved with 20 pm (~2.5 GHz) OSA RBW (HWHM ≈ 14 GHz)
       const u = dfGhz / 14.0;
       const u2 = u * u;
       const shape = 1 / (1 + u2 * u2);
 
-      // Nominal channel power ~−3.0 dBm (0.50 mW -> ~28 dB OSNR over −45 dBm ASE)
       let chDbm = -3.0 - 0.025 * Math.abs(entry.channel - 40.5);
       if (isActive) {
-        // Positive C-band EDFA gain tilt (+1.8 dB from short to long λ)
         chDbm += (40.5 - entry.channel) * 0.045;
-        // Ch 34 (193.40 THz, 1550.12 nm): −10 dB WSS/VOA attenuation fault
         if (entry.channel === 34) chDbm -= 10.0;
-        // Ch 48 (194.80 THz, 1538.98 nm): −5.2 dB power degradation with +12 GHz drift
         if (entry.channel === 48) chDbm -= 5.2;
       }
       channelMw = Math.pow(10, chDbm * 0.1) * shape;
@@ -406,7 +478,8 @@ function populateDwdmTrace(
     const aseJitterMw = aseMw * (0.72 + (isActive ? 0.56 : 0.24) * uNoise);
     const rinFactor = 1 + (uNoise - 0.5) * (isActive ? 0.025 : 0.01);
 
-    y[i] = mwToDbm(channelMw * rinFactor + aseJitterMw);
+    const totalMw = channelMw * rinFactor + aseJitterMw;
+    y[i] = isLogMw ? (totalMw > 1e-6 ? totalMw : 1e-6) : mwToDbm(totalMw);
   }
 
   commitPayloadRevision(payload, n);
@@ -414,7 +487,7 @@ function populateDwdmTrace(
 
 /**
  * Live 60 Hz: prepares the X grid once per sample-count change, then updates Y in place
- * every animation frame by summing linear optical powers (mW) and converting to dBm.
+ * every animation frame by summing linear optical powers (mW) and emitting dBm or mW.
  */
 export function populateLiveGridX(payload: SpectrumDataPayload, sampleCount: number): void {
   const n = Math.max(MIN_SAMPLES, Math.min(payload.capacity, sampleCount));
@@ -430,22 +503,22 @@ export function stepLiveSpectrum(
   sampleCount: number,
   elapsedSec: number,
   frameCounter: number,
+  scaleMode: YScaleMode = "dbm",
 ): void {
   const n = Math.max(MIN_SAMPLES, Math.min(payload.capacity, sampleCount));
   const x = payload.x;
   const y = payload.y;
 
-  // Thermal wavelength tuning + coupled-cavity side-mode breathing (linear power in mW)
   const mainCenter = 2.05 + 0.22 * Math.sin(elapsedSec * 1.1);
   const sideACenter = mainCenter - 0.45 + 0.03 * Math.cos(elapsedSec * 2.2);
   const sideBCenter = mainCenter + 0.48 + 0.04 * Math.sin(elapsedSec * 1.8);
   const auxCenter = 3.35 + 0.07 * Math.cos(elapsedSec * 0.85);
 
-  const mainMw = 0.88 + 0.16 * Math.sin(elapsedSec * 2.8); // ~−0.5 dBm
-  const sideAMw = 0.0018 + 0.0007 * Math.cos(elapsedSec * 2.4); // ~−27 dBm (SMSR ~27 dB)
-  const sideBMw = 0.00095 + 0.00035 * Math.sin(elapsedSec * 2.0 + 1.1); // ~−30 dBm
-  const auxMw = 0.032 + 0.008 * Math.cos(elapsedSec * 1.3); // ~−15 dBm probe
-  const aseFloorMw = 5.2e-7 * (1 + 0.15 * Math.sin(elapsedSec * 0.7)); // ~−62.8 dBm
+  const mainMw = 0.88 + 0.16 * Math.sin(elapsedSec * 2.8);
+  const sideAMw = 0.0018 + 0.0007 * Math.cos(elapsedSec * 2.4);
+  const sideBMw = 0.00095 + 0.00035 * Math.sin(elapsedSec * 2.0 + 1.1);
+  const auxMw = 0.032 + 0.008 * Math.cos(elapsedSec * 1.3);
+  const aseFloorMw = 5.2e-7 * (1 + 0.15 * Math.sin(elapsedSec * 0.7));
 
   let prng = ((frameCounter * 2654435761) ^ 0x9e37_79b9) >>> 0;
   if (prng === 0) prng = 0x1357_9bdf;
@@ -454,6 +527,7 @@ export function stepLiveSpectrum(
   const invSideW = 1 / 0.038;
   const invAuxW = 1 / 0.032;
   const invLn10Times10 = 10 / Math.LN10;
+  const isLogMw = scaleMode === "mw-log";
 
   for (let i = 0; i < n; i += 1) {
     const xv = x[i] ?? 0;
@@ -469,15 +543,17 @@ export function stepLiveSpectrum(
     const pB = sideBMw / (1 + db * db);
     const pAux = auxMw / (1 + dp * dp);
 
-    // Inline xorshift32 (zero call overhead in 60 Hz hot loop)
     prng ^= prng << 13;
     prng ^= prng >>> 17;
     prng ^= prng << 5;
     const u = (prng >>> 0) * 2.3283064365386963e-10;
 
-    // Linear-power floor noise: shimmers naturally on the −63 dBm ASE floor, quiet on 0 dBm peak
     const totalMw = pMain + pA + pB + pAux + aseFloorMw * (0.45 + 1.1 * u);
-    y[i] = Math.log(totalMw > 1e-12 ? totalMw : 1e-12) * invLn10Times10;
+    y[i] = isLogMw
+      ? totalMw > 1e-6
+        ? totalMw
+        : 1e-6
+      : Math.log(totalMw > 1e-12 ? totalMw : 1e-12) * invLn10Times10;
   }
 
   commitPayloadRevision(payload, n);
@@ -485,21 +561,25 @@ export function stepLiveSpectrum(
 
 /**
  * Log-Y (mW): 5-decade linear optical power spectrum from 0.001 mW (−30 dBm) to 100 mW (+20 dBm)
- * across 1549.6..1570.4 nm. Strictly positive at every sample for base-10 log projection.
+ * across 1549.6..1570.4 nm. Toggleable live between Log10 mW and linear dBm.
  */
-export function populateLogPowerScenario(payload: SpectrumDataPayload, sampleCount: number): void {
+export function populateLogPowerScenario(
+  payload: SpectrumDataPayload,
+  sampleCount: number,
+  scaleMode: YScaleMode = "mw-log",
+): void {
   const n = Math.max(MIN_SAMPLES, Math.min(payload.capacity, sampleCount));
   const x = payload.x;
   const y = payload.y;
   const span = 20.8;
   const invDenom = span / Math.max(1, n - 1);
+  const isLogMw = scaleMode === "mw-log";
   let prng = 0x10a9_77c3;
 
   for (let i = 0; i < n; i += 1) {
     const offset = i * invDenom;
     x[i] = offset;
 
-    // High-power C-band carrier at 1556.4 nm (~28 mW = +14.5 dBm), SMSR side modes, ASE pedestal
     const dCarrier = (offset - 6.8) / 0.095;
     const dSide1 = (offset - 4.4) / 0.14;
     const dSide2 = (offset - 9.2) / 0.16;
@@ -521,7 +601,8 @@ export function populateLogPowerScenario(payload: SpectrumDataPayload, sampleCou
     const floorJitter = floor * (0.78 + 0.44 * u);
 
     const powerMw = (carrier + sideModes + asePedestal) * rinFactor + floorJitter;
-    y[i] = powerMw > 0.0011 ? powerMw : 0.0011;
+    const clampedMw = powerMw > 0.0011 ? powerMw : 0.0011;
+    y[i] = isLogMw ? clampedMw : mwToDbm(clampedMw);
   }
 
   commitPayloadRevision(payload, n);
@@ -549,8 +630,9 @@ export function computeWindowOpticalMetrics(
   const x = payload.x;
   const y = payload.y;
   const xOrigin = payload.xOrigin;
-  const relMin = xMin - xOrigin;
-  const relMax = xMax - xOrigin;
+  const eps = Math.max(1e-9, Math.abs(xMax - xMin) * 1e-6);
+  const relMin = xMin - xOrigin - eps;
+  const relMax = xMax - xOrigin + eps;
 
   let visibleSamples = 0;
   let peakX = Number.NaN;

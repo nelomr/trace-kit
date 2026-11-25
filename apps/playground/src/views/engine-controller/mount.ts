@@ -26,7 +26,7 @@ const INITIAL_SAMPLES = 10_000;
 const X_ORIGIN_NM = 1550;
 const X_SPAN_NM = 40;
 const Y_MIN_DBM = -80;
-const Y_MAX_DBM = 0;
+const Y_MAX_DBM = 6;
 const STAGE_HEIGHT_PX = 420;
 const LABEL_GUTTER_CSS = 56;
 

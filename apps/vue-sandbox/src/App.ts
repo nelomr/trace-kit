@@ -63,8 +63,12 @@ import {
   populateFbgScenario,
   populateLiveGridX,
   populateLogPowerScenario,
+  scenarioHomeDomain,
+  scenarioYAxes,
+  scenarioYUnit,
   stepLiveSpectrum,
   type ScenarioId,
+  type YScaleMode,
 } from "./signals.ts";
 import {
   createThemeController,
@@ -253,6 +257,8 @@ export const App = defineComponent({
     const signalPool = createSignalPool();
 
     const scenarioId = shallowRef<ScenarioId>("fbg-1550");
+    const yScaleMode = shallowRef<YScaleMode>(SCENARIOS["fbg-1550"].defaultScaleMode);
+    const splitCompare = shallowRef<boolean>(false);
     const sampleCount = shallowRef<number>(SCENARIOS["fbg-1550"].defaultSamples);
     const engineMode = shallowRef<EngineSelectionMode>("auto");
     const decimationChoice = shallowRef<DecimationChoice>("native");
@@ -267,11 +273,14 @@ export const App = defineComponent({
     const payloadRevision = shallowRef<number>(0);
 
     // Controlled viewport domain (shallowRef so isShallow(domainRef) === true)
-    const domainRef = shallowRef<ViewportDomain>(snapshotDomain(SCENARIOS["fbg-1550"].homeDomain));
+    const domainRef = shallowRef<ViewportDomain>(
+      snapshotDomain(scenarioHomeDomain(SCENARIOS["fbg-1550"], "dbm")),
+    );
 
     // Raw controller/interaction handles captured from onReady
     const liveController = shallowRef<SpectrumEngineController | null>(null);
     const liveInteraction = shallowRef<ViewportInteractionController | null>(null);
+    const secondaryController = shallowRef<SpectrumEngineController | null>(null);
 
     // Live telemetry refs (updated on events / throttled 250 ms timer during 60 Hz stream)
     const activeEngineKind = shallowRef<EngineKind>("canvas2d");
@@ -306,10 +315,17 @@ export const App = defineComponent({
     let stopRovingFallback: (() => void) | null = null;
 
     const currentScenario = computed(() => SCENARIOS[scenarioId.value]);
+    const currentHomeDomain = computed(() =>
+      scenarioHomeDomain(currentScenario.value, yScaleMode.value),
+    );
+    const currentYAxes = computed(() => scenarioYAxes(currentScenario.value, yScaleMode.value));
+    const currentYUnit = computed(() => scenarioYUnit(yScaleMode.value));
+    const isLogScale = computed(() => yScaleMode.value === "mw-log");
     const currentFigureStyle = computed(() => figureStyleForScheme(theme.resolvedScheme.value));
     const currentDecimation = computed(() => DECIMATION_MAP[decimationChoice.value]);
     const viewerKey = computed(
-      () => `${theme.resolvedScheme.value}-${currentScenario.value.axisMode}`,
+      () =>
+        `${theme.resolvedScheme.value}-${yScaleMode.value}-${scenarioId.value === "log-y-mw" ? "hi" : "std"}`,
     );
 
     const hysteresisBand = computed(() =>
@@ -329,18 +345,29 @@ export const App = defineComponent({
     const domainIsShallow = isShallow(domainRef);
 
     const activePrimaryPayload = computed<SpectrumDataPayload>(() => {
+      const isMw = yScaleMode.value === "mw-log";
       if (scenarioId.value === "dwdm-40ch") {
-        return signalPool.dwdmActivePayload;
+        return isMw ? signalPool.dwdmActiveMw : signalPool.dwdmActiveDbm;
       }
-      return currentData.value ?? signalPool.fbgPayload;
+      if (scenarioId.value === "live-60hz") {
+        return isMw ? signalPool.liveMw : signalPool.liveDbm;
+      }
+      if (scenarioId.value === "log-y-mw") {
+        return isMw ? signalPool.logMw : signalPool.logDbm;
+      }
+      return isMw ? signalPool.fbgMw : signalPool.fbgDbm;
     });
 
     const opticalMetrics = computed(() => {
       // Track payloadRevision & domainRef so metrology refreshes cleanly on scenario/zoom changes
       void payloadRevision.value;
       const dom = domainRef.value;
-      const isLog = currentScenario.value.axisMode === "log";
-      return computeWindowOpticalMetrics(activePrimaryPayload.value, dom.xMin, dom.xMax, isLog);
+      return computeWindowOpticalMetrics(
+        activePrimaryPayload.value,
+        dom.xMin,
+        dom.xMax,
+        isLogScale.value,
+      );
     });
 
     function stopWorkerPoll(): void {
@@ -489,13 +516,19 @@ export const App = defineComponent({
         if (ctrl !== null && !ctrl.disposed && !ctrl.contextLost) {
           const t0 = performance.now();
           streamFrameCounter += 1;
+          const liveTarget = yScaleMode.value === "mw-log" ? signalPool.liveMw : signalPool.liveDbm;
           stepLiveSpectrum(
-            signalPool.livePayload,
+            liveTarget,
             sampleCount.value,
             (nowMs - streamStartTimeMs) * 0.001,
             streamFrameCounter,
+            yScaleMode.value,
           );
           ctrl.requestRender();
+          const secCtrl = secondaryController.value;
+          if (secCtrl !== null && !secCtrl.disposed && !secCtrl.contextLost) {
+            secCtrl.requestRender();
+          }
           const dt = performance.now() - t0;
 
           fpsFrameAcc += 1;
@@ -515,32 +548,42 @@ export const App = defineComponent({
       rafStreamId = window.requestAnimationFrame(tick);
     }
 
-    function applyScenarioData(id: ScenarioId, samples: number, resetViewport: boolean): void {
+    function applyScenarioData(
+      id: ScenarioId,
+      samples: number,
+      scaleMode: YScaleMode,
+      resetViewport: boolean,
+    ): void {
       const descriptor = SCENARIOS[id];
+      const isMw = scaleMode === "mw-log";
       if (id === "fbg-1550") {
-        populateFbgScenario(signalPool.fbgPayload, samples);
+        const target = isMw ? signalPool.fbgMw : signalPool.fbgDbm;
+        populateFbgScenario(target, samples, scaleMode);
         currentTraces.value = undefined;
-        currentData.value = signalPool.fbgPayload;
+        currentData.value = target;
       } else if (id === "dwdm-40ch") {
         currentData.value = undefined;
         currentTraces.value = buildDwdmCollection(
           signalPool,
           samples,
           theme.resolvedScheme.value,
+          scaleMode,
         );
       } else if (id === "live-60hz") {
-        populateLiveGridX(signalPool.livePayload, samples);
-        stepLiveSpectrum(signalPool.livePayload, samples, 0, streamFrameCounter + 1);
+        const target = isMw ? signalPool.liveMw : signalPool.liveDbm;
+        populateLiveGridX(target, samples);
+        stepLiveSpectrum(target, samples, 0, streamFrameCounter + 1, scaleMode);
         currentTraces.value = undefined;
-        currentData.value = signalPool.livePayload;
+        currentData.value = target;
       } else {
-        populateLogPowerScenario(signalPool.logPayload, samples);
+        const target = isMw ? signalPool.logMw : signalPool.logDbm;
+        populateLogPowerScenario(target, samples, scaleMode);
         currentTraces.value = undefined;
-        currentData.value = signalPool.logPayload;
+        currentData.value = target;
       }
 
       if (resetViewport) {
-        domainRef.value = snapshotDomain(descriptor.homeDomain);
+        domainRef.value = snapshotDomain(scenarioHomeDomain(descriptor, scaleMode));
       }
       payloadRevision.value += 1;
       if (workerEnabled.value) {
@@ -549,27 +592,51 @@ export const App = defineComponent({
     }
 
     // Initialize default FBG 1550 nm dataset immediately
-    applyScenarioData("fbg-1550", sampleCount.value, true);
+    applyScenarioData("fbg-1550", sampleCount.value, yScaleMode.value, true);
 
     function selectScenario(nextId: ScenarioId): void {
       if (nextId === scenarioId.value) return;
       stopLiveLoop();
       scenarioId.value = nextId;
       const nextSamples = SCENARIOS[nextId].defaultSamples;
+      const nextScale = SCENARIOS[nextId].defaultScaleMode;
       sampleCount.value = nextSamples;
-      applyScenarioData(nextId, nextSamples, true);
+      yScaleMode.value = nextScale;
+      applyScenarioData(nextId, nextSamples, nextScale, true);
       if (nextId === "live-60hz") {
         liveStreaming.value = true;
         startLiveLoop();
       }
-      announce(`Loaded scenario ${SCENARIOS[nextId].label} (${nextSamples.toLocaleString("en-US")} samples)`);
+      announce(
+        `Loaded scenario ${SCENARIOS[nextId].label} (${nextSamples.toLocaleString("en-US")} samples, ${scenarioYUnit(nextScale)})`,
+      );
+    }
+
+    function setYScaleMode(nextScale: YScaleMode): void {
+      if (nextScale === yScaleMode.value) return;
+      yScaleMode.value = nextScale;
+      // Preserve current visible X wavelength window while converting Y axis bounds
+      const prevDom = domainRef.value;
+      const targetHome = scenarioHomeDomain(currentScenario.value, nextScale);
+      domainRef.value = snapshotDomain({
+        xMin: prevDom.xMin,
+        xMax: prevDom.xMax,
+        yMin: targetHome.yMin,
+        yMax: targetHome.yMax,
+      });
+      applyScenarioData(scenarioId.value, sampleCount.value, nextScale, false);
+      announce(
+        nextScale === "mw-log"
+          ? "Y scale switched to Log10 optical power (mW)"
+          : "Y scale switched to linear logarithmic power (dBm)",
+      );
     }
 
     function updateSampleCount(nextCount: number): void {
       const clamped = Math.max(MIN_SAMPLES, Math.min(MAX_SAMPLES, Math.round(nextCount)));
       if (clamped === sampleCount.value) return;
       sampleCount.value = clamped;
-      applyScenarioData(scenarioId.value, clamped, false);
+      applyScenarioData(scenarioId.value, clamped, yScaleMode.value, false);
     }
 
     function toggleLiveStreaming(): void {
@@ -584,12 +651,18 @@ export const App = defineComponent({
     }
 
     function zoomPrecision1550(): void {
-      const target = SCENARIOS["fbg-1550"].precisionZoomDomain;
-      if (target === undefined) return;
+      const targetX = SCENARIOS["fbg-1550"].precisionZoomX;
+      if (targetX === undefined) return;
       if (scenarioId.value !== "fbg-1550") {
         selectScenario("fbg-1550");
       }
-      domainRef.value = snapshotDomain(target);
+      const home = scenarioHomeDomain(SCENARIOS["fbg-1550"], yScaleMode.value);
+      domainRef.value = snapshotDomain({
+        xMin: targetX[0],
+        xMax: targetX[1],
+        yMin: home.yMin,
+        yMax: home.yMax,
+      });
       announce("Zoomed to 4.0 pm pi-phase-shifted FBG notch at 1550.000100 nm (32 pm span)");
     }
 
@@ -598,7 +671,7 @@ export const App = defineComponent({
       if (interaction !== null && !interaction.disposed) {
         interaction.resetDomain();
       } else {
-        domainRef.value = snapshotDomain(currentScenario.value.homeDomain);
+        domainRef.value = snapshotDomain(currentHomeDomain.value);
       }
       announce("Viewport reset to home domain");
     }
@@ -649,7 +722,7 @@ export const App = defineComponent({
       }
 
       const liveDom = ctrl.domain;
-      const exportYAxes: readonly YAxisRegistration[] = currentScenario.value.yAxes.map(
+      const exportYAxes: readonly YAxisRegistration[] = currentYAxes.value.map(
         (axis, idx) =>
           idx === 0
             ? {
@@ -747,6 +820,7 @@ export const App = defineComponent({
             signalPool,
             sampleCount.value,
             theme.resolvedScheme.value,
+            yScaleMode.value,
           );
           payloadRevision.value += 1;
         }
@@ -767,9 +841,16 @@ export const App = defineComponent({
         contextLostState.value = false;
         liveController.value = null;
         liveInteraction.value = null;
+        secondaryController.value = null;
       },
       { flush: "sync" },
     );
+
+    watch(splitCompare, (isSplit) => {
+      if (!isSplit) {
+        secondaryController.value = null;
+      }
+    });
 
     function handleViewerReady(event: SpectrumEngineReadyEvent): void {
       liveController.value = event.controller;
@@ -864,10 +945,11 @@ export const App = defineComponent({
     function renderOverlaySlot(slotProps: TraceSpectrumViewerSlotProps): VNode {
       const dom = slotProps.domain;
       const spanNm = Math.max(0, dom.xMax - dom.xMin);
-      const isLog = currentScenario.value.axisMode === "log";
+      const isLog = isLogScale.value;
       const band = hysteresisBand.value;
-      const bandLabel =
-        band === "above-up"
+      const bandLabel = splitCompare.value
+        ? "PANE A · WEBGL2 · MIN-MAX ENVELOPE"
+        : band === "above-up"
           ? "ABOVE-UP (>=80k)"
           : band === "below-down"
             ? "BELOW-DOWN (<=64k)"
@@ -878,7 +960,7 @@ export const App = defineComponent({
         ? `${formatWavelength(metrics.peakXNm, spanNm)} nm`
         : "--";
       const peakPowerStr = Number.isFinite(metrics.peakY)
-        ? `${formatYValue(metrics.peakY, isLog)} ${currentScenario.value.yUnit}`
+        ? `${formatYValue(metrics.peakY, isLog)} ${currentYUnit.value}`
         : "--";
       const dynRangeStr = Number.isFinite(metrics.dynamicRangeDb)
         ? `${metrics.dynamicRangeDb.toFixed(1)} dB`
@@ -1054,48 +1136,137 @@ export const App = defineComponent({
         h("div", { class: "osa-workbench" }, [
           h("main", { class: "osa-stage-column", "aria-label": "Optical spectrum display" }, [
             h("div", { class: "osa-viewer-host" }, [
-              h(
-                TraceSpectrumViewer,
-                {
-                  key: viewerKey.value,
-                  data: currentData.value,
-                  traces: currentTraces.value,
-                  revision: payloadRevision.value,
-                  domain: domainRef.value,
-                  homeDomain: currentScenario.value.homeDomain,
-                  mode: engineMode.value,
-                  decimation: currentDecimation.value,
-                  dragMode: dragMode.value,
-                  interactive: true,
-                  autoResize: true,
-                  figureStyle: currentFigureStyle.value,
-                  axes: SANDBOX_AXES_LAYOUT,
-                  yAxes: currentScenario.value.yAxes,
-                  onReady: handleViewerReady,
-                  "onUpdate:domain": (nextDomain: ViewportDomain) => {
-                    domainRef.value = nextDomain;
-                  },
-                  onEngineChange: handleEngineChange,
-                  onWebgl2Fallback: () => {
-                    webgl2FallbackState.value = true;
-                    activeEngineKind.value = "canvas2d";
-                    activeCanvasCount.value = 1;
-                    announce("WebGL2 unavailable — latched Canvas2D fallback");
-                  },
-                  onContextLost: () => {
-                    contextLostState.value = true;
-                    announce("WebGL2 context lost — loop suspended");
-                  },
-                  onContextRestored: () => {
-                    contextLostState.value = false;
-                    activeLoseContextExt = null;
-                    announce("WebGL2 context restored");
-                  },
-                },
-                {
-                  overlay: renderOverlaySlot,
-                },
-              ),
+              splitCompare.value
+                ? h("div", { class: "osa-split-stage" }, [
+                    h("div", { class: "osa-split-pane" }, [
+                      h(
+                        TraceSpectrumViewer,
+                        {
+                          key: `${viewerKey.value}-split-a`,
+                          data: currentData.value,
+                          traces: currentTraces.value,
+                          revision: payloadRevision.value,
+                          domain: domainRef.value,
+                          homeDomain: currentHomeDomain.value,
+                          mode: "webgl2",
+                          decimation: DECIMATION_MAP["min-max"],
+                          dragMode: dragMode.value,
+                          interactive: true,
+                          autoResize: true,
+                          figureStyle: currentFigureStyle.value,
+                          axes: SANDBOX_AXES_LAYOUT,
+                          yAxes: currentYAxes.value,
+                          onReady: handleViewerReady,
+                          "onUpdate:domain": (nextDomain: ViewportDomain) => {
+                            domainRef.value = nextDomain;
+                          },
+                          onEngineChange: handleEngineChange,
+                          onWebgl2Fallback: () => {
+                            webgl2FallbackState.value = true;
+                            activeEngineKind.value = "canvas2d";
+                            activeCanvasCount.value = 1;
+                            announce("WebGL2 unavailable — latched Canvas2D fallback");
+                          },
+                          onContextLost: () => {
+                            contextLostState.value = true;
+                            announce("WebGL2 context lost — loop suspended");
+                          },
+                          onContextRestored: () => {
+                            contextLostState.value = false;
+                            activeLoseContextExt = null;
+                            announce("WebGL2 context restored");
+                          },
+                        },
+                        {
+                          overlay: renderOverlaySlot,
+                        },
+                      ),
+                    ]),
+                    h("div", { class: "osa-split-pane" }, [
+                      h(
+                        TraceSpectrumViewer,
+                        {
+                          key: `${viewerKey.value}-split-b`,
+                          data: currentData.value,
+                          traces: currentTraces.value,
+                          revision: payloadRevision.value,
+                          domain: domainRef.value,
+                          homeDomain: currentHomeDomain.value,
+                          mode: "canvas2d",
+                          decimation: DECIMATION_MAP.lttb,
+                          dragMode: dragMode.value,
+                          interactive: true,
+                          autoResize: true,
+                          figureStyle: currentFigureStyle.value,
+                          axes: SANDBOX_AXES_LAYOUT,
+                          yAxes: currentYAxes.value,
+                          onReady: (ev: SpectrumEngineReadyEvent) => {
+                            secondaryController.value = ev.controller;
+                          },
+                          "onUpdate:domain": (nextDomain: ViewportDomain) => {
+                            domainRef.value = nextDomain;
+                          },
+                        },
+                        {
+                          overlay: () =>
+                            h("div", { class: "osa-overlay-hud" }, [
+                              h("div", { class: "osa-overlay-row" }, [
+                                h("span"),
+                                h("div", { class: "osa-overlay-badges" }, [
+                                  h(
+                                    "div",
+                                    { class: "osa-band-pill", "data-band": "below-down" },
+                                    "PANE B · CANVAS2D · LTTB (SYNCED v-model:domain)",
+                                  ),
+                                ]),
+                              ]),
+                            ]),
+                        },
+                      ),
+                    ]),
+                  ])
+                : h(
+                    TraceSpectrumViewer,
+                    {
+                      key: viewerKey.value,
+                      data: currentData.value,
+                      traces: currentTraces.value,
+                      revision: payloadRevision.value,
+                      domain: domainRef.value,
+                      homeDomain: currentHomeDomain.value,
+                      mode: engineMode.value,
+                      decimation: currentDecimation.value,
+                      dragMode: dragMode.value,
+                      interactive: true,
+                      autoResize: true,
+                      figureStyle: currentFigureStyle.value,
+                      axes: SANDBOX_AXES_LAYOUT,
+                      yAxes: currentYAxes.value,
+                      onReady: handleViewerReady,
+                      "onUpdate:domain": (nextDomain: ViewportDomain) => {
+                        domainRef.value = nextDomain;
+                      },
+                      onEngineChange: handleEngineChange,
+                      onWebgl2Fallback: () => {
+                        webgl2FallbackState.value = true;
+                        activeEngineKind.value = "canvas2d";
+                        activeCanvasCount.value = 1;
+                        announce("WebGL2 unavailable — latched Canvas2D fallback");
+                      },
+                      onContextLost: () => {
+                        contextLostState.value = true;
+                        announce("WebGL2 context lost — loop suspended");
+                      },
+                      onContextRestored: () => {
+                        contextLostState.value = false;
+                        activeLoseContextExt = null;
+                        announce("WebGL2 context restored");
+                      },
+                    },
+                    {
+                      overlay: renderOverlaySlot,
+                    },
+                  ),
             ]),
             h("div", { class: "osa-gesture-bar" }, [
               h(
@@ -1158,6 +1329,44 @@ export const App = defineComponent({
                   h("div", { class: "rack-spec-strip" }, [
                     h("span", { class: "rack-spec-tag" }, currentScenario.value.standardRef),
                     h("span", { class: "rack-spec-tag" }, currentScenario.value.instrumentProfile),
+                  ]),
+                  h("div", { class: "tk-control-row" }, [
+                    h("span", { class: "tk-control-label" }, "Y-Axis Power Unit (Same Spectrum)"),
+                    h(
+                      "div",
+                      {
+                        role: "toolbar",
+                        "aria-label": "Y-axis power scale unit",
+                        focusgroup: "toolbar wrap",
+                        class: "tk-toolbar-grid-2",
+                      },
+                      [
+                        h(
+                          "button",
+                          {
+                            type: "button",
+                            class: "tk-btn",
+                            "aria-pressed": String(yScaleMode.value === "dbm"),
+                            onClick: () => {
+                              setYScaleMode("dbm");
+                            },
+                          },
+                          "dBm (Linear)",
+                        ),
+                        h(
+                          "button",
+                          {
+                            type: "button",
+                            class: "tk-btn",
+                            "aria-pressed": String(yScaleMode.value === "mw-log"),
+                            onClick: () => {
+                              setYScaleMode("mw-log");
+                            },
+                          },
+                          "mW (Log10)",
+                        ),
+                      ],
+                    ),
                   ]),
                   h("p", { class: "rack-summary" }, currentScenario.value.summary),
                   scenarioId.value === "fbg-1550"
@@ -1368,6 +1577,48 @@ export const App = defineComponent({
                           label,
                         ),
                       ),
+                    ),
+                  ]),
+                  h("div", { class: "tk-control-row" }, [
+                    h("span", { class: "tk-control-label" }, "Comparison View (Synced v-model)"),
+                    h(
+                      "div",
+                      {
+                        role: "toolbar",
+                        "aria-label": "Single or split comparison viewport",
+                        focusgroup: "toolbar wrap",
+                        class: "tk-toolbar-grid-2",
+                      },
+                      [
+                        h(
+                          "button",
+                          {
+                            type: "button",
+                            class: "tk-btn",
+                            "aria-pressed": String(!splitCompare.value),
+                            onClick: () => {
+                              splitCompare.value = false;
+                              announce("Switched to single full-bleed viewport");
+                            },
+                          },
+                          "Single",
+                        ),
+                        h(
+                          "button",
+                          {
+                            type: "button",
+                            class: "tk-btn",
+                            "aria-pressed": String(splitCompare.value),
+                            onClick: () => {
+                              splitCompare.value = true;
+                              announce(
+                                "Switched to Split Compare: WebGL2 Min-Max vs Canvas2D LTTB synced",
+                              );
+                            },
+                          },
+                          "Split Compare",
+                        ),
+                      ],
                     ),
                   ]),
                   h("div", { class: "tk-control-row" }, [
