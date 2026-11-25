@@ -1,6 +1,6 @@
 {
   "name": "@trace-kit/react",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Unmanaged-canvas, zero-overhead, SSR-safe React 18/19 adapter for TraceKit spectrum visualization",
   "type": "module",
   "license": "MIT",
