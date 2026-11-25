@@ -39,7 +39,6 @@ describe("react-reactivity-isolation (react-dom)", () => {
 
     const settledRenderCount = renderCount;
 
-    // 60 Hz Path A streaming: in-place mutation + commitPayloadRevision + requestRender()
     for (let frame = 0; frame < 60; frame += 1) {
       payload.y[0] = -50 + frame * 0.1;
       commitPayloadRevision(payload, 4096);
@@ -54,6 +53,117 @@ describe("react-reactivity-isolation (react-dom)", () => {
     expect(harness.canvas2dRenderers[0]!.renderCount).toBeGreaterThanOrEqual(60);
 
     mounted.unmount();
+  });
+
+  it("supports Path B scalar revision streaming without cloning TypedArray backing buffers", () => {
+    const harness = createMockPlatform();
+    const payload = createTestPayload(2048);
+    const origXBuf = payload.x.buffer;
+    const origYBuf = payload.y.buffer;
+
+    function PathBHost(props: { revision: number }) {
+      return createElement(TraceSpectrumViewer, {
+        data: payload,
+        revision: props.revision,
+        platform: harness.platform,
+      });
+    }
+
+    const mounted = mountReact(createElement(PathBHost, { revision: 1 }));
+    act(() => {
+      harness.raf.flushAll();
+    });
+
+    const renderer = harness.canvas2dRenderers[0]!;
+    const setDataCountBefore = renderer.setDataCalls.length;
+    const renderCountBefore = renderer.renderCount;
+
+    payload.y[10] = -12.5;
+    commitPayloadRevision(payload, 2048);
+    mounted.rerender(createElement(PathBHost, { revision: 2 }));
+    act(() => {
+      harness.raf.flushAll();
+    });
+
+    expect(payload.x.buffer).toBe(origXBuf);
+    expect(payload.y.buffer).toBe(origYBuf);
+    // Revision bump schedules repaint without re-invoking setData on identical reference
+    expect(renderer.setDataCalls.length).toBe(setDataCountBefore);
+    expect(renderer.renderCount).toBeGreaterThan(renderCountBefore);
+
+    mounted.unmount();
+  });
+
+  it("respects subscribeState: false (0 re-renders even during domain pan/zoom while getSnapshot stays current)", () => {
+    const harness = createMockPlatform();
+    const payload = createTestPayload(512);
+    let renderCount = 0;
+    let engine: ReturnType<typeof useSpectrumEngine> | null = null;
+
+    function UnsubscribedHost() {
+      renderCount += 1;
+      const ref = useRef<HTMLDivElement | null>(null);
+      engine = useSpectrumEngine(ref, {
+        data: payload,
+        subscribeState: false,
+        platform: harness.platform,
+      });
+      return createElement("div", { ref });
+    }
+
+    const mounted = mountReact(createElement(UnsubscribedHost));
+    const countAfterMount = renderCount;
+    expect(countAfterMount).toBe(1);
+
+    act(() => {
+      engine!.setDomain(15, 75, -60, -5);
+      engine!.setDomain(25, 65, -55, -10);
+    });
+
+    expect(renderCount).toBe(1);
+    expect(engine!.getSnapshot().domain).toEqual({ xMin: 25, xMax: 65, yMin: -55, yMax: -10 });
+
+    mounted.unmount();
+  });
+
+  it("keeps TraceSpectrumViewer forwarded callback ref stable across parent re-renders and pan/zoom (zero ref churn)", () => {
+    const harness = createMockPlatform();
+    const payload = createTestPayload(512);
+    const refCalls: Array<SpectrumEngineHandle | null> = [];
+    const refCallback = (h: SpectrumEngineHandle | null): void => {
+      refCalls.push(h);
+    };
+
+    function Parent(props: { label: string }) {
+      return createElement(
+        "div",
+        { "data-label": props.label },
+        createElement(TraceSpectrumViewer, {
+          ref: refCallback,
+          data: payload,
+          platform: harness.platform,
+        }),
+      );
+    }
+
+    const mounted = mountReact(createElement(Parent, { label: "a" }));
+    expect(refCalls.length).toBe(1);
+    const initialHandle = refCalls[0]!;
+    expect(initialHandle).not.toBeNull();
+
+    // Pan/zoom + unrelated parent re-render must NOT re-invoke callback ref
+    act(() => {
+      initialHandle.setDomain(10, 50, -60, -10);
+    });
+    mounted.rerender(createElement(Parent, { label: "b" }));
+    mounted.rerender(createElement(Parent, { label: "c" }));
+
+    expect(refCalls.length).toBe(1);
+    expect(refCalls[0]).toBe(initialHandle);
+
+    mounted.unmount();
+    expect(refCalls.length).toBe(2);
+    expect(refCalls[1]).toBeNull();
   });
 
   it("isolates overlay updates so pan/zoom never re-renders the outer viewer or recreates canvases", () => {
@@ -125,7 +235,6 @@ describe("react-reactivity-isolation (react-dom)", () => {
         platform: harness.platform,
         onDomainChange: (nextDomain, reason) => {
           onDomainSpy(nextDomain, reason);
-          // Even when consumer clones into a fresh object, 4-scalar equality still suppresses echo
           setDomain({ ...nextDomain });
         },
       });
@@ -147,10 +256,63 @@ describe("react-reactivity-isolation (react-dom)", () => {
       harness.raf.flushAll();
     });
 
-    // Interaction controller calls controller.setDomain once; React re-render with echoed state
-    // MUST NOT call controller.setDomain a second time!
     expect(onDomainSpy).toHaveBeenCalledTimes(1);
     expect(renderer.setDomainCalls.length).toBe(setDomainCallsBefore + 1);
+
+    mounted.unmount();
+  });
+
+  it("synchronizes two independent TraceSpectrumViewer instances via shared controlled domain without feedback loops", () => {
+    const harnessA = createMockPlatform();
+    const harnessB = createMockPlatform();
+    const payload = createTestPayload(512);
+    const refA: { current: SpectrumEngineHandle | null } = { current: null };
+    const refB: { current: SpectrumEngineHandle | null } = { current: null };
+
+    function DualSyncedHost() {
+      const [domain, setDomain] = useState<ViewportDomain>({
+        xMin: 0,
+        xMax: 100,
+        yMin: -80,
+        yMax: 0,
+      });
+      return createElement(
+        "div",
+        null,
+        createElement(TraceSpectrumViewer, {
+          ref: refA,
+          data: payload,
+          domain,
+          onDomainChange: setDomain,
+          platform: harnessA.platform,
+        }),
+        createElement(TraceSpectrumViewer, {
+          ref: refB,
+          data: payload,
+          domain,
+          onDomainChange: setDomain,
+          platform: harnessB.platform,
+        }),
+      );
+    }
+
+    const mounted = mountReact(createElement(DualSyncedHost));
+    act(() => {
+      harnessA.raf.flushAll();
+      harnessB.raf.flushAll();
+    });
+
+    const callsABefore = harnessA.canvas2dRenderers[0]!.setDomainCalls.length;
+    const callsBBefore = harnessB.canvas2dRenderers[0]!.setDomainCalls.length;
+
+    act(() => {
+      refA.current!.setDomain(25, 75, -60, -10);
+    });
+
+    // Pane A invoked setDomain once (echo suppressed), Pane B received synced update once
+    expect(harnessA.canvas2dRenderers[0]!.setDomainCalls.length).toBe(callsABefore + 1);
+    expect(harnessB.canvas2dRenderers[0]!.setDomainCalls.length).toBe(callsBBefore + 1);
+    expect(refB.current!.controller!.domain).toEqual({ xMin: 25, xMax: 75, yMin: -60, yMax: -10 });
 
     mounted.unmount();
   });

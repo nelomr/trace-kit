@@ -20,6 +20,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useSyncExternalStore,
@@ -126,6 +127,9 @@ function createMetadataStore(
   return store;
 }
 
+const useIsomorphicLayoutEffect =
+  typeof window !== "undefined" ? useLayoutEffect : useEffect;
+
 const NOOP_UNSUBSCRIBE = (): void => {};
 function noopSubscribe(): () => void {
   return NOOP_UNSUBSCRIBE;
@@ -133,6 +137,7 @@ function noopSubscribe(): () => void {
 
 interface SyncTracker {
   mountedContainer: HTMLElement | null;
+  manuallyDisposedContainer: HTMLElement | null;
   lastAppliedData: SpectrumDataPayload | undefined;
   lastAppliedTraces: TraceCollection | undefined;
   prevDomain: ViewportDomain | undefined;
@@ -174,8 +179,20 @@ export function useSpectrumEngine(
   }
   const store = storeRef.current;
 
+  // Declare useSyncExternalStore BEFORE all passive lifecycle effects so React's
+  // internal subscribeToStore effect runs prior to mountContainer(). This prevents
+  // a wasted second mount render under subscribeState: false and avoids mount tearing
+  // under subscribeState: true.
+  const shouldSubscribe = options?.subscribeState ?? true;
+  const snapshot = useSyncExternalStore(
+    shouldSubscribe ? store.subscribe : noopSubscribe,
+    store.getSnapshot,
+    store.getServerSnapshot,
+  );
+
   const trackerRef = useRef<SyncTracker>({
     mountedContainer: null,
+    manuallyDisposedContainer: null,
     lastAppliedData: undefined,
     lastAppliedTraces: undefined,
     prevDomain: undefined,
@@ -185,10 +202,11 @@ export function useSpectrumEngine(
     isCleared: false,
   });
 
-  // Latest options/callbacks holder — synchronized via effect prior to mount & prop sync
-  // so inline callback closures never trigger controller teardown and render stays pure.
+  // Latest options/callbacks holder — synchronized via isomorphic layout effect prior to
+  // child useEffects, mount/reconcile, and prop sync so inline callback closures never
+  // trigger controller teardown and render remains pure.
   const latestOptionsRef = useRef<UseSpectrumEngineOptions | undefined>(options);
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     latestOptionsRef.current = options;
   });
 
@@ -252,222 +270,260 @@ export function useSpectrumEngine(
     [emitDomainSnapshot, store],
   );
 
-  const dispose = useCallback((): void => {
-    const activeInteraction = interactionRef.current;
-    const activeController = controllerRef.current;
+  const disposeInternal = useCallback(
+    (isManual: boolean): void => {
+      const activeInteraction = interactionRef.current;
+      const activeController = controllerRef.current;
+      const tracker = trackerRef.current;
+      const previousContainer = tracker.mountedContainer;
 
-    // Null refs BEFORE invoking .dispose() so re-entrant callbacks observe torn-down state.
-    interactionRef.current = null;
-    controllerRef.current = null;
-    const tracker = trackerRef.current;
-    tracker.mountedContainer = null;
-    tracker.lastAppliedData = undefined;
-    tracker.lastAppliedTraces = undefined;
-    tracker.prevDomain = undefined;
-    tracker.prevMode = undefined;
-    tracker.prevDecimation = undefined;
-    tracker.prevRevision = undefined;
-    tracker.isCleared = false;
-
-    store.update({
-      isReady: false,
-      gestureState: "idle",
-    });
-
-    // Strict teardown ordering: interaction FIRST, then controller SECOND.
-    try {
-      if (activeInteraction !== null && !activeInteraction.disposed) {
-        activeInteraction.dispose();
+      // Null refs BEFORE invoking .dispose() so re-entrant callbacks observe torn-down state.
+      interactionRef.current = null;
+      controllerRef.current = null;
+      tracker.mountedContainer = null;
+      if (isManual && previousContainer !== null) {
+        tracker.manuallyDisposedContainer = previousContainer;
       }
-    } finally {
-      if (activeController !== null && !activeController.disposed) {
-        activeController.dispose();
-      }
-    }
-  }, [store]);
-
-  // Mount / StrictMode double-invoke / Unmount lifecycle effect
-  useEffect(() => {
-    const el = containerRef.current;
-    if (el === null) return;
-
-    const opts = latestOptionsRef.current;
-    const rawData = normalizeOptional(opts?.data);
-    const rawTraces = normalizeOptional(opts?.traces);
-    assertDataTracesExclusive(rawData, rawTraces);
-
-    const platform = opts?.platform;
-    const baseRaf: (callback: FrameRequestCallback) => number =
-      platform?.requestAnimationFrame ??
-      ((callback: FrameRequestCallback): number => {
-        if (typeof globalThis.requestAnimationFrame === "function") {
-          return globalThis.requestAnimationFrame(callback);
-        }
-        return Number(setTimeout(() => callback(Date.now()), 16));
-      });
-
-    let attachedController: SpectrumEngineController | null = null;
-
-    const wrappedRaf = (callback: FrameRequestCallback): number =>
-      baseRaf((timestamp) => {
-        callback(timestamp);
-        if (
-          attachedController !== null &&
-          controllerRef.current === attachedController &&
-          !attachedController.disposed
-        ) {
-          syncControllerMetadata(attachedController);
-        }
-      });
-
-    const baseCancelRaf: ((handle: number) => void) | undefined =
-      platform?.cancelAnimationFrame ??
-      (typeof globalThis.requestAnimationFrame === "function"
-        ? undefined
-        : (handle: number): void => {
-            clearTimeout(handle);
-          });
-
-    const initialMode = opts?.mode;
-    const initialDecimation = opts?.decimation;
-
-    const controllerOpts: SpectrumEngineControllerOptions = {
-      container: el,
-      autoResize: opts?.autoResize ?? true,
-      requestAnimationFrame: wrappedRaf,
-      ...(baseCancelRaf !== undefined ? { cancelAnimationFrame: baseCancelRaf } : {}),
-      ...(initialMode !== undefined ? { mode: initialMode } : {}),
-      ...(opts?.figureStyle !== undefined ? { style: opts.figureStyle } : {}),
-      ...(opts?.axes !== undefined ? { axes: opts.axes } : {}),
-      ...(opts?.yAxes !== undefined ? { yAxes: opts.yAxes } : {}),
-      ...(opts?.hysteresis !== undefined ? { hysteresis: opts.hysteresis } : {}),
-      ...(initialDecimation !== undefined ? { decimation: initialDecimation } : {}),
-      ...(opts?.decimationPort !== undefined ? { decimationPort: opts.decimationPort } : {}),
-      ...(opts?.settlementSink !== undefined ? { settlementSink: opts.settlementSink } : {}),
-      ...(opts?.initialWidth !== undefined ? { initialWidth: opts.initialWidth } : {}),
-      ...(opts?.initialHeight !== undefined ? { initialHeight: opts.initialHeight } : {}),
-      ...(opts?.initialDpr !== undefined ? { initialDpr: opts.initialDpr } : {}),
-      ...(platform?.createCanvas2DRenderer !== undefined
-        ? { createCanvas2DRenderer: platform.createCanvas2DRenderer }
-        : {}),
-      ...(platform?.createWebGL2Renderer !== undefined
-        ? { createWebGL2Renderer: platform.createWebGL2Renderer }
-        : {}),
-      ...(platform?.createCanvas !== undefined ? { createCanvas: platform.createCanvas } : {}),
-      ...(platform?.resizeObserverFactory !== undefined
-        ? { resizeObserverFactory: platform.resizeObserverFactory }
-        : {}),
-      ...(platform?.getDevicePixelRatio !== undefined
-        ? { getDevicePixelRatio: platform.getDevicePixelRatio }
-        : {}),
-      onEngineChange(event) {
-        const current = controllerRef.current;
-        const patch: Partial<SpectrumEngineSnapshot> = {
-          activeKind: event.activeKind,
-          mode: event.mode,
-          ...(!trackerRef.current.isCleared ? { sampleCount: event.sampleCount } : {}),
-          ...(current !== null && !current.disposed
-            ? {
-                webgl2Fallback: current.webgl2Fallback,
-                contextLost: current.contextLost,
-              }
-            : {}),
-        };
-        store.update(patch);
-        latestOptionsRef.current?.onEngineChange?.(event);
-      },
-      onWebGL2Fallback(event) {
-        store.update({
-          webgl2Fallback: true,
-          activeKind: "canvas2d",
-          contextLost: false,
-          mode: event.attemptedMode,
-          ...(!trackerRef.current.isCleared ? { sampleCount: event.sampleCount } : {}),
-        });
-        latestOptionsRef.current?.onWebGL2Fallback?.(event);
-      },
-      onContextLost(event) {
-        store.update({
-          contextLost: true,
-          activeKind: event.activeKind,
-          mode: event.mode,
-          ...(!trackerRef.current.isCleared ? { sampleCount: event.sampleCount } : {}),
-        });
-        latestOptionsRef.current?.onContextLost?.(event);
-      },
-      onContextRestored(event) {
-        store.update({
-          contextLost: false,
-          activeKind: event.activeKind,
-          mode: event.mode,
-          ...(!trackerRef.current.isCleared ? { sampleCount: event.sampleCount } : {}),
-        });
-        latestOptionsRef.current?.onContextRestored?.(event);
-      },
-    };
-
-    const rawController = createSpectrumEngineController(controllerOpts);
-    attachedController = rawController;
-    controllerRef.current = rawController;
-    const tracker = trackerRef.current;
-    tracker.mountedContainer = el;
-    tracker.isCleared = false;
-
-    try {
-      // Deterministic sync order: setData / setTraces strictly BEFORE setDomain
-      if (rawData !== undefined) {
-        rawController.setData(rawData);
-        tracker.lastAppliedData = rawData;
-        tracker.lastAppliedTraces = undefined;
-      } else if (rawTraces !== undefined) {
-        rawController.setTraces(rawTraces);
-        tracker.lastAppliedTraces = rawTraces;
-        tracker.lastAppliedData = undefined;
-      }
-
-      const rawDomain = opts?.domain;
-      if (rawDomain !== undefined) {
-        rawController.setDomain(rawDomain.xMin, rawDomain.xMax, rawDomain.yMin, rawDomain.yMax);
-      }
-
-      tracker.prevDomain = opts?.domain;
-      tracker.prevMode = opts?.mode;
-      tracker.prevDecimation = opts?.decimation;
-      tracker.prevRevision = opts?.revision;
-
-      const initialInteractive = opts?.interactive ?? true;
-      if (initialInteractive) {
-        attachInteraction(rawController);
-      }
+      tracker.lastAppliedData = undefined;
+      tracker.lastAppliedTraces = undefined;
+      tracker.prevDomain = undefined;
+      tracker.prevMode = undefined;
+      tracker.prevDecimation = undefined;
+      tracker.prevRevision = undefined;
+      tracker.isCleared = false;
 
       store.update({
-        isReady: true,
-        activeKind: rawController.activeKind,
-        mode: rawController.mode,
-        domain: snapshotDomain(rawController.domain),
-        sampleCount: rawController.sampleCount,
-        contextLost: rawController.contextLost,
-        webgl2Fallback: rawController.webgl2Fallback,
-        gestureState: interactionRef.current?.state ?? "idle",
+        isReady: false,
+        gestureState: "idle",
       });
 
-      if (rawData !== undefined || rawTraces !== undefined) {
-        rawController.requestRender();
+      // Strict teardown ordering: interaction FIRST, then controller SECOND.
+      try {
+        if (activeInteraction !== null && !activeInteraction.disposed) {
+          activeInteraction.dispose();
+        }
+      } finally {
+        if (activeController !== null && !activeController.disposed) {
+          activeController.dispose();
+        }
       }
+    },
+    [store],
+  );
 
-      latestOptionsRef.current?.onReady?.({
-        controller: rawController,
-        interaction: interactionRef.current,
-      });
-    } catch (error) {
-      dispose();
-      throw error;
+  const dispose = useCallback((): void => {
+    disposeInternal(true);
+  }, [disposeInternal]);
+
+  const mountContainer = useCallback(
+    (el: HTMLElement): void => {
+      const opts = latestOptionsRef.current;
+      const rawData = normalizeOptional(opts?.data);
+      const rawTraces = normalizeOptional(opts?.traces);
+      assertDataTracesExclusive(rawData, rawTraces);
+
+      const platform = opts?.platform;
+      const baseRaf: (callback: FrameRequestCallback) => number =
+        platform?.requestAnimationFrame ??
+        ((callback: FrameRequestCallback): number => {
+          if (typeof globalThis.requestAnimationFrame === "function") {
+            return globalThis.requestAnimationFrame(callback);
+          }
+          return Number(setTimeout(() => callback(Date.now()), 16));
+        });
+
+      let attachedController: SpectrumEngineController | null = null;
+
+      const wrappedRaf = (callback: FrameRequestCallback): number =>
+        baseRaf((timestamp) => {
+          callback(timestamp);
+          if (
+            attachedController !== null &&
+            controllerRef.current === attachedController &&
+            !attachedController.disposed
+          ) {
+            syncControllerMetadata(attachedController);
+          }
+        });
+
+      const baseCancelRaf: ((handle: number) => void) | undefined =
+        platform?.cancelAnimationFrame ??
+        (typeof globalThis.requestAnimationFrame === "function"
+          ? undefined
+          : (handle: number): void => {
+              clearTimeout(handle);
+            });
+
+      const initialMode = opts?.mode;
+      const initialDecimation = opts?.decimation;
+
+      const controllerOpts: SpectrumEngineControllerOptions = {
+        container: el,
+        autoResize: opts?.autoResize ?? true,
+        requestAnimationFrame: wrappedRaf,
+        ...(baseCancelRaf !== undefined ? { cancelAnimationFrame: baseCancelRaf } : {}),
+        ...(initialMode !== undefined ? { mode: initialMode } : {}),
+        ...(opts?.figureStyle !== undefined ? { style: opts.figureStyle } : {}),
+        ...(opts?.axes !== undefined ? { axes: opts.axes } : {}),
+        ...(opts?.yAxes !== undefined ? { yAxes: opts.yAxes } : {}),
+        ...(opts?.hysteresis !== undefined ? { hysteresis: opts.hysteresis } : {}),
+        ...(initialDecimation !== undefined ? { decimation: initialDecimation } : {}),
+        ...(opts?.decimationPort !== undefined ? { decimationPort: opts.decimationPort } : {}),
+        ...(opts?.settlementSink !== undefined ? { settlementSink: opts.settlementSink } : {}),
+        ...(opts?.initialWidth !== undefined ? { initialWidth: opts.initialWidth } : {}),
+        ...(opts?.initialHeight !== undefined ? { initialHeight: opts.initialHeight } : {}),
+        ...(opts?.initialDpr !== undefined ? { initialDpr: opts.initialDpr } : {}),
+        ...(platform?.createCanvas2DRenderer !== undefined
+          ? { createCanvas2DRenderer: platform.createCanvas2DRenderer }
+          : {}),
+        ...(platform?.createWebGL2Renderer !== undefined
+          ? { createWebGL2Renderer: platform.createWebGL2Renderer }
+          : {}),
+        ...(platform?.createCanvas !== undefined ? { createCanvas: platform.createCanvas } : {}),
+        ...(platform?.resizeObserverFactory !== undefined
+          ? { resizeObserverFactory: platform.resizeObserverFactory }
+          : {}),
+        ...(platform?.getDevicePixelRatio !== undefined
+          ? { getDevicePixelRatio: platform.getDevicePixelRatio }
+          : {}),
+        onEngineChange(event) {
+          const current = controllerRef.current;
+          const patch: Partial<SpectrumEngineSnapshot> = {
+            activeKind: event.activeKind,
+            mode: event.mode,
+            ...(!trackerRef.current.isCleared ? { sampleCount: event.sampleCount } : {}),
+            ...(current !== null && !current.disposed
+              ? {
+                  webgl2Fallback: current.webgl2Fallback,
+                  contextLost: current.contextLost,
+                }
+              : {}),
+          };
+          store.update(patch);
+          latestOptionsRef.current?.onEngineChange?.(event);
+        },
+        onWebGL2Fallback(event) {
+          store.update({
+            webgl2Fallback: true,
+            activeKind: "canvas2d",
+            contextLost: false,
+            mode: event.attemptedMode,
+            ...(!trackerRef.current.isCleared ? { sampleCount: event.sampleCount } : {}),
+          });
+          latestOptionsRef.current?.onWebGL2Fallback?.(event);
+        },
+        onContextLost(event) {
+          store.update({
+            contextLost: true,
+            activeKind: event.activeKind,
+            mode: event.mode,
+            ...(!trackerRef.current.isCleared ? { sampleCount: event.sampleCount } : {}),
+          });
+          latestOptionsRef.current?.onContextLost?.(event);
+        },
+        onContextRestored(event) {
+          store.update({
+            contextLost: false,
+            activeKind: event.activeKind,
+            mode: event.mode,
+            ...(!trackerRef.current.isCleared ? { sampleCount: event.sampleCount } : {}),
+          });
+          latestOptionsRef.current?.onContextRestored?.(event);
+        },
+      };
+
+      const rawController = createSpectrumEngineController(controllerOpts);
+      attachedController = rawController;
+      controllerRef.current = rawController;
+      const tracker = trackerRef.current;
+      tracker.mountedContainer = el;
+      tracker.manuallyDisposedContainer = null;
+      tracker.isCleared = false;
+
+      try {
+        // Deterministic sync order: setData / setTraces strictly BEFORE setDomain
+        if (rawData !== undefined) {
+          rawController.setData(rawData);
+          tracker.lastAppliedData = rawData;
+          tracker.lastAppliedTraces = undefined;
+        } else if (rawTraces !== undefined) {
+          rawController.setTraces(rawTraces);
+          tracker.lastAppliedTraces = rawTraces;
+          tracker.lastAppliedData = undefined;
+        }
+
+        const rawDomain = opts?.domain;
+        if (rawDomain !== undefined) {
+          rawController.setDomain(rawDomain.xMin, rawDomain.xMax, rawDomain.yMin, rawDomain.yMax);
+        }
+
+        tracker.prevDomain = opts?.domain;
+        tracker.prevMode = opts?.mode;
+        tracker.prevDecimation = opts?.decimation;
+        tracker.prevRevision = opts?.revision;
+
+        const initialInteractive = opts?.interactive ?? true;
+        if (initialInteractive) {
+          attachInteraction(rawController);
+        }
+
+        store.update({
+          isReady: true,
+          activeKind: rawController.activeKind,
+          mode: rawController.mode,
+          domain: snapshotDomain(rawController.domain),
+          sampleCount: rawController.sampleCount,
+          contextLost: rawController.contextLost,
+          webgl2Fallback: rawController.webgl2Fallback,
+          gestureState: interactionRef.current?.state ?? "idle",
+        });
+
+        if (rawData !== undefined || rawTraces !== undefined) {
+          rawController.requestRender();
+        }
+
+        latestOptionsRef.current?.onReady?.({
+          controller: rawController,
+          interaction: interactionRef.current,
+        });
+      } catch (error) {
+        disposeInternal(false);
+        throw error;
+      }
+    },
+    [attachInteraction, disposeInternal, store, syncControllerMetadata],
+  );
+
+  // Unmount & React.StrictMode simulated cleanup effect
+  useEffect(() => {
+    return () => {
+      trackerRef.current.manuallyDisposedContainer = null;
+      disposeInternal(false);
+    };
+  }, [disposeInternal]);
+
+  // Dynamic containerRef.current lifecycle reconciliation (handles null -> el -> null -> el2
+  // and swapped DOM nodes while preventing resurrection after manual handle.dispose()).
+  useEffect(() => {
+    const el = containerRef.current;
+    const tracker = trackerRef.current;
+
+    if (el === null) {
+      tracker.manuallyDisposedContainer = null;
+      if (tracker.mountedContainer !== null) {
+        disposeInternal(false);
+      }
+      return;
     }
 
-    return () => {
-      dispose();
-    };
-  }, [attachInteraction, containerRef, dispose, store, syncControllerMetadata]);
+    if (el === tracker.mountedContainer) return;
+    if (el === tracker.manuallyDisposedContainer) return;
+
+    if (tracker.mountedContainer !== null) {
+      disposeInternal(false);
+    }
+    mountContainer(el);
+  });
 
   // Single-commit ordered prop synchronization effect
   const nextDomain = options?.domain;
@@ -483,18 +539,24 @@ export function useSpectrumEngine(
     assertDataTracesExclusive(rawDataProp, rawTracesProp);
 
     let needsRender = false;
+    let tracesApplied = false;
+    let pendingPatch: Partial<SpectrumEngineSnapshot> | null = null;
+    const queuePatch = (patch: Partial<SpectrumEngineSnapshot>): void => {
+      pendingPatch = pendingPatch === null ? patch : { ...pendingPatch, ...patch };
+    };
 
     // Step 1: data / traces diff strictly BEFORE domain
     if (rawDataProp !== tracker.lastAppliedData || rawTracesProp !== tracker.lastAppliedTraces) {
       if (rawDataProp !== undefined) {
         active.setData(rawDataProp);
         tracker.isCleared = false;
-        store.update({ sampleCount: active.sampleCount });
+        queuePatch({ sampleCount: active.sampleCount });
         needsRender = true;
       } else if (rawTracesProp !== undefined) {
         active.setTraces(rawTracesProp);
         tracker.isCleared = false;
-        store.update({
+        tracesApplied = true;
+        queuePatch({
           sampleCount: active.sampleCount,
           domain: snapshotDomain(active.domain),
         });
@@ -502,21 +564,22 @@ export function useSpectrumEngine(
       } else if (tracker.lastAppliedData !== undefined || tracker.lastAppliedTraces !== undefined) {
         active.clear();
         tracker.isCleared = true;
-        store.update({ sampleCount: 0 });
+        queuePatch({ sampleCount: 0 });
       }
       tracker.lastAppliedData = rawDataProp;
       tracker.lastAppliedTraces = rawTracesProp;
     }
 
     // Step 2: domain diff strictly AFTER data / traces, with Dual Echo Guard
-    if (nextDomain !== tracker.prevDomain) {
+    // Also re-apply controlled domain if Step 1 setTraces() overwrote the controller extent.
+    if (nextDomain !== tracker.prevDomain || (tracesApplied && nextDomain !== undefined)) {
       if (
         nextDomain !== undefined &&
         !(emittedDomainsRef.current?.has(nextDomain) ?? false) &&
         !domainsEqual(nextDomain, active.domain)
       ) {
         active.setDomain(nextDomain.xMin, nextDomain.xMax, nextDomain.yMin, nextDomain.yMax);
-        store.update({ domain: snapshotDomain(active.domain) });
+        queuePatch({ domain: snapshotDomain(active.domain) });
         needsRender = true;
       }
       tracker.prevDomain = nextDomain;
@@ -527,7 +590,15 @@ export function useSpectrumEngine(
       const resolvedMode: EngineSelectionMode = nextMode ?? "auto";
       if (resolvedMode !== active.mode) {
         active.setMode(resolvedMode);
-        syncControllerMetadata(active);
+        if (!active.disposed) {
+          queuePatch({
+            activeKind: active.activeKind,
+            mode: active.mode,
+            webgl2Fallback: active.webgl2Fallback,
+            contextLost: active.contextLost,
+            sampleCount: tracker.isCleared ? 0 : active.sampleCount,
+          });
+        }
         needsRender = true;
       }
       tracker.prevMode = nextMode;
@@ -553,6 +624,11 @@ export function useSpectrumEngine(
       tracker.prevRevision = nextRevision;
     }
 
+    // Flush batched metadata snapshot once per commit (avoids transient intermediate emissions)
+    if (pendingPatch !== null) {
+      store.update(pendingPatch);
+    }
+
     // Step 6: single coalesced requestRender()
     if (needsRender && !active.disposed) {
       active.requestRender();
@@ -565,7 +641,6 @@ export function useSpectrumEngine(
     rawDataProp,
     rawTracesProp,
     store,
-    syncControllerMetadata,
   ]);
 
   // Separate effect for ViewportInteractionController coordination
@@ -611,18 +686,19 @@ export function useSpectrumEngine(
     }
   }, [attachInteraction, nextDragMode, nextHomeDomain, nextInteractive]);
 
-  // Subscribe conditionally via static hook call (when subscribeState === false, viewer avoids re-renders)
-  const shouldSubscribe = options?.subscribeState ?? true;
-  const snapshot = useSyncExternalStore(
-    shouldSubscribe ? store.subscribe : noopSubscribe,
-    store.getSnapshot,
-    store.getServerSnapshot,
-  );
-
   // All 11 stable no-op-guarded imperative methods
   const render = useCallback((): void => {
     const active = controllerRef.current;
     if (active === null || active.disposed) return;
+    const tracker = trackerRef.current;
+    const opts = latestOptionsRef.current;
+    if (
+      tracker.lastAppliedData !== undefined ||
+      tracker.lastAppliedTraces !== undefined ||
+      (opts?.data === undefined && opts?.traces === undefined)
+    ) {
+      tracker.isCleared = false;
+    }
     active.render();
     if (controllerRef.current === active && !active.disposed) {
       syncControllerMetadata(active);

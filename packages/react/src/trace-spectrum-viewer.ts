@@ -125,7 +125,21 @@ export const TraceSpectrumViewer: ForwardRefExoticComponent<
         cancelGesture: handle.cancelGesture,
         dispose: handle.dispose,
       }),
-      [handle],
+      [
+        handle.cancelGesture,
+        handle.clear,
+        handle.controllerRef,
+        handle.dispose,
+        handle.interactionRef,
+        handle.panByFraction,
+        handle.render,
+        handle.requestRender,
+        handle.resetDomain,
+        handle.resize,
+        handle.retryWebGL2,
+        handle.setDomain,
+        handle.zoomByFactor,
+      ],
     );
 
     const viewerStyle: CSSProperties =
@@ -163,5 +177,3 @@ export const TraceSpectrumViewer: ForwardRefExoticComponent<
     );
   },
 );
-
-TraceSpectrumViewer.displayName = "TraceSpectrumViewer";

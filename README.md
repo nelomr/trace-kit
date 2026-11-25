@@ -19,7 +19,7 @@
 Experience TraceKit's high-throughput rendering live in your browser:
 
 * **[Live Vue 3 Optical Instrument Sandbox (`OSA-1550`)](https://nelomr.github.io/trace-kit/vue/)**  
-  Optical spectrum analyzer workbench featuring linear-power optical physics ($\pi$-phase-shifted FBG notch at `1550.0001 nm`, exact **ITU-T G.694.1** 100 GHz C-band DWDM grid, live 60 Hz sweeps, and 5-decade Log-Y mW), active engine telemetry (Canvas2D $\leftrightarrow$ WebGL2 atomic swap), optional off-main-thread Web Worker decimation, WebGL context recovery, and visible-window SVG / raw CSV / NumPy `.npy` export.
+  Optical spectrum analyzer workbench featuring linear-power optical physics ($\pi$-phase-shifted FBG notch at `1550.0001 nm`, exact **ITU-T G.694.1** 100 GHz C-band DWDM grid, live 60 Hz sweeps, `dBm ↔ mW (Log10)` toggle on the same physical spectrum, and synchronized **Split Compare** comparing WebGL2 Min-Max vs. Canvas2D LTTB), active engine telemetry (Canvas2D $\leftrightarrow$ WebGL2 atomic swap), optional off-main-thread Web Worker decimation, WebGL context recovery, and visible-window SVG / raw CSV / NumPy `.npy` export.
 * **[Live Vanilla Lab (`apps/playground` — 7 Interactive Views)](https://nelomr.github.io/trace-kit/)**  
   Benchmark workbench featuring decimation algorithm visualizations (LTTB vs. Min-Max Envelope), dual-engine rendering parity, streaming buffers, and lossless SVG / CSV / NumPy `.npy` export.
 
@@ -57,13 +57,13 @@ TraceKit follows strict **Spec-Driven Development (SDD)**. Steps 1 through **11*
   * Scoped `#overlay` slot, non-colliding `figureStyle` prop, and SSR isomorphic `renderToString` safety.
 * **`@trace-kit/react` (Step 11)**:
   * Unmanaged-canvas React 18 & 19 adapter (`react: "^18.2.0 || ^19.0.0"`) with 1:1 parity to `@trace-kit/vue`.
-  * `useSpectrumEngine` hook and `forwardRef` `<TraceSpectrumViewer>` component built with pure `createElement` (`"sideEffects": false`, zero JSX runtime dependency).
-  * `useRef` handle/payload isolation + selective `useSyncExternalStore` + isolated `<OverlayHost>` sustaining 0 React re-renders during 60 Hz Path A streaming, `<React.StrictMode>` double-invoke safety, and pure Node SSR `renderToString` isomorphism.
+  * `useSpectrumEngine` hook and tree-shakeable `/*#__PURE__*/ forwardRef` `<TraceSpectrumViewer>` component built with pure `createElement` (`"sideEffects": false`, `packages/react/SIDE-EFFECTS.md` audited, zero JSX runtime dependency, stable forwarded callback refs).
+  * `useRef` handle/payload isolation + selective `useSyncExternalStore` + isolated `<OverlayHost>` + dynamic `containerRef` lifecycle reconciliation sustaining 0 React re-renders during 60 Hz Path A streaming, Dual Echo Guard controlled `domain` sync, `<React.StrictMode>` double-invoke safety, and pure Node SSR `renderToString` + `hydrateRoot` isomorphism.
 * **Demonstration Applications**:
   * `apps/playground`: Vanilla bench with 7 interactive testing routes.
-  * `apps/vue-sandbox`: Optical Spectrum Analyzer (`OSA-1550`) real-time instrument sandbox.
+  * `apps/vue-sandbox`: Optical Spectrum Analyzer (`OSA-1550`) real-time instrument sandbox (with dedicated optical physics unit suite).
 * **Verification & CI Quality Gate**:
-  * 100% strict TypeScript (`typecheck`), ESLint, 1,640+ unit/DOM/SSR/worker tests passing across all packages.
+  * 100% strict TypeScript (`typecheck`), ESLint (`CI=true` with zero warnings), 1,700+ unit/DOM/SSR/StrictMode/worker tests passing across all 12 Vitest workspace projects.
   * Linux CI Chromium-based Playwright visual regression harness.
   * Node `--expose-gc` allocation test gates verifying $0$ GC events on critical hot paths.
 
@@ -149,6 +149,13 @@ flowchart TD
 
 > [!NOTE]
 > Packages are versioned internally using Changesets (`0.0.x`). Public npm publishing is planned post-stabilization.
+
+| Package | Runtime & Peer Target | Key Exports | Side Effects |
+|---|---|---|---|
+| `@trace-kit/core` | Isomorphic ES2022 (Browser + Node, 0 DOM deps) | Branded buffers, `lttb`, `minMaxEnvelope`, `WorkerDecimationPort`, viewport math, `exportCsv`, `exportNpy` | `"sideEffects": false` |
+| `@trace-kit/renderers` | Browser Canvas2D / WebGL2 (+ isomorphic `/svg`, `/font`) | `Canvas2DRenderer`, `WebGL2FigureRenderer`, `SpectrumEngineController`, `createViewportInteractionController`, `exportToSvg` | `"sideEffects": false` |
+| `@trace-kit/vue` | `vue: ^3.4.0` | `TraceSpectrumViewer`, `useSpectrumEngine`, `snapshotDomain` | `"sideEffects": false` |
+| `@trace-kit/react` | `react: ^18.2.0 \|\| ^19.0.0` | `TraceSpectrumViewer`, `useSpectrumEngine`, `snapshotDomain` | `"sideEffects": false` |
 
 ```bash
 # Core mathematical and decimation engine (zero DOM dependencies, Node.js & browser safe)
@@ -341,6 +348,9 @@ export const SpectrumView: React.FC<{ data: SpectrumDataPayload }> = ({ data }) 
 };
 ```
 
+> [!TIP]
+> For **60 Hz zero-re-render streaming (Path A)**, mutate `data.y` in place, call `commitPayloadRevision(data, count)`, and invoke `viewerRef.current?.requestRender()` without calling React `setState`. For headless custom hosts, use `useSpectrumEngine(containerRef, options)`.
+
 ---
 
 ## 📊 Benchmarks & Technical Verification
@@ -367,10 +377,10 @@ pnpm install
 # Run type-checking across all packages
 pnpm typecheck
 
-# Build all packages (core, renderers, vue, apps)
+# Build all packages (core, renderers, vue, react, apps)
 pnpm build
 
-# Execute all unit, DOM, and SSR test suites (>1,640 tests)
+# Execute all unit, DOM, StrictMode, and SSR test suites (>1,700 tests)
 pnpm test
 
 # Run ESLint across workspace
